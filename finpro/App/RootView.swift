@@ -71,8 +71,9 @@ struct RootView: View {
         .animation(.default, value: flow.step)
         #if DEBUG
         .overlay(alignment: .topTrailing) {
-            // Hidden while recording: the top bar's End Session button lives there.
-            if flow.step != .recording {
+            // Hidden where the screen's own top bar uses that corner
+            // (recording: End Session, vocal range: help).
+            if flow.step != .recording && flow.step != .vocalRange {
                 Button("Debug Settings", systemImage: "slider.horizontal.3") {
                     showsDebugSettings = true
                 }
