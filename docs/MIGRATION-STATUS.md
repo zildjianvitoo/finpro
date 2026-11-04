@@ -3,23 +3,23 @@
 Guide: `docs/MIGRATION-GUIDE.md` (copy) — the original lives at
 `/Users/zildjianvito/Documents/apple-academy/challenge-6/poc-c6/docs/MIGRATION-GUIDE.md`.
 
-- [ ] 1. Xcode project + build settings + .gitignore + LFS + hooks
+- [x] 1. Xcode project + build settings + .gitignore + LFS + hooks (2026-11-04)
   - [x] build settings aligned with the PoC (iOS 18.0, iPhone only, portrait, permission strings, docs/scripts folders)
   - [x] `.gitignore`, `.githooks/`, `.github/` copied
   - [x] `git init -b main`, `git config core.hooksPath .githooks` (2026-11-04)
-  - [ ] Git LFS installed by the user (`brew install git-lfs`), then `git lfs track` before the first commit
+  - [x] Git LFS for `*.mlmodel` and `**/*.mlpackage/**` (4 files, incl. the 58 MB HTDemucs weights); bootstrap commits on `main` (`0a50778`..`bd07004`). LFS was set up with `--skip-repo`, so it has no pre-push hook in `.githooks/` yet: add one before the first push to GitHub
 - [x] 2. Domain imported, check-contracts + check-domain pass (2026-11-04)
 - [x] 3. Shared + Data + Resources + Licenses imported, check-comping + check-prep pass (2026-11-04)
 - [x] 4. Presentation + Fakes + Debug imported, simulator build succeeds (2026-11-04)
   - [x] Fakes, `SimulatedSinger`, Debug Settings and the sync click test are `#if DEBUG` only; `LoggingStemSeparationRepository` is wired in Debug builds only. Debug and Release simulator builds succeed; the Release binary has no Fake/Debug symbols (2026-11-04)
   - [x] `ConfigurationStore` restarts at schema version 1 with no PoC migration steps; `PlaceholderScreen` removed (guide §4: not migrated)
   - [x] `Tests/*.swift` stay standalone scripts (no test target yet): VocalKeyChecks 44, RealtimeRegressionChecks 83, RealtimePitchChecks 25 pass. The VocalKeyChecks recipe (PoC `docs/test-reports/vocal-key-selection.md`) now needs `-D DEBUG`, because it compiles `FakeVocalRangeRepository`
-- [ ] 5. App shell runs end to end on iPhone (PoC views for now) — copied and builds, not yet run on a device
-- [ ] 6. Parity test on iPhone vs PoC passed (song: ___, date: ___)
+- [ ] 5. (postponed) App shell runs end to end on iPhone (PoC views for now) — copied and builds, not yet run on a device
+- [ ] 6. (postponed) Parity test on iPhone vs PoC passed (song: ___, date: ___)
 - [x] 7. Renames approved and done (2026-11-04)
   - `PoCConfiguration` → `AppConfiguration` (type, 3 files, UserDefaults keys), 148 file headers `//  poc-c6` → `//  finpro`, Logger fallback subsystem `finpro`, LRCLIB user agent `finpro/1.0 (Apple Developer Academy)`. No behavior or threshold changes; all checks pass
   - Still open: add the repo URL to the LRCLIB user agent once the GitHub repo exists; `docs/prd.md` still says `PoCConfiguration` (update with the user)
-- [ ] 8. New UI: import / key selection / vocal range / recording / export
+- [ ] 8. New UI: import / key selection / vocal range / recording / export — branch `feat/new-ui`, waiting for design files
 - [ ] 9. PoC tagged poc-final (by user)
 
 ## Decisions log
