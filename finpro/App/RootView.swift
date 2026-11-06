@@ -81,8 +81,8 @@ struct RootView: View {
         #if DEBUG
         .overlay(alignment: .topTrailing) {
             // Hidden where the screen's own top bar uses that corner
-            // (recording: End Session, vocal range: help).
-            if flow.step != .recording && flow.step != .vocalRange {
+            // (recording: End Session, vocal range: help, onboarding: Skip).
+            if flow.step != .recording && flow.step != .vocalRange && flow.step != .onboarding {
                 Button("Debug Settings", systemImage: "slider.horizontal.3") {
                     showsDebugSettings = true
                 }
