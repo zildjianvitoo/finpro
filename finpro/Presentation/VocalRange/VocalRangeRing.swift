@@ -39,28 +39,18 @@ struct VocalRangeRing: View {
                 .frame(width: Self.ringDiameter, height: Self.ringDiameter)
                 .animation(.easeOut(duration: 0.15), value: progress)
             Circle()
-                .fill(showsMicrophoneIcon ? Color.brandPlum : Color.surfaceElevated)
-                .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
+                .fill(Color.brandPlum)
+                .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
                 .frame(width: Self.ringDiameter - 34, height: Self.ringDiameter - 34)
 
             if showsMicrophoneIcon {
-                VStack(spacing: 8) {
-                    Image(systemName: "mic.fill")
-                        .font(.system(size: 36, weight: .semibold))
-                        .foregroundStyle(Color.micIconHighlight)
-                }
+                Image(systemName: "mic.fill")
+                    .font(.system(size: 36, weight: .semibold))
+                    .foregroundStyle(Color.micIconHighlight)
             } else {
                 VStack(spacing: 12) {
                     ListeningWaveform(isActive: isListening, hearsVoice: hearsVoice)
                         .frame(width: Self.ringDiameter - 70)
-                    Text(label)
-                        .font(emphasizesLabel ? .title2.bold() : .footnote)
-                        .foregroundStyle(emphasizesLabel ? .primary : .secondary)
-                        .monospacedDigit()
-                        .contentTransition(.numericText())
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.6)
-                        .frame(width: Self.ringDiameter - 60)
                 }
             }
         }

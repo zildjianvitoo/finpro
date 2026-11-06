@@ -2,8 +2,8 @@
 //  VocalRangeTestView.swift
 //  finpro
 //
-//  Speaking baseline and two comfortable limits, each confirmed by a stable hold (PRD §5.1).
-//  Intro -> Voice description -> Warm up (speaking) -> Lowest note -> Highest note.
+//  Complete vocal range onboarding flow:
+//  Intro -> Voice description -> Warm up -> Humming -> Lowest note -> Highest note -> Result screen.
 //
 
 import SwiftUI
@@ -12,13 +12,16 @@ struct VocalRangeTestView: View {
     enum Stage {
         case intro
         case voiceProfile
+        case warmup
+        case hummingGuide
         case test
+        case result(VocalRange)
     }
 
     @State private var viewModel: VocalRangeViewModel
     @State private var stage: Stage = .intro
     @State private var showsHelp = false
-    @State private var voiceType: VocalRangeVoiceProfileView.VoiceType?
+    @State private var voiceType: VocalRangeVoiceProfileView.VoiceType? = .female
 
     let onDismiss: (() -> Void)?
 
@@ -41,59 +44,360 @@ struct VocalRangeTestView: View {
                     onBack: { stage = .intro },
                     onContinue: { type in
                         voiceType = type
-                        stage = .test
+                        stage = .warmup
                         viewModel.listen()
                     }
                 )
                 .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
 
+            case .warmup:
+                warmupScreen
+                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+
+            case .hummingGuide:
+                hummingGuideScreen
+                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+
             case .test:
                 testScreen
                     .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+
+            case .result(let range):
+                VocalRangeResultView(
+                    range: range,
+                    isFemale: voiceType == .female,
+                    onDone: {
+                        viewModel.save()
+                    },
+                    onRetake: {
+                        viewModel.restart()
+                        stage = .intro
+                    }
+                )
+                .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
             }
         }
-        .animation(.default, value: stage)
+        .animation(.default, value: isResultStage)
         .onDisappear { viewModel.stopListening() }
         .sheet(isPresented: $showsHelp) { help }
+        .onChange(of: viewModel.status) { _, newStatus in
+            if case .finished(let range) = newStatus {
+                withAnimation {
+                    stage = .result(range)
+                }
+            }
+        }
     }
 
-    // MARK: - Test screen
+    private var isResultStage: Bool {
+        if case .result = stage { true } else { false }
+    }
 
-    private var testScreen: some View {
+    private var isCaptured: Bool {
+        if case .captured = viewModel.status { true } else { false }
+    }
+
+    // MARK: - Warm Up Screen (Screen 5 from previous sheet)
+
+    private var warmupScreen: some View {
         VStack(spacing: 0) {
-            topBar
+            topBar(onBack: {
+                viewModel.restart()
+                stage = .voiceProfile
+            })
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
-                    header
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Let's warm up")
+                            .font(.system(size: 30, weight: .bold))
+                            .foregroundStyle(Color.brandPlum)
 
-                    if viewModel.prompt == .speaking && !isFinished {
-                        warmupPassage
+                        Text("Read the sentences below in your everyday voice")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
 
-                    content
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
+                    Text("The sky looks so beautiful this morning, with soft clouds floating across the blue sky. A gentle breeze comes through the trees, and the air feels cool and refreshing.")
+                        .font(.system(size: 16, weight: .regular))
+                        .lineSpacing(4)
+                        .foregroundStyle(.primary)
+                        .padding(.top, 16)
+                        .padding(.bottom, 24)
+
+                    VStack(spacing: 8) {
+                        VocalRangeRing(
+                            progress: viewModel.holdProgress,
+                            isListening: viewModel.status == .listening,
+                            hearsVoice: viewModel.liveMIDI != nil,
+                            label: "Listening...",
+                            showsMicrophoneIcon: true
+                        )
+
+                        Text("Listening...")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
                 }
                 .padding(.horizontal, 24)
             }
             .scrollBounceBehavior(.basedOnSize)
-            .safeAreaInset(edge: .bottom) { footer }
+            .safeAreaInset(edge: .bottom) {
+                VStack {
+                    Button("Continue") {
+                        viewModel.next()
+                        stage = .hummingGuide
+                    }
+                    .buttonStyle(.primary)
+                    .disabled(!isCaptured)
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 12)
+                .padding(.bottom, 16)
+                .background(Color(.systemBackground))
+            }
         }
     }
 
-    private var topBar: some View {
-        HStack {
-            CircleIconButton(title: "Back", systemImage: "arrow.left") {
-                if viewModel.prompt == .speaking && !isFinished {
-                    viewModel.restart()
-                    stage = .voiceProfile
+    // MARK: - Humming Guide Screen (Screen 1 from latest sheet)
+
+    private var hummingGuideScreen: some View {
+        VStack(spacing: 0) {
+            topBar(onBack: {
+                viewModel.restart()
+                stage = .warmup
+                viewModel.listen()
+            })
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Humming")
+                            .font(.system(size: 30, weight: .bold))
+                            .foregroundStyle(Color.brandPlum)
+
+                        Text("Start from a low tone and slowly guide up")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.bottom, 24)
+
+                    VStack(spacing: 8) {
+                        VocalRangeRing(
+                            progress: 0.35,
+                            isListening: true,
+                            hearsVoice: true,
+                            label: "Hmm..."
+                        )
+
+                        Text("Hmm...")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                }
+                .padding(.horizontal, 24)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .safeAreaInset(edge: .bottom) {
+                VStack(spacing: 16) {
+                    TipCard(
+                        title: "Keep your voice steady",
+                        message: "Stop before your voice feels strained or turns into vocal fry.",
+                        systemImage: "lightbulb"
+                    )
+
+                    Button("Continue") {
+                        stage = .test
+                        viewModel.listen()
+                    }
+                    .buttonStyle(.primary)
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 12)
+                .padding(.bottom, 16)
+                .background(Color(.systemBackground))
+            }
+        }
+    }
+
+    // MARK: - Lowest & Highest Test Screen (Screens 2 & 3)
+
+    private var testScreen: some View {
+        let isLowest = viewModel.prompt == .lowest
+
+        return VStack(spacing: 0) {
+            topBar(onBack: {
+                if isLowest {
+                    stage = .hummingGuide
                 } else {
                     viewModel.restart()
-                    stage = .intro
+                    stage = .hummingGuide
+                }
+            })
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(isLowest ? "Find your\nlowest note" : "Now, find your\nhighest note")
+                            .font(.system(size: 30, weight: .bold))
+                            .foregroundStyle(Color.brandPlum)
+
+                        Text("Say \"Do\" as low as you can and hold it.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.bottom, 16)
+
+                    VStack(spacing: 12) {
+                        VocalRangeRing(
+                            progress: viewModel.holdProgress,
+                            isListening: viewModel.status == .listening,
+                            hearsVoice: viewModel.liveMIDI != nil,
+                            label: "Listening..."
+                        )
+
+                        Text("Listening...")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+
+                        // Meter bar pill (lime on left for lowest, right for highest)
+                        meterBar(isLowest: isLowest)
+                            .padding(.top, 8)
+
+                        // Note and frequency
+                        noteLabel
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                }
+                .padding(.horizontal, 24)
+            }
+            .scrollBounceBehavior(.basedOnSize)
+            .safeAreaInset(edge: .bottom) {
+                VStack(spacing: 16) {
+                    TipCard(
+                        title: isLowest ? "Hold at the lowest note" : "Hold at the highest note",
+                        message: isLowest ?
+                            "Hold at the lowest note you can make comfortably, without vocal fry or strain." :
+                            "Hold at the highest note that stays clear and comfortable. Falsetto is okay.",
+                        systemImage: "lightbulb"
+                    )
+
+                    actions
+                }
+                .padding(.horizontal, 24)
+                .padding(.top, 12)
+                .padding(.bottom, 16)
+                .background(Color(.systemBackground))
+            }
+        }
+    }
+
+    private func meterBar(isLowest: Bool) -> some View {
+        ZStack(alignment: isLowest ? .leading : .trailing) {
+            Capsule()
+                .fill(Color(red: 0.20, green: 0.10, blue: 0.18))
+                .frame(width: 220, height: 16)
+
+            Capsule()
+                .fill(Color.micIconHighlight)
+                .frame(width: max(24, 220 * max(0.2, viewModel.holdProgress)), height: 16)
+        }
+        .frame(width: 220, height: 16)
+    }
+
+    private var noteLabel: some View {
+        VStack(spacing: 2) {
+            let noteName = currentDisplayNoteName
+            Text(noteName)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(.primary)
+
+            if let midi = currentDisplayMIDI {
+                let freq = Int(PitchMath.frequency(fromMIDI: Double(midi)).rounded())
+                Text("(\(freq) Hz)")
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(.secondary)
+            } else {
+                Text(viewModel.prompt == .lowest ? "(65 Hz)" : "(880 Hz)")
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var currentDisplayNoteName: String {
+        switch viewModel.status {
+        case .captured(let note):
+            PitchMath.noteName(midi: Int(note.rounded()))
+        case .listening:
+            viewModel.liveNoteName ?? (viewModel.prompt == .lowest ? "C2" : "A5")
+        default:
+            viewModel.prompt == .lowest ? "C2" : "A5"
+        }
+    }
+
+    private var currentDisplayMIDI: Float? {
+        switch viewModel.status {
+        case .captured(let note): note
+        case .listening: viewModel.liveMIDI
+        default: nil
+        }
+    }
+
+    @ViewBuilder
+    private var actions: some View {
+        let isLowest = viewModel.prompt == .lowest
+
+        switch viewModel.status {
+        case .idle:
+            Button(isLowest ? "Continue" : "Check Result") {
+                viewModel.listen()
+            }
+            .buttonStyle(.primary)
+
+        case .listening:
+            Button(isLowest ? "Continue" : "Check Result") {}
+                .buttonStyle(.primary)
+                .disabled(true)
+
+        case .captured:
+            Button(isLowest ? "Continue" : "Check Result") {
+                if isLowest {
+                    viewModel.next()
+                    viewModel.listen()
+                } else {
+                    viewModel.next()
                 }
             }
+            .buttonStyle(.primary)
+
+        case .finished(let range):
+            Button("Check Result") {
+                stage = .result(range)
+            }
+            .buttonStyle(.primary)
+
+        case .failed:
+            Button("Retry") { viewModel.listen() }
+                .buttonStyle(.primary)
+        }
+    }
+
+    private func topBar(onBack: @escaping () -> Void) -> some View {
+        HStack {
+            CircleIconButton(title: "Back", systemImage: "arrow.left", action: onBack)
             Spacer()
-            microphoneLabel
+            if let microphone = viewModel.microphoneName {
+                Label(microphone, systemImage: "headphones")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
             Spacer()
             CircleIconButton(title: "How the test works", systemImage: "questionmark") {
                 showsHelp = true
@@ -104,218 +408,19 @@ struct VocalRangeTestView: View {
         .padding(.bottom, 16)
     }
 
-    @ViewBuilder
-    private var microphoneLabel: some View {
-        if let microphone = viewModel.microphoneName {
-            Label(microphone, systemImage: "headphones")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-        }
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(heading)
-                .font(.largeTitle.bold())
-                .foregroundStyle(viewModel.prompt == .speaking && !isFinished ? Color.brandPlum : Color.primary)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Text(subtitle)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var warmupPassage: some View {
-        Text("The sky looks so beautiful this morning, with soft clouds floating across the blue sky. A gentle breeze comes through the trees, and the air feels cool and refreshing.")
-            .font(.system(size: 16, weight: .regular))
-            .lineSpacing(4)
-            .foregroundStyle(.primary)
-            .padding(.top, 16)
-            .padding(.bottom, 24)
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        if case .failed(let error) = viewModel.status {
-            ErrorStateView(error: error)
-                .frame(minHeight: 320)
-        } else {
-            VStack(spacing: 8) {
-                VocalRangeRing(
-                    progress: viewModel.holdProgress,
-                    isListening: viewModel.status == .listening,
-                    hearsVoice: viewModel.liveMIDI != nil,
-                    label: ringLabel,
-                    emphasizesLabel: emphasizesRingLabel,
-                    showsMicrophoneIcon: viewModel.prompt == .speaking && !isFinished
-                )
-
-                if viewModel.prompt == .speaking && !isFinished {
-                    Text("Listening...")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    private var footer: some View {
-        VStack(spacing: 12) {
-            if let tip {
-                TipCard(title: tip.title, message: tip.message, systemImage: tip.systemImage)
-                    .padding(.bottom, 8)
-            }
-            actions
-        }
-        .padding(.horizontal, 24)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
-        .background(Color(.systemBackground))
-    }
-
-    @ViewBuilder
-    private var actions: some View {
-        switch viewModel.status {
-        case .idle:
-            if viewModel.prompt == .speaking {
-                Button("Continue") {
-                    viewModel.listen()
-                }
-                .buttonStyle(.primary)
-            } else {
-                Button("Start") { viewModel.listen() }
-                    .buttonStyle(.primaryWithDot)
-            }
-
-        case .listening:
-            if viewModel.prompt == .speaking {
-                Button("Continue") {}
-                    .buttonStyle(.primary)
-                    .disabled(true)
-            } else {
-                Button("Listening…") {}
-                    .buttonStyle(.primary)
-                    .disabled(true)
-            }
-
-        case .captured:
-            Button("Continue") { viewModel.next() }
-                .buttonStyle(.primary)
-            secondaryButton("Retry") { viewModel.listen() }
-
-        case .finished:
-            Button("Save and Continue") { viewModel.save() }
-                .buttonStyle(.primary)
-            secondaryButton("Start Over") {
-                viewModel.restart()
-                stage = .intro
-            }
-
-        case .failed:
-            Button("Retry") { viewModel.listen() }
-                .buttonStyle(.primaryWithDot)
-            secondaryButton("Start Over") {
-                viewModel.restart()
-                stage = .intro
-            }
-        }
-    }
-
-    private func secondaryButton(_ title: String, action: @escaping () -> Void) -> some View {
-        Button(title, action: action)
-            .font(.subheadline.weight(.semibold))
-            .foregroundStyle(Color.brandPlum)
-            .frame(minHeight: 44)
-    }
-
-    // MARK: - Copy per state
-
-    private var isFinished: Bool {
-        if case .finished = viewModel.status { true } else { false }
-    }
-
-    private var heading: String {
-        if isFinished {
-            return "Your vocal range"
-        }
-        if viewModel.prompt == .speaking {
-            return "Let's warm up"
-        }
-        return viewModel.title
-    }
-
-    private var subtitle: String {
-        if isFinished {
-            return "We'll use it to pick song keys that fit your voice."
-        }
-        if viewModel.prompt == .speaking {
-            return "Read the sentences below in your everyday voice"
-        }
-        return viewModel.instructions
-    }
-
-    private var ringLabel: String {
-        switch viewModel.status {
-        case .idle:
-            "Tap Start when you're ready"
-        case .listening:
-            viewModel.liveNoteName ?? (viewModel.prompt == .speaking ? "Listening…" : "Hmm…")
-        case .captured(let note):
-            name(note)
-        case .finished(let range):
-            "\(name(range.lowestMIDI)) – \(name(range.highestMIDI))"
-        case .failed:
-            ""
-        }
-    }
-
-    private var emphasizesRingLabel: Bool {
-        switch viewModel.status {
-        case .captured, .finished: true
-        case .listening: viewModel.liveNoteName != nil
-        case .idle, .failed: false
-        }
-    }
-
-    private var tip: (title: String, message: String, systemImage: String)? {
-        switch viewModel.status {
-        case .finished, .failed:
-            return nil
-        case .idle, .listening, .captured:
-            switch viewModel.prompt {
-            case .speaking:
-                return nil
-            case .lowest:
-                return ("Keep your voice steady", "Try to hold the same tone until the ring fills.", "waveform")
-            case .highest:
-                return ("Keep it comfortable", "Don't shout or strain. Hold the note until the ring fills.", "waveform")
-            }
-        }
-    }
-
-    private func name(_ midi: Float) -> String {
-        PitchMath.noteName(midi: Int(midi.rounded()))
-    }
-
-    // MARK: - Help
+    // MARK: - Help Sheet
 
     private var help: some View {
         NavigationStack {
             List {
-                Section("Three short steps") {
-                    Label("Read a short passage in your normal speaking voice.", systemImage: "1.circle")
-                    Label("Hum your lowest comfortable note and hold it.", systemImage: "2.circle")
-                    Label("Sing your highest comfortable note and hold it.", systemImage: "3.circle")
+                Section("Steps") {
+                    Label("Warm up: read aloud in your normal speaking voice.", systemImage: "1.circle")
+                    Label("Humming: start low and guide upward.", systemImage: "2.circle")
+                    Label("Find your lowest and highest comfortable notes.", systemImage: "3.circle")
                 }
                 Section {
-                    Label("Connect a headset with a microphone. The test listens through the headset.",
-                          systemImage: "headphones")
-                    Label("The ring fills while your note stays steady. When it's full, the note is saved.",
-                          systemImage: "circle.dashed")
+                    Label("Connect a headset with a microphone for best accuracy.", systemImage: "headphones")
+                    Label("Hold steady until the meter fills.", systemImage: "circle.dashed")
                 }
             }
             .navigationTitle("How the test works")
@@ -332,8 +437,13 @@ struct VocalRangeTestView: View {
 
 #if DEBUG
 #Preview {
-    VocalRangeTestView(viewModel: VocalRangeViewModel(
-        source: FakeLivePitchSource(notes: [57, 48, 67]), repository: FakeVocalRangeRepository(),
-        configuration: .default, onSaved: {}))
+    VocalRangeTestView(
+        viewModel: VocalRangeViewModel(
+            source: FakeLivePitchSource(notes: [57, 48, 67]),
+            repository: FakeVocalRangeRepository(),
+            configuration: .default,
+            onSaved: {}
+        )
+    )
 }
 #endif

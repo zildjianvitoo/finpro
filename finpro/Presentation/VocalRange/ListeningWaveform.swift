@@ -11,6 +11,7 @@ import SwiftUI
 struct ListeningWaveform: View {
     var isActive: Bool
     var hearsVoice: Bool
+    var barColor: Color = Color.micIconHighlight
 
     private static let barCount = 25
     private static let barWidth: CGFloat = 3
@@ -24,7 +25,7 @@ struct ListeningWaveform: View {
                 HStack(spacing: Self.barSpacing) {
                     ForEach(0..<Self.barCount, id: \.self) { index in
                         Capsule()
-                            .fill(Color.waveformBar.opacity(opacity(for: index)))
+                            .fill(barColor.opacity(opacity(for: index)))
                             .frame(width: Self.barWidth, height: height(for: index, phase: phase))
                     }
                 }
@@ -42,7 +43,7 @@ struct ListeningWaveform: View {
             Rectangle().frame(width: 1.5)
             Circle().frame(width: 5, height: 5)
         }
-        .foregroundStyle(.secondary)
+        .foregroundStyle(barColor.opacity(0.8))
         .frame(height: Self.maxHeight + 14)
     }
 
