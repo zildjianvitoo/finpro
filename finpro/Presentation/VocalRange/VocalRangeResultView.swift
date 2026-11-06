@@ -69,37 +69,33 @@ struct VocalRangeResultView: View {
     // MARK: - Top Banner
 
     private var topBanner: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .center, spacing: 8) {
             Text("Your vocal range")
                 .font(.system(size: 11, weight: .regular))
                 .foregroundStyle(Color.white.opacity(0.7))
 
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Text(classification.name)
-                    .font(.system(size: 32, weight: .bold))
+                    .font(.system(size: 34, weight: .bold))
                     .foregroundStyle(.white)
 
                 Text("(\(lowName)-\(highName))")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Color.white.opacity(0.8))
             }
 
             Text(isFemale ? "Female voice" : "Male voice")
                 .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12)
+                .foregroundStyle(Color.brandPlum)
+                .padding(.horizontal, 14)
                 .padding(.vertical, 4)
                 .background(
                     Capsule()
-                        .fill(Color.white.opacity(0.15))
-                )
-                .overlay(
-                    Capsule()
-                        .stroke(Color.white.opacity(0.3), lineWidth: 1)
+                        .fill(Color.white)
                 )
                 .padding(.top, 4)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .center)
         .padding(.horizontal, 24)
         .padding(.top, 16)
         .padding(.bottom, 24)
@@ -138,37 +134,37 @@ struct VocalRangeResultView: View {
     }
 
     private var comfortBar: some View {
-        ZStack {
-            // Base track with multi-tone gradient
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color(red: 0.85, green: 0.45, blue: 0.20),
-                            Color(red: 0.95, green: 0.80, blue: 0.30),
-                            Color.micIconHighlight,
-                            Color(red: 0.95, green: 0.80, blue: 0.30),
-                            Color(red: 0.85, green: 0.45, blue: 0.20)
-                        ],
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                )
-                .frame(height: 12)
+        GeometryReader { proxy in
+            let width = proxy.size.width
+            let leftFraction: CGFloat = 0.20
+            let rightFraction: CGFloat = 0.80
 
-            // Markers for comfort zone
-            HStack {
-                Spacer().frame(width: 40)
+            ZStack(alignment: .leading) {
+                // Base dark track
+                Capsule()
+                    .fill(Color(red: 0.15, green: 0.15, blue: 0.15))
+                    .frame(height: 12)
+
+                // Lime comfort range fill
+                Capsule()
+                    .fill(Color.micIconHighlight)
+                    .frame(width: max(0, width * (rightFraction - leftFraction)), height: 12)
+                    .offset(x: width * leftFraction)
+
+                // Left boundary marker
                 Rectangle()
-                    .fill(Color.black.opacity(0.6))
+                    .fill(Color.black)
                     .frame(width: 2, height: 18)
-                Spacer()
+                    .offset(x: width * leftFraction)
+
+                // Right boundary marker
                 Rectangle()
-                    .fill(Color.black.opacity(0.6))
+                    .fill(Color.black)
                     .frame(width: 2, height: 18)
-                Spacer().frame(width: 40)
+                    .offset(x: width * rightFraction - 2)
             }
         }
+        .frame(height: 18)
     }
 
     // MARK: - Transposition Section
@@ -213,11 +209,12 @@ struct VocalRangeResultView: View {
     // MARK: - Recommendation Card
 
     private var recommendationCard: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "gearshape")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .padding(.top, 2)
+        HStack(alignment: .center, spacing: 14) {
+            Image(systemName: "sun.max")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Color.brandPlum)
+                .frame(width: 34, height: 34)
+                .background(Circle().fill(Color(white: 0.94)))
 
             VStack(alignment: .leading, spacing: 3) {
                 Text("Great match for \(selectedTransposition)")
@@ -233,8 +230,13 @@ struct VocalRangeResultView: View {
         .padding(14)
         .background(
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(.systemGray6))
+                .fill(Color(.systemBackground))
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color(white: 0.90), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
     }
 
     // MARK: - Footer

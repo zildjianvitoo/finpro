@@ -151,7 +151,6 @@ struct VocalRangeTestView: View {
                         stage = .hummingGuide
                     }
                     .buttonStyle(.primary)
-                    .disabled(!isCaptured)
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 12)
@@ -192,7 +191,7 @@ struct VocalRangeTestView: View {
                             label: "Hmm..."
                         )
 
-                        Text("Hmm...")
+                        Text("Hhmm...")
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
                     }
@@ -205,8 +204,7 @@ struct VocalRangeTestView: View {
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 16) {
                     TipCard(
-                        title: "Keep your voice steady",
-                        message: "Stop before your voice feels strained or turns into vocal fry.",
+                        message: "Keep your voice steady. Stop before your voice feels strained or turns into vocal fry.",
                         systemImage: "lightbulb"
                     )
 
@@ -227,7 +225,7 @@ struct VocalRangeTestView: View {
     // MARK: - Lowest & Highest Test Screen (Screens 2 & 3)
 
     private var testScreen: some View {
-        let isLowest = viewModel.prompt == .lowest
+        let isLowest = viewModel.prompt != .highest
 
         return VStack(spacing: 0) {
             topBar(onBack: {
@@ -269,7 +267,7 @@ struct VocalRangeTestView: View {
                             .padding(.top, 8)
 
                         // Note and frequency
-                        noteLabel
+                        noteLabel(isLowest: isLowest)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
@@ -280,14 +278,13 @@ struct VocalRangeTestView: View {
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 16) {
                     TipCard(
-                        title: isLowest ? "Hold at the lowest note" : "Hold at the highest note",
                         message: isLowest ?
                             "Hold at the lowest note you can make comfortably, without vocal fry or strain." :
                             "Hold at the highest note that stays clear and comfortable. Falsetto is okay.",
                         systemImage: "lightbulb"
                     )
 
-                    actions
+                    actions(isLowest: isLowest)
                 }
                 .padding(.horizontal, 24)
                 .padding(.top, 12)
@@ -310,9 +307,9 @@ struct VocalRangeTestView: View {
         .frame(width: 220, height: 16)
     }
 
-    private var noteLabel: some View {
+    private func noteLabel(isLowest: Bool) -> some View {
         VStack(spacing: 2) {
-            let noteName = currentDisplayNoteName
+            let noteName = currentDisplayNoteName(isLowest: isLowest)
             Text(noteName)
                 .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(.primary)
@@ -323,21 +320,21 @@ struct VocalRangeTestView: View {
                     .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(.secondary)
             } else {
-                Text(viewModel.prompt == .lowest ? "(65 Hz)" : "(880 Hz)")
+                Text(isLowest ? "(65 Hz)" : "(880 Hz)")
                     .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(.secondary)
             }
         }
     }
 
-    private var currentDisplayNoteName: String {
+    private func currentDisplayNoteName(isLowest: Bool) -> String {
         switch viewModel.status {
         case .captured(let note):
             PitchMath.noteName(midi: Int(note.rounded()))
         case .listening:
-            viewModel.liveNoteName ?? (viewModel.prompt == .lowest ? "C2" : "A5")
+            viewModel.liveNoteName ?? (isLowest ? "C2" : "A5")
         default:
-            viewModel.prompt == .lowest ? "C2" : "A5"
+            isLowest ? "C2" : "A5"
         }
     }
 
@@ -350,20 +347,23 @@ struct VocalRangeTestView: View {
     }
 
     @ViewBuilder
-    private var actions: some View {
-        let isLowest = viewModel.prompt == .lowest
-
+    private func actions(isLowest: Bool) -> some View {
         switch viewModel.status {
-        case .idle:
+        case .idle, .listening:
             Button(isLowest ? "Continue" : "Check Result") {
-                viewModel.listen()
+                if isLowest {
+                    viewModel.next()
+                    viewModel.listen()
+                } else {
+                    viewModel.next()
+                    if case .finished(let range) = viewModel.status {
+                        stage = .result(range)
+                    } else {
+                        stage = .result(VocalRange(lowestMIDI: 45, highestMIDI: 76))
+                    }
+                }
             }
             .buttonStyle(.primary)
-
-        case .listening:
-            Button(isLowest ? "Continue" : "Check Result") {}
-                .buttonStyle(.primary)
-                .disabled(true)
 
         case .captured:
             Button(isLowest ? "Continue" : "Check Result") {
@@ -372,6 +372,11 @@ struct VocalRangeTestView: View {
                     viewModel.listen()
                 } else {
                     viewModel.next()
+                    if case .finished(let range) = viewModel.status {
+                        stage = .result(range)
+                    } else {
+                        stage = .result(VocalRange(lowestMIDI: 45, highestMIDI: 76))
+                    }
                 }
             }
             .buttonStyle(.primary)
@@ -390,18 +395,16 @@ struct VocalRangeTestView: View {
 
     private func topBar(onBack: @escaping () -> Void) -> some View {
         HStack {
-            CircleIconButton(title: "Back", systemImage: "arrow.left", action: onBack)
-            Spacer()
-            if let microphone = viewModel.microphoneName {
-                Label(microphone, systemImage: "headphones")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+            LiquidGlassGroup {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .frame(width: 40, height: 40)
+                        .liquidGlassCircle()
+                }
             }
             Spacer()
-            CircleIconButton(title: "How the test works", systemImage: "questionmark") {
-                showsHelp = true
-            }
         }
         .padding(.horizontal, 24)
         .padding(.top, 8)

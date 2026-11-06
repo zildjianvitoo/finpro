@@ -65,11 +65,14 @@ struct VocalRangeVoiceProfileView: View {
 
     private var topBar: some View {
         HStack {
-            Button(action: onBack) {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .frame(width: 36, height: 36)
+            LiquidGlassGroup {
+                Button(action: onBack) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .frame(width: 40, height: 40)
+                        .liquidGlassCircle()
+                }
             }
             Spacer()
         }

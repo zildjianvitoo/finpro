@@ -2,39 +2,50 @@
 //  TipCard.swift
 //  finpro
 //
-//  Rounded hint card: icon, divider, a short title and one line of guidance.
+//  Rounded hint card: icon, divider, a short title and guidance.
 //
 
 import SwiftUI
 
 struct TipCard: View {
-    let title: String
+    var title: String? = nil
     let message: String
-    var systemImage = "waveform"
+    var systemImage = "lightbulb"
 
     var body: some View {
-        HStack(spacing: 14) {
+        HStack(spacing: 12) {
             Image(systemName: systemImage)
-                .font(.callout)
+                .font(.system(size: 16))
                 .foregroundStyle(.secondary)
-                .frame(width: 36, height: 36)
-                .background(Circle().fill(Color.ringTrack.opacity(0.6)))
+                .frame(width: 32, height: 32)
+
             Rectangle()
-                .fill(Color.ringTrack)
-                .frame(width: 1, height: 32)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.subheadline.weight(.semibold))
+                .fill(Color(white: 0.88))
+                .frame(width: 1, height: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                if let title, !title.isEmpty {
+                    Text(title)
+                        .font(.subheadline.weight(.semibold))
+                }
                 Text(message)
-                    .font(.caption)
+                    .font(.system(size: 11, weight: .regular))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .background(RoundedRectangle(cornerRadius: 18).fill(Color.cardBackground))
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color(.systemBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color(white: 0.90), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
         .accessibilityElement(children: .combine)
     }
 }

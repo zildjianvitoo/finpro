@@ -135,12 +135,12 @@ final class VocalRangeViewModel {
     }
 
     func next() {
-        guard case .captured = status,
-              let next = Prompt(rawValue: prompt.rawValue + 1) else { return }
-        prompt = next
-        status = .idle
-        holdProgress = 0
-        liveMIDI = nil
+        if let next = Prompt(rawValue: prompt.rawValue + 1) {
+            prompt = next
+            status = .idle
+            holdProgress = 0
+            liveMIDI = nil
+        }
     }
 
     func save() {
