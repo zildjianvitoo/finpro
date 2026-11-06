@@ -21,6 +21,8 @@ struct RootView: View {
     var body: some View {
         Group {
             switch flow.step {
+            case .onboarding:
+                OnboardingView(onFinish: flow.onboardingFinished)
             case .vocalRange:
                 PermissionGate([.microphone], provider: flow.container.permissions) {
                     VocalRangeTestView(viewModel: VocalRangeViewModel(
