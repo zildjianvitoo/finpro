@@ -26,7 +26,7 @@ struct OnboardingView: View {
             badge: "VOCAL GUIDE",
             title: "Stay on pitch, as you sing.",
             subtitle: "Follow visual pitch and timing guides as you record.",
-            imageName: "OnboardingPitchCard",
+            imageName: "onboarding-2",
             buttonTitle: "Continue"
         ),
         WalkthroughPage(
