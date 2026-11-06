@@ -20,11 +20,14 @@ Guide: `docs/MIGRATION-GUIDE.md` (copy) — the original lives at
   - `PoCConfiguration` → `AppConfiguration` (type, 3 files, UserDefaults keys), 148 file headers `//  poc-c6` → `//  finpro`, Logger fallback subsystem `finpro`, LRCLIB user agent `finpro/1.0 (Apple Developer Academy)`. No behavior or threshold changes; all checks pass
   - Still open: add the repo URL to the LRCLIB user agent once the GitHub repo exists; `docs/prd.md` still says `PoCConfiguration` (update with the user)
 - [ ] 8. New UI: import / key selection / vocal range / recording / export — branch `feat/new-ui`
-  - [x] Vocal range (2026-11-04): intro (design frame 1) + ring screen in the style of design frame 3 for all three prompts. Shared pieces in `Presentation/DesignSystem/` (`PrimaryButtonStyle`, `CircleIconButton`, `TipCard`) and colors in `Assets.xcassets`. `VocalRangeViewModel` unchanged. Checked on the iPhone 17 simulator with the fake pitch source; not yet on a device
+  - [x] Home screen (`Presentation/Home/`): HomeView, HomeViewModel, palette and cards (`SurfaceButton`, `SurfaceCard`, `VocalRangePill`) (2026-11-06)
+  - [x] App Onboarding (`Presentation/Onboarding/`): EasySingLogoView splash + 3 swipeable walkthrough pages with iOS 26+ Liquid Glass (`.liquidGlassCircle()`, `.liquidGlassCapsule()`) (2026-11-06)
+  - [x] Vocal range flow (`Presentation/VocalRange/`): intro -> voice profile cards (female/male) -> warmup -> humming -> lowest note -> highest note -> result screen (Soprano/Tenor, comfort zone bar, transposition pills) (2026-11-06)
   - [ ] Import / key selection / ready / recording / export: waiting for designs
 - [ ] 9. PoC tagged poc-final (by user)
 
 ## Decisions log
+- 2026-11-06: Adopted mandatory simulator verification loop for UI slicing: build, install/launch booted simulator, auto-screenshot via `simctl`, multimodal inspection, and iterate until matching Figma.
 - 2026-11-04: new repo, logic same + new UI, single target, temporary name.
 - 2026-11-04: project named `finpro`, bundle ID `pakenanya.finpro`. All PoC code copied as is (Views included, to be replaced later); only the entry point was renamed `poc_c6App` → `FinproApp`. Xcode template `ContentView.swift` removed.
 - 2026-11-04: Fakes and debug screens excluded from Release builds. A Release build on the simulator runs the real repositories (no simulated singer).

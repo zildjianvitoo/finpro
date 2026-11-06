@@ -197,6 +197,7 @@ feat(contract)!: rename audioDuration to duration
 
 ## 9. Definition of Done (per task)
 - [ ] Build sukses, tidak ada warning baru
+- [ ] Slicing UI diverifikasi via simulator: build, deploy ke booted iOS simulator, screenshot otomatis (`xcrun simctl io booted screenshot`), inspeksi visual multimodal, dan iterasi mandiri sampai UI presisi sesuai Figma sebelum selesai
 - [ ] `./scripts/check-contracts.sh` hijau (kalau menyentuh `Domain/`)
 - [ ] `./scripts/check-comping.sh` hijau (kalau menyentuh `Data/Composition/`)
 - [ ] Pengecek kontrak dipanggil di titik serah-terima (kalau ada)
