@@ -33,14 +33,14 @@ struct OnboardingView: View {
             badge: "SEAMLESS RECORDING",
             title: "Retake less. Create more.",
             subtitle: "Redo specific parts without restarting. Your takes come together in one cover.",
-            imageName: "OnboardingCompingCard",
+            imageName: "onboarding-3",
             buttonTitle: "Continue"
         ),
         WalkthroughPage(
             badge: "SETUP",
             title: "Get your setup ready.",
             subtitle: "Use wired earphones or headphones for more synchronized audio. Bluetooth may cause recording delays.",
-            imageName: "OnboardingSetupCard",
+            imageName: "onboarding-4",
             buttonTitle: "I'm ready"
         )
     ]
