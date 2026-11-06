@@ -2,7 +2,7 @@
 //  OnboardingView.swift
 //  finpro
 //
-//  App onboarding and walkthrough flow: Splash + 3 guide screens.
+//  App onboarding and walkthrough flow: Splash + 3 swipeable guide screens.
 //
 
 import SwiftUI
@@ -51,11 +51,11 @@ struct OnboardingView: View {
                 splashScreen
                     .transition(.opacity)
             } else {
-                walkthroughScreen
+                walkthroughContainer
                     .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
             }
         }
-        .animation(.default, value: currentStep)
+        .animation(.default, value: currentStep < 0)
         .background(Color(.systemBackground))
     }
 
@@ -88,73 +88,92 @@ struct OnboardingView: View {
         }
     }
 
-    // MARK: - Walkthrough Screen
+    // MARK: - Walkthrough Container (Swipeable)
 
-    private var walkthroughScreen: some View {
-        let page = pages[currentStep]
-
-        return VStack(spacing: 0) {
+    private var walkthroughContainer: some View {
+        VStack(spacing: 0) {
             topBar
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    badgeView(title: page.badge)
-
-                    Text(page.title)
-                        .font(.system(size: 26, weight: .bold))
-                        .foregroundStyle(.primary)
-
-                    Text(page.subtitle)
-                        .font(.system(size: 14, weight: .regular))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(.bottom, 12)
-
-                    Image(page.imageName)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxWidth: .infinity)
-                        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            TabView(selection: $currentStep) {
+                ForEach(0..<pages.count, id: \.self) { index in
+                    pageContent(for: pages[index])
+                        .tag(index)
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 8)
-                .padding(.bottom, 16)
             }
-            .scrollBounceBehavior(.basedOnSize)
+            .tabViewStyle(.page(indexDisplayMode: .never))
 
-            footer(buttonTitle: page.buttonTitle)
+            footer
         }
     }
 
-    private var topBar: some View {
-        HStack {
-            Button {
-                withAnimation {
-                    currentStep -= 1
-                }
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 16, weight: .semibold))
+    private func pageContent(for page: WalkthroughPage) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                badgeView(title: page.badge)
+
+                Text(page.title)
+                    .font(.system(size: 26, weight: .bold))
                     .foregroundStyle(.primary)
-                    .frame(width: 36, height: 36)
-            }
 
-            Spacer()
+                Text(page.subtitle)
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 12)
 
-            if currentStep < pages.count - 1 {
-                Button("Skip") {
-                    onFinish()
-                }
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                .background(Capsule().fill(Color.skipPillBackground))
+                Image(page.imageName)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             }
+            .padding(.horizontal, 24)
+            .padding(.top, 8)
+            .padding(.bottom, 16)
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 8)
-        .padding(.bottom, 8)
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    // MARK: - Top Bar (with Liquid Glass)
+
+    private var topBar: some View {
+        LiquidGlassGroup {
+            HStack {
+                Button {
+                    withAnimation {
+                        if currentStep == 0 {
+                            currentStep = -1
+                        } else {
+                            currentStep -= 1
+                        }
+                    }
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(.primary)
+                        .frame(width: 38, height: 38)
+                }
+                .buttonStyle(.plain)
+                .liquidGlassCircle()
+
+                Spacer()
+
+                if currentStep < pages.count - 1 {
+                    Button(action: onFinish) {
+                        Text("Skip")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 8)
+                    }
+                    .buttonStyle(.plain)
+                    .liquidGlassCapsule()
+                }
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
+        }
     }
 
     private func badgeView(title: String) -> some View {
@@ -167,19 +186,25 @@ struct OnboardingView: View {
             .background(Capsule().fill(Color.badgeBackground))
     }
 
-    private func footer(buttonTitle: String) -> some View {
-        VStack(spacing: 20) {
+    // MARK: - Footer
+
+    private var footer: some View {
+        let isLastPage = currentStep >= pages.count - 1
+        let buttonTitle = isLastPage ? "I'm ready" : "Continue"
+
+        return VStack(spacing: 20) {
             // Page dots
             HStack(spacing: 8) {
                 ForEach(0..<pages.count, id: \.self) { index in
                     Circle()
                         .fill(index == currentStep ? Color.primary : Color(.systemGray4))
                         .frame(width: 6, height: 6)
+                        .animation(.easeInOut(duration: 0.2), value: currentStep)
                 }
             }
 
             Button(buttonTitle) {
-                if currentStep < pages.count - 1 {
+                if !isLastPage {
                     withAnimation { currentStep += 1 }
                 } else {
                     onFinish()
