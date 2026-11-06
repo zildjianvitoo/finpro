@@ -3,31 +3,56 @@
 //  finpro
 //
 //  Speaking baseline and two comfortable limits, each confirmed by a stable hold (PRD §5.1).
-//  An intro screen first, then one ring screen per prompt.
+//  Intro -> Voice description -> Warm up (speaking) -> Lowest note -> Highest note.
 //
 
 import SwiftUI
 
 struct VocalRangeTestView: View {
-    @State private var viewModel: VocalRangeViewModel
-    @State private var showsIntro = true
-    @State private var showsHelp = false
+    enum Stage {
+        case intro
+        case voiceProfile
+        case test
+    }
 
-    init(viewModel: VocalRangeViewModel) {
+    @State private var viewModel: VocalRangeViewModel
+    @State private var stage: Stage = .intro
+    @State private var showsHelp = false
+    @State private var voiceType: VocalRangeVoiceProfileView.VoiceType?
+
+    let onDismiss: (() -> Void)?
+
+    init(viewModel: VocalRangeViewModel, onDismiss: (() -> Void)? = nil) {
         _viewModel = State(initialValue: viewModel)
+        self.onDismiss = onDismiss
     }
 
     var body: some View {
         Group {
-            if showsIntro {
-                VocalRangeIntroView { showsIntro = false }
-                    .transition(.opacity)
-            } else {
+            switch stage {
+            case .intro:
+                VocalRangeIntroView(onBack: onDismiss) {
+                    stage = .voiceProfile
+                }
+                .transition(.opacity)
+
+            case .voiceProfile:
+                VocalRangeVoiceProfileView(
+                    onBack: { stage = .intro },
+                    onContinue: { type in
+                        voiceType = type
+                        stage = .test
+                        viewModel.listen()
+                    }
+                )
+                .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+
+            case .test:
                 testScreen
-                    .transition(.opacity)
+                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
             }
         }
-        .animation(.default, value: showsIntro)
+        .animation(.default, value: stage)
         .onDisappear { viewModel.stopListening() }
         .sheet(isPresented: $showsHelp) { help }
     }
@@ -40,6 +65,11 @@ struct VocalRangeTestView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     header
+
+                    if viewModel.prompt == .speaking && !isFinished {
+                        warmupPassage
+                    }
+
                     content
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
@@ -54,8 +84,13 @@ struct VocalRangeTestView: View {
     private var topBar: some View {
         HStack {
             CircleIconButton(title: "Back", systemImage: "arrow.left") {
-                viewModel.restart()
-                showsIntro = true
+                if viewModel.prompt == .speaking && !isFinished {
+                    viewModel.restart()
+                    stage = .voiceProfile
+                } else {
+                    viewModel.restart()
+                    stage = .intro
+                }
             }
             Spacer()
             microphoneLabel
@@ -66,7 +101,7 @@ struct VocalRangeTestView: View {
         }
         .padding(.horizontal, 24)
         .padding(.top, 8)
-        .padding(.bottom, 20)
+        .padding(.bottom, 16)
     }
 
     @ViewBuilder
@@ -83,13 +118,24 @@ struct VocalRangeTestView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(heading)
                 .font(.largeTitle.bold())
+                .foregroundStyle(viewModel.prompt == .speaking && !isFinished ? Color.brandPlum : Color.primary)
                 .fixedSize(horizontal: false, vertical: true)
+
             Text(subtitle)
-                .font(viewModel.prompt == .speaking && !isFinished ? .body : .subheadline)
-                .foregroundStyle(viewModel.prompt == .speaking && !isFinished ? .primary : .secondary)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var warmupPassage: some View {
+        Text("The sky looks so beautiful this morning, with soft clouds floating across the blue sky. A gentle breeze comes through the trees, and the air feels cool and refreshing.")
+            .font(.system(size: 16, weight: .regular))
+            .lineSpacing(4)
+            .foregroundStyle(.primary)
+            .padding(.top, 16)
+            .padding(.bottom, 24)
     }
 
     @ViewBuilder
@@ -98,11 +144,22 @@ struct VocalRangeTestView: View {
             ErrorStateView(error: error)
                 .frame(minHeight: 320)
         } else {
-            VocalRangeRing(progress: viewModel.holdProgress,
-                           isListening: viewModel.status == .listening,
-                           hearsVoice: viewModel.liveMIDI != nil,
-                           label: ringLabel,
-                           emphasizesLabel: emphasizesRingLabel)
+            VStack(spacing: 8) {
+                VocalRangeRing(
+                    progress: viewModel.holdProgress,
+                    isListening: viewModel.status == .listening,
+                    hearsVoice: viewModel.liveMIDI != nil,
+                    label: ringLabel,
+                    emphasizesLabel: emphasizesRingLabel,
+                    showsMicrophoneIcon: viewModel.prompt == .speaking && !isFinished
+                )
+
+                if viewModel.prompt == .speaking && !isFinished {
+                    Text("Listening...")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
     }
 
@@ -124,24 +181,47 @@ struct VocalRangeTestView: View {
     private var actions: some View {
         switch viewModel.status {
         case .idle:
-            Button("Start") { viewModel.listen() }
-                .buttonStyle(.primaryWithDot)
-        case .listening:
-            Button(viewModel.prompt == .speaking ? "Keep reading…" : "Listening…") {}
+            if viewModel.prompt == .speaking {
+                Button("Continue") {
+                    viewModel.listen()
+                }
                 .buttonStyle(.primary)
-                .disabled(true)
+            } else {
+                Button("Start") { viewModel.listen() }
+                    .buttonStyle(.primaryWithDot)
+            }
+
+        case .listening:
+            if viewModel.prompt == .speaking {
+                Button("Continue") {}
+                    .buttonStyle(.primary)
+                    .disabled(true)
+            } else {
+                Button("Listening…") {}
+                    .buttonStyle(.primary)
+                    .disabled(true)
+            }
+
         case .captured:
             Button("Continue") { viewModel.next() }
                 .buttonStyle(.primary)
             secondaryButton("Retry") { viewModel.listen() }
+
         case .finished:
             Button("Save and Continue") { viewModel.save() }
                 .buttonStyle(.primary)
-            secondaryButton("Start Over") { viewModel.restart() }
+            secondaryButton("Start Over") {
+                viewModel.restart()
+                stage = .intro
+            }
+
         case .failed:
             Button("Retry") { viewModel.listen() }
                 .buttonStyle(.primaryWithDot)
-            secondaryButton("Start Over") { viewModel.restart() }
+            secondaryButton("Start Over") {
+                viewModel.restart()
+                stage = .intro
+            }
         }
     }
 
@@ -159,11 +239,23 @@ struct VocalRangeTestView: View {
     }
 
     private var heading: String {
-        isFinished ? "Your vocal range" : viewModel.title
+        if isFinished {
+            return "Your vocal range"
+        }
+        if viewModel.prompt == .speaking {
+            return "Let's warm up"
+        }
+        return viewModel.title
     }
 
     private var subtitle: String {
-        isFinished ? "We'll use it to pick song keys that fit your voice." : viewModel.instructions
+        if isFinished {
+            return "We'll use it to pick song keys that fit your voice."
+        }
+        if viewModel.prompt == .speaking {
+            return "Read the sentences below in your everyday voice"
+        }
+        return viewModel.instructions
     }
 
     private var ringLabel: String {
@@ -196,7 +288,7 @@ struct VocalRangeTestView: View {
         case .idle, .listening, .captured:
             switch viewModel.prompt {
             case .speaking:
-                return ("Speak naturally", "Read at your usual pace until the ring fills.", "text.quote")
+                return nil
             case .lowest:
                 return ("Keep your voice steady", "Try to hold the same tone until the ring fills.", "waveform")
             case .highest:

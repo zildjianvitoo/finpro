@@ -60,6 +60,12 @@ final class AppFlow {
         step = .onboarding
     }
 
+    /// Dismiss vocal range test back to previous step (Home if already tested, or Onboarding).
+    func dismissVocalRange() {
+        container.audioPreview.stop()
+        step = container.vocalRange.load() == nil ? .onboarding : .home
+    }
+
     /// Vocal range screen (Ikzaz) saved a range.
     func vocalRangeSaved() {
         step = .home

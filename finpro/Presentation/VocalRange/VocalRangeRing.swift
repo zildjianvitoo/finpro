@@ -16,6 +16,8 @@ struct VocalRangeRing: View {
     var label: String
     /// Shows the label large and bold (a captured note or the final range).
     var emphasizesLabel = false
+    /// Shows a microphone icon in the center disc for warm-up.
+    var showsMicrophoneIcon = false
 
     private static let ringDiameter: CGFloat = 200
     private static let lineWidth: CGFloat = 10
@@ -37,20 +39,29 @@ struct VocalRangeRing: View {
                 .frame(width: Self.ringDiameter, height: Self.ringDiameter)
                 .animation(.easeOut(duration: 0.15), value: progress)
             Circle()
-                .fill(Color.surfaceElevated)
+                .fill(showsMicrophoneIcon ? Color.brandPlum : Color.surfaceElevated)
                 .shadow(color: .black.opacity(0.06), radius: 12, y: 4)
                 .frame(width: Self.ringDiameter - 34, height: Self.ringDiameter - 34)
-            VStack(spacing: 12) {
-                ListeningWaveform(isActive: isListening, hearsVoice: hearsVoice)
-                    .frame(width: Self.ringDiameter - 70)
-                Text(label)
-                    .font(emphasizesLabel ? .title2.bold() : .footnote)
-                    .foregroundStyle(emphasizesLabel ? .primary : .secondary)
-                    .monospacedDigit()
-                    .contentTransition(.numericText())
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.6)
-                    .frame(width: Self.ringDiameter - 60)
+
+            if showsMicrophoneIcon {
+                VStack(spacing: 8) {
+                    Image(systemName: "mic.fill")
+                        .font(.system(size: 36, weight: .semibold))
+                        .foregroundStyle(Color.micIconHighlight)
+                }
+            } else {
+                VStack(spacing: 12) {
+                    ListeningWaveform(isActive: isListening, hearsVoice: hearsVoice)
+                        .frame(width: Self.ringDiameter - 70)
+                    Text(label)
+                        .font(emphasizesLabel ? .title2.bold() : .footnote)
+                        .foregroundStyle(emphasizesLabel ? .primary : .secondary)
+                        .monospacedDigit()
+                        .contentTransition(.numericText())
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                        .frame(width: Self.ringDiameter - 60)
+                }
             }
         }
         .frame(height: Self.ringDiameter * 1.4)

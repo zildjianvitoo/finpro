@@ -25,11 +25,13 @@ struct RootView: View {
                 OnboardingView(onFinish: flow.onboardingFinished)
             case .vocalRange:
                 PermissionGate([.microphone], provider: flow.container.permissions) {
-                    VocalRangeTestView(viewModel: VocalRangeViewModel(
-                        source: flow.container.livePitch,
-                        repository: flow.container.vocalRange,
-                        configuration: flow.container.configuration,
-                        onSaved: flow.vocalRangeSaved))
+                    VocalRangeTestView(
+                        viewModel: VocalRangeViewModel(
+                            source: flow.container.livePitch,
+                            repository: flow.container.vocalRange,
+                            configuration: flow.container.configuration,
+                            onSaved: flow.vocalRangeSaved),
+                        onDismiss: flow.dismissVocalRange)
                 }
             case .home:
                 HomeView(viewModel: HomeViewModel(
