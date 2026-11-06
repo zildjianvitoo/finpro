@@ -29,6 +29,11 @@ struct RootView: View {
                         configuration: flow.container.configuration,
                         onSaved: flow.vocalRangeSaved))
                 }
+            case .home:
+                HomeView(viewModel: HomeViewModel(
+                    vocalRangeRepository: flow.container.vocalRange,
+                    onCreateCover: flow.createNewCover,
+                    onRetestVocalRange: flow.retestVocalRange))
             case .importSong:
                 VStack {
                     if let error = flow.preparationError { ErrorStateView(error: error) }

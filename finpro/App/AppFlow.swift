@@ -14,6 +14,7 @@ import Observation
 final class AppFlow {
     enum Step: Equatable {
         case vocalRange
+        case home
         case importSong
         case chooseKey
         case ready
@@ -33,7 +34,7 @@ final class AppFlow {
 
     init(container: AppContainer) {
         self.container = container
-        step = container.vocalRange.load() == nil ? .vocalRange : .importSong
+        step = container.vocalRange.load() == nil ? .vocalRange : .home
         // Leftovers from a session that ended in a crash.
         SessionFiles.cleanUp()
         container.modelPrewarmer?.start()
@@ -41,6 +42,11 @@ final class AppFlow {
 
     /// Vocal range screen (Ikzaz) saved a range.
     func vocalRangeSaved() {
+        step = .home
+    }
+
+    /// Home screen: user tapped Create New Cover.
+    func createNewCover() {
         step = .importSong
     }
 
@@ -116,7 +122,7 @@ final class AppFlow {
         preparedSong = nil
         compingPlan = nil
         container.takeLog.clear()
-        step = .importSong
+        step = .home
     }
 
     func retestVocalRange() {
