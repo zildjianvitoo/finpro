@@ -2,27 +2,37 @@
 //  LiquidGlass.swift
 //  finpro
 //
-//  iOS 26+ Liquid Glass styling with graceful fallback to ultraThinMaterial.
+//  iOS 26+ Liquid Glass button styles with a system bordered fallback on earlier versions.
 //
 
 import SwiftUI
 
 extension View {
+    /// Round glass button for icon-only controls such as back. Apply to a `Button`.
     @ViewBuilder
-    func liquidGlassCircle() -> some View {
+    func glassCircleButtonStyle() -> some View {
         if #available(iOS 26, *) {
-            self.glassEffect(.regular.interactive(), in: .circle)
+            self.buttonStyle(.glass)
+                .buttonBorderShape(.circle)
+                .controlSize(.large)
         } else {
-            self.background(.ultraThinMaterial, in: Circle())
+            self.buttonStyle(.bordered)
+                .buttonBorderShape(.circle)
+                .controlSize(.large)
         }
     }
 
+    /// Capsule glass button for short text controls such as Skip. Apply to a `Button`.
     @ViewBuilder
-    func liquidGlassCapsule() -> some View {
+    func glassCapsuleButtonStyle() -> some View {
         if #available(iOS 26, *) {
-            self.glassEffect(.regular.interactive(), in: .capsule)
+            self.buttonStyle(.glass)
+                .buttonBorderShape(.capsule)
+                .controlSize(.large)
         } else {
-            self.background(.ultraThinMaterial, in: Capsule())
+            self.buttonStyle(.bordered)
+                .buttonBorderShape(.capsule)
+                .controlSize(.large)
         }
     }
 }

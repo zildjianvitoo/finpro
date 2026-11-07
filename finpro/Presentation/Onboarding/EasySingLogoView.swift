@@ -8,26 +8,23 @@
 import SwiftUI
 
 struct EasySingLogoView: View {
+    /// Bar heights in points, left to right, as drawn in the splash design.
+    private let barHeights: [CGFloat] = [18, 49, 81, 40, 64, 25]
+
     var body: some View {
-        VStack(spacing: 16) {
-            HStack(spacing: 6) {
-                bar(height: 18)
-                bar(height: 32)
-                bar(height: 48)
-                bar(height: 32)
-                bar(height: 18)
+        VStack(spacing: 36) {
+            HStack(spacing: 8) {
+                ForEach(barHeights.indices, id: \.self) { index in
+                    Capsule()
+                        .frame(width: 6, height: barHeights[index])
+                }
             }
-            .foregroundStyle(Color.primary)
+            .accessibilityHidden(true)
 
             Text("EasySing")
-                .font(.system(size: 26, weight: .bold))
-                .foregroundStyle(Color.primary)
+                .font(.system(size: 34, weight: .bold))
         }
-    }
-
-    private func bar(height: CGFloat) -> some View {
-        RoundedRectangle(cornerRadius: 3, style: .continuous)
-            .frame(width: 5, height: height)
+        .foregroundStyle(Color.plumInk)
     }
 }
 

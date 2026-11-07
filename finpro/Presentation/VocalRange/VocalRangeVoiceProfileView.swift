@@ -68,11 +68,10 @@ struct VocalRangeVoiceProfileView: View {
             LiquidGlassGroup {
                 Button(action: onBack) {
                     Image(systemName: "chevron.left")
-                        .font(.system(size: 16, weight: .semibold))
+                        .fontWeight(.semibold)
                         .foregroundStyle(.primary)
-                        .frame(width: 40, height: 40)
-                        .liquidGlassCircle()
                 }
+                .glassCircleButtonStyle()
             }
             Spacer()
         }
