@@ -13,13 +13,17 @@ import Observation
 @Observable
 final class AppFlow {
     enum Step: Equatable {
+        case onboarding
         case vocalRange
+        case home
         case importSong
         case chooseKey
         case ready
         case recording
         case export
     }
+
+    private static let hasCompletedOnboardingKey = "hasCompletedOnboarding"
 
     let container: AppContainer
     private(set) var step: Step
@@ -33,14 +37,42 @@ final class AppFlow {
 
     init(container: AppContainer) {
         self.container = container
-        step = container.vocalRange.load() == nil ? .vocalRange : .importSong
+        let hasCompletedOnboarding = UserDefaults.standard.bool(forKey: Self.hasCompletedOnboardingKey)
+        if !hasCompletedOnboarding {
+            step = .onboarding
+        } else {
+            step = container.vocalRange.load() == nil ? .vocalRange : .home
+        }
         // Leftovers from a session that ended in a crash.
         SessionFiles.cleanUp()
         container.modelPrewarmer?.start()
     }
 
+    /// User completed or skipped the onboarding walkthrough.
+    func onboardingFinished() {
+        UserDefaults.standard.set(true, forKey: Self.hasCompletedOnboardingKey)
+        step = container.vocalRange.load() == nil ? .vocalRange : .home
+    }
+
+    /// Replay onboarding (for testing or debugging).
+    func replayOnboarding() {
+        container.audioPreview.stop()
+        step = .onboarding
+    }
+
+    /// Dismiss vocal range test back to previous step (Home if already tested, or Onboarding).
+    func dismissVocalRange() {
+        container.audioPreview.stop()
+        step = container.vocalRange.load() == nil ? .onboarding : .home
+    }
+
     /// Vocal range screen (Ikzaz) saved a range.
     func vocalRangeSaved() {
+        step = .home
+    }
+
+    /// Home screen: user tapped Create New Cover.
+    func createNewCover() {
         step = .importSong
     }
 
@@ -116,7 +148,7 @@ final class AppFlow {
         preparedSong = nil
         compingPlan = nil
         container.takeLog.clear()
-        step = .importSong
+        step = .home
     }
 
     func retestVocalRange() {

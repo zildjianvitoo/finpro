@@ -21,21 +21,30 @@ struct RootView: View {
     var body: some View {
         Group {
             switch flow.step {
+            case .onboarding:
+                OnboardingView(onFinish: flow.onboardingFinished)
             case .vocalRange:
                 PermissionGate([.microphone], provider: flow.container.permissions) {
-                    VocalRangeTestView(viewModel: VocalRangeViewModel(
-                        source: flow.container.livePitch,
-                        repository: flow.container.vocalRange,
-                        configuration: flow.container.configuration,
-                        onSaved: flow.vocalRangeSaved))
+                    VocalRangeTestView(
+                        viewModel: VocalRangeViewModel(
+                            source: flow.container.livePitch,
+                            repository: flow.container.vocalRange,
+                            configuration: flow.container.configuration,
+                            onSaved: flow.vocalRangeSaved),
+                        onDismiss: flow.dismissVocalRange)
                 }
+            case .home:
+                HomeView(viewModel: HomeViewModel(
+                    vocalRangeRepository: flow.container.vocalRange,
+                    onCreateCover: flow.createNewCover,
+                    onRetestVocalRange: flow.retestVocalRange))
             case .importSong:
                 VStack {
                     if let error = flow.preparationError { ErrorStateView(error: error) }
                     if flow.loadingDemo {
                         ProgressView("Preparing demo keys…")
                     } else {
-                        ImportSongView(viewModel: makeImportViewModel()) {
+                        ImportSongView(viewModel: makeImportViewModel(), onBack: flow.startOver) {
                             Task { await flow.loadDemoSong() }
                         }
                     }
@@ -71,8 +80,9 @@ struct RootView: View {
         .animation(.default, value: flow.step)
         #if DEBUG
         .overlay(alignment: .topTrailing) {
-            // Hidden while recording: the top bar's End Session button lives there.
-            if flow.step != .recording {
+            // Hidden where the screen's own top bar uses that corner
+            // (recording: End Session, vocal range: help, onboarding: Skip).
+            if flow.step != .recording && flow.step != .vocalRange && flow.step != .onboarding {
                 Button("Debug Settings", systemImage: "slider.horizontal.3") {
                     showsDebugSettings = true
                 }

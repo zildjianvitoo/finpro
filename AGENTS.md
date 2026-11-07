@@ -19,6 +19,7 @@ Before migration work, read `docs/MIGRATION-GUIDE.md` and `docs/MIGRATION-STATUS
 - Folders owned by other team members (see `docs/COLLABORATION.md` §2).
 
 ## Code rules
+- UI Slicing workflow (Mandatory): For every UI slicing task, always build, deploy to the booted iOS simulator (`xcrun simctl install booted <app>` & `launch`), capture automated screenshots (`xcrun simctl io booted screenshot <path.png>`), perform multimodal visual inspection against Figma mockups, and iterate on styling/layout until it matches 100% before concluding.
 - Every non-UI type (capture, DSP, playback, analysis, composition, use cases, repositories) is declared `nonisolated`. The project defaults to MainActor isolation; realtime audio/video callbacks must never call MainActor code.
 - ViewModels: `@Observable`, MainActor (default). Views call ViewModels, ViewModels call Use Cases, never AVFoundation/CoreML directly.
 - No magic numbers: thresholds and durations come from `AppConfiguration`.
@@ -37,6 +38,7 @@ Before migration work, read `docs/MIGRATION-GUIDE.md` and `docs/MIGRATION-STATUS
 
 ## Before you finish
 - The app builds: `xcodebuild -project finpro.xcodeproj -scheme finpro -destination 'generic/platform=iOS Simulator' build`
+- When slicing UI: run automated visual verification on booted simulator (`xcrun simctl install booted <app>`, `launch`, take screenshot via `xcrun simctl io booted screenshot <path.png>`), visually inspect and compare with Figma design, and iterate until UI matches before finishing.
 - If anything in `finpro/Domain/` was touched: `./scripts/check-contracts.sh` passes.
 - If anything in `finpro/Data/Composition/` was touched: `./scripts/check-comping.sh` passes.
 - At handoff points, call the contract checks (`validate()` / `Contract.assertValid`), see `docs/COLLABORATION.md` §4.
