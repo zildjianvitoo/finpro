@@ -610,14 +610,14 @@ private struct LyricsPanel: View {
     private func lines(_ song: SongLyrics) -> some View {
         let highlighted = highlightedID(in: song)
         return VStack(spacing: 0) {
-            VStack(spacing: 8) {
+            Spacer(minLength: 0)
+            VStack(spacing: 9) {
                 ForEach(visibleLines(song)) { line in
                     lineText(line, isHighlighted: line.id == highlighted)
                 }
             }
             .frame(maxWidth: .infinity)
             .animation(.easeInOut(duration: 0.25), value: highlighted)
-            .padding(.top, 8)
             Spacer(minLength: 16)
             Text(source(of: song))
                 .font(.caption2)
@@ -637,10 +637,11 @@ private struct LyricsPanel: View {
 
     private func lineText(_ line: LyricLine, isHighlighted: Bool) -> some View {
         Text(line.text)
-            .font(.body.weight(isHighlighted ? .bold : .semibold))
+            .font(.title2.weight(isHighlighted ? .bold : .semibold))
             .foregroundStyle(isHighlighted ? Color.plumInk : Color(.tertiaryLabel))
             .multilineTextAlignment(.center)
-            .lineLimit(2)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
             .transition(.opacity.combined(with: .move(edge: .bottom)))
     }
 
