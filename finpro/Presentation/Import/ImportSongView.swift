@@ -588,23 +588,37 @@ private struct LyricsPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// Lines shown at once, as in the design.
+    private static let visibleLineCount = 6
+    /// Position of the highlighted line within the visible lines (the third).
+    private static let highlightedPosition = 2
+
+    /// The line to highlight: the one being sung during the preview, else the first line of
+    /// the chosen part.
+    private func highlightedID(in song: SongLyrics) -> Int? {
+        viewModel.activeLineID ?? viewModel.firstSelectedLineID ?? song.lines.first?.id
+    }
+
+    /// Six lines with the highlighted one third, shifted at the start and end of the song.
+    private func visibleLines(_ song: SongLyrics) -> ArraySlice<LyricLine> {
+        let count = min(Self.visibleLineCount, song.lines.count)
+        let highlighted = song.lines.firstIndex { $0.id == highlightedID(in: song) } ?? 0
+        let start = min(max(0, highlighted - Self.highlightedPosition), song.lines.count - count)
+        return song.lines[start..<(start + count)]
+    }
+
     private func lines(_ song: SongLyrics) -> some View {
-        VStack(spacing: 8) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 8) {
-                        ForEach(song.lines) { line in
-                            lineText(line).id(line.id)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
+        let highlighted = highlightedID(in: song)
+        return VStack(spacing: 0) {
+            VStack(spacing: 8) {
+                ForEach(visibleLines(song)) { line in
+                    lineText(line, isHighlighted: line.id == highlighted)
                 }
-                .scrollIndicators(.hidden)
-                .onAppear { scroll(proxy, to: viewModel.firstSelectedLineID, anchor: .center) }
-                .onChange(of: viewModel.firstSelectedLineID) { _, id in scroll(proxy, to: id, anchor: .center) }
-                .onChange(of: viewModel.activeLineID) { _, id in scroll(proxy, to: id, anchor: .center) }
             }
+            .frame(maxWidth: .infinity)
+            .animation(.easeInOut(duration: 0.25), value: highlighted)
+            .padding(.top, 8)
+            Spacer(minLength: 16)
             Text(source(of: song))
                 .font(.caption2)
                 .foregroundStyle(Color.plumInkSecondary)
@@ -621,14 +635,13 @@ private struct LyricsPanel: View {
         return "Lyrics: \(song.matchedTitle) – \(song.matchedArtist), from LRCLIB. Timing may be slightly off."
     }
 
-    private func lineText(_ line: LyricLine) -> some View {
-        let selected = viewModel.isInSelection(line)
-        let active = viewModel.activeLineID == line.id
-        return Text(line.text)
-            .font(.body.weight(active ? .bold : .semibold))
-            .foregroundStyle(active ? Color.plumInk : selected ? Color.plumInkSecondary : Color(.tertiaryLabel))
+    private func lineText(_ line: LyricLine, isHighlighted: Bool) -> some View {
+        Text(line.text)
+            .font(.body.weight(isHighlighted ? .bold : .semibold))
+            .foregroundStyle(isHighlighted ? Color.plumInk : Color(.tertiaryLabel))
             .multilineTextAlignment(.center)
-            .animation(.easeOut(duration: 0.15), value: active)
+            .lineLimit(2)
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
     }
 
     private func search(_ error: UserFacingError) -> some View {
@@ -655,10 +668,5 @@ private struct LyricsPanel: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 24)
         }
-    }
-
-    private func scroll(_ proxy: ScrollViewProxy, to id: Int?, anchor: UnitPoint) {
-        guard let id else { return }
-        withAnimation { proxy.scrollTo(id, anchor: anchor) }
     }
 }
