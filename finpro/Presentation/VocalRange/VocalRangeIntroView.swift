@@ -11,38 +11,46 @@ struct VocalRangeIntroView: View {
     let onBack: (() -> Void)?
     let onContinue: () -> Void
 
+    /// Inset of the buttons from the screen edge.
+    private let buttonInset: CGFloat = 24
+    /// Inset of the text, deeper than the buttons per the design (same as onboarding).
+    private let contentInset: CGFloat = 44
+    /// Gap between the top bar and the title, placing it in the upper third per the design.
+    private let titleTopSpacing: CGFloat = 124
+    /// Keeps the title in place whether or not the back button is shown (large glass button height).
+    private let topBarHeight: CGFloat = 48
+
     init(onBack: (() -> Void)? = nil, onContinue: @escaping () -> Void) {
         self.onBack = onBack
         self.onContinue = onContinue
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             topBar
 
-            VStack(spacing: 12) {
-                Spacer()
-
-                Text("First, let's get to\nknow your voice.")
-                    .font(.system(size: 32, weight: .bold))
-                    .foregroundStyle(Color.brandPlum)
-                    .multilineTextAlignment(.center)
+            VStack(alignment: .leading, spacing: 16) {
+                Text("First, let’s get to\nknow your voice.")
+                    .font(.largeTitle.bold())
+                    .foregroundStyle(Color.plumInk)
 
                 Text("Discover the full range of your voice.")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-
-                Spacer()
-
-                Button("Start vocal test", action: onContinue)
-                    .buttonStyle(.primary)
+                    .font(.footnote)
+                    .foregroundStyle(Color.plumInkSecondary)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 24)
-            .padding(.bottom, 24)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, contentInset)
+            .padding(.top, titleTopSpacing)
+
+            Spacer(minLength: 24)
+
+            Button("Start vocal test", action: onContinue)
+                .buttonStyle(.primaryDeep)
+                .padding(.horizontal, buttonInset)
+                .padding(.bottom, 8)
         }
-        .background(Color(.systemBackground))
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.onboardingBackground.ignoresSafeArea())
     }
 
     private var topBar: some View {
@@ -55,12 +63,13 @@ struct VocalRangeIntroView: View {
                             .foregroundStyle(.primary)
                     }
                     .glassCircleButtonStyle()
+                    .accessibilityLabel("Back")
                 }
             }
             Spacer()
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 8)
+        .frame(minHeight: topBarHeight)
+        .padding(.horizontal, buttonInset)
     }
 }
 

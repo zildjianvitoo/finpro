@@ -29,38 +29,49 @@ struct VocalRangeVoiceProfileView: View {
 
     @State private var selectedType: VoiceType?
 
+    /// Inset of the buttons from the screen edge.
+    private let buttonInset: CGFloat = 24
+    /// Inset of the text and cards, deeper than the buttons per the design (same as onboarding).
+    private let contentInset: CGFloat = 44
+    /// Gap between the top bar and the title per the design.
+    private let titleTopSpacing: CGFloat = 68
+    /// Gap between the subtitle and the first card per the design.
+    private let cardsTopSpacing: CGFloat = 48
+    private let cardCornerRadius: CGFloat = 16
+
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             topBar
 
-            VStack(alignment: .leading, spacing: 20) {
-                header
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    header
+                        .padding(.bottom, cardsTopSpacing)
 
-                VStack(spacing: 16) {
-                    ForEach(VoiceType.allCases) { type in
-                        card(for: type)
-                    }
-                }
-                .padding(.top, 8)
-
-                Spacer()
-
-                if selectedType != nil {
-                    Button("Continue") {
-                        if let selectedType {
-                            onContinue(selectedType)
+                    VStack(spacing: 16) {
+                        ForEach(VoiceType.allCases) { type in
+                            card(for: type)
                         }
                     }
-                    .buttonStyle(.primary)
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
+                .padding(.horizontal, contentInset)
+                .padding(.top, titleTopSpacing)
             }
-            .animation(.easeInOut(duration: 0.2), value: selectedType)
-            .padding(.horizontal, 24)
-            .padding(.top, 16)
-            .padding(.bottom, 24)
+            .scrollBounceBehavior(.basedOnSize)
+
+            if let selectedType {
+                Button("Continue") {
+                    onContinue(selectedType)
+                }
+                .buttonStyle(.primaryDeep)
+                .padding(.horizontal, buttonInset)
+                .padding(.bottom, 8)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
         }
-        .background(Color(.systemBackground))
+        .animation(.easeInOut(duration: 0.2), value: selectedType)
+        .sensoryFeedback(.selection, trigger: selectedType)
+        .background(Color.onboardingBackground.ignoresSafeArea())
     }
 
     private var topBar: some View {
@@ -72,57 +83,55 @@ struct VocalRangeVoiceProfileView: View {
                         .foregroundStyle(.primary)
                 }
                 .glassCircleButtonStyle()
+                .accessibilityLabel("Back")
             }
             Spacer()
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 8)
+        .padding(.horizontal, buttonInset)
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 16) {
             Text("How would you\ndescribe your\nvoice?")
-                .font(.system(size: 32, weight: .bold))
-                .foregroundStyle(Color.brandPlum)
-                .fixedSize(horizontal: false, vertical: true)
+                .font(.largeTitle.bold())
+                .foregroundStyle(Color.plumInk)
+                .accessibilityAddTraits(.isHeader)
 
             Text("Choose the option that feels closest to your voice.\nThis helps us personalize your vocal test.")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                .font(.footnote)
+                .foregroundStyle(Color.plumInkSecondary)
         }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func card(for type: VoiceType) -> some View {
         let isSelected = selectedType == type
+        let shape = RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous)
 
         return Button {
             selectedType = type
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 Text(type.rawValue)
-                    .font(.headline.bold())
+                    .font(.headline)
                     .foregroundStyle(.primary)
 
                 Text(type.description)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
+                    .font(.footnote)
+                    .foregroundStyle(Color.plumInkSecondary)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 18)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(isSelected ? Color.voiceCardSelected : Color(.systemBackground))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(isSelected ? Color.brandPlum : Color.voiceCardBorder, lineWidth: isSelected ? 1.5 : 1)
-            )
+            .padding(.horizontal, 24)
+            .padding(.top, 18)
+            .padding(.bottom, 28)
+            .background(shape.fill(isSelected ? Color.voiceCardSelected : Color(.secondarySystemGroupedBackground)))
+            .overlay(shape.stroke(Color.voiceOptionBorder, lineWidth: 1))
+            .contentShape(shape)
         }
         .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
