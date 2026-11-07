@@ -17,7 +17,21 @@ final class ImportSongViewModel {
         case loading
         case trimming(ImportedAudio)
         case preparing(step: String)
+        /// Separation and key rendering finished; waits for the user to continue.
+        case prepared
         case failed(UserFacingError)
+    }
+
+    /// What the preparing screen shows: overall progress and the state of each stem.
+    struct PreparationProgress: Equatable {
+        enum StemState: Equatable {
+            case waiting, processing, done
+        }
+
+        let fraction: Double
+        let vocals: StemState
+        let instrumental: StemState
+        var isComplete: Bool { fraction >= 1 }
     }
 
     enum LyricsState: Equatable {
@@ -61,6 +75,10 @@ final class ImportSongViewModel {
     /// Called with the key choices; each holds a prepared song, and `stems` the untransposed stems.
     @ObservationIgnored private let onPrepared: (PrepareSongUseCase.Choices) -> Void
     @ObservationIgnored private var preparation: Task<Void, Never>?
+    /// The song being prepared, to return to its trimmer when going back.
+    @ObservationIgnored private var preparingAudio: ImportedAudio?
+    /// Key choices kept until the user continues from the "audio is ready" screen.
+    @ObservationIgnored private var preparedChoices: PrepareSongUseCase.Choices?
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var lyricsLookup: Task<Void, Never>?
     @ObservationIgnored private var playback: Task<Void, Never>?
@@ -116,6 +134,7 @@ final class ImportSongViewModel {
         guard let audio, let range = vocalRange() else { return }
         stopSelectionPreview()
         let trim = selectionStart...(selectionStart + selectionLength)
+        preparingAudio = audio
         status = .preparing(step: "Starting…")
         let token = generation
         preparation = Task { [prepare] in
@@ -127,7 +146,8 @@ final class ImportSongViewModel {
                 }
                 try Task.checkCancellation()
                 guard generation == token else { return }
-                onPrepared(choices)
+                preparedChoices = choices
+                status = .prepared
             } catch is CancellationError {
                 guard generation == token else { return }
                 status = .trimming(audio)
@@ -141,6 +161,54 @@ final class ImportSongViewModel {
     func cancelPreparation() {
         preparation?.cancel()
         preparation = nil
+    }
+
+    /// From the "audio is ready" screen: hand the key choices to the next step.
+    func continueWithPreparedSong() {
+        guard let preparedChoices else { return }
+        onPrepared(preparedChoices)
+    }
+
+    /// Back from the preparing or ready screen to the trimmer of the same song.
+    func backToTrimming() {
+        cancelPreparation()
+        preparedChoices = nil
+        if let preparingAudio { status = .trimming(preparingAudio) }
+    }
+
+    /// Progress of the preparation, mapped from the steps PrepareSongUseCase reports. Separation
+    /// produces both stems at once, so they share a state; later steps (guide, segments, keys)
+    /// move the overall progress.
+    var preparationProgress: PreparationProgress? {
+        switch status {
+        case .prepared:
+            return PreparationProgress(fraction: 1, vocals: .done, instrumental: .done)
+        case .preparing(let step):
+            let fraction: Double
+            let separating: Bool
+            switch step {
+            case _ where step.hasPrefix("Starting"):
+                (fraction, separating) = (0.05, true)
+            case _ where step.hasPrefix("Separating"):
+                (fraction, separating) = (0.2, true)
+            case _ where step.hasPrefix("Extracting"), _ where step.hasPrefix("Using fallback"):
+                (fraction, separating) = (0.5, false)
+            case _ where step.hasPrefix("Building"):
+                (fraction, separating) = (0.65, false)
+            case _ where step.hasPrefix("Preparing key"):
+                (fraction, separating) = (0.75, false)
+            case _ where step.hasPrefix("Rendering"):
+                (fraction, separating) = (0.9, false)
+            case _ where step.hasPrefix("Ready"):
+                (fraction, separating) = (0.99, false)
+            default:
+                (fraction, separating) = (0.05, true)
+            }
+            let stem: PreparationProgress.StemState = separating ? .processing : .done
+            return PreparationProgress(fraction: fraction, vocals: stem, instrumental: stem)
+        default:
+            return nil
+        }
     }
 
     func reset() {

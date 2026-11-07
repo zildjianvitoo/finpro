@@ -44,7 +44,7 @@ struct RootView: View {
                     if flow.loadingDemo {
                         ProgressView("Preparing demo keys…")
                     } else {
-                        ImportSongView(viewModel: makeImportViewModel()) {
+                        ImportSongView(viewModel: makeImportViewModel(), onBack: flow.startOver) {
                             Task { await flow.loadDemoSong() }
                         }
                     }
