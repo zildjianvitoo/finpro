@@ -244,13 +244,13 @@ struct ImportSongView: View {
                             viewModel.toggleSelectionPreview()
                         } label: {
                             Label("\(lengthText(viewModel.selectionLength)) selected",
-                                  systemImage: viewModel.isPlayingSelection ? "stop.fill" : "play.fill")
+                                  systemImage: isPreviewing ? "stop.fill" : "play.fill")
                                 .font(.caption2.weight(.semibold))
                                 .frame(minHeight: 44)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(viewModel.isPlayingSelection ? "Stop preview" : "Play selected part")
+                        .accessibilityLabel(isPreviewing ? "Stop preview" : "Play selected part")
                         .accessibilityValue("\(lengthText(viewModel.selectionLength)) selected")
                         Spacer()
                         Text(time(viewModel.selectionStart + viewModel.selectionLength))
@@ -406,6 +406,9 @@ struct ImportSongView: View {
         case .done: "Done"
         }
     }
+
+    /// From `playbackTime`, which views observe (the preview task itself is not observed).
+    private var isPreviewing: Bool { viewModel.playbackTime != nil }
 
     // MARK: - Formatting
 
@@ -589,7 +592,7 @@ private struct LyricsPanel: View {
         VStack(spacing: 8) {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 14) {
+                    LazyVStack(spacing: 8) {
                         ForEach(song.lines) { line in
                             lineText(line).id(line.id)
                         }
@@ -602,18 +605,27 @@ private struct LyricsPanel: View {
                 .onChange(of: viewModel.firstSelectedLineID) { _, id in scroll(proxy, to: id, anchor: .center) }
                 .onChange(of: viewModel.activeLineID) { _, id in scroll(proxy, to: id, anchor: .center) }
             }
-            Text("Lyrics: \(song.matchedTitle) – \(song.matchedArtist), from LRCLIB. Timing may be slightly off.")
+            Text(source(of: song))
                 .font(.caption2)
                 .foregroundStyle(Color.plumInkSecondary)
                 .multilineTextAlignment(.center)
         }
     }
 
+    private func source(of song: SongLyrics) -> String {
+        #if DEBUG
+        if song.matchedTitle == DummyLyricsProvider.placeholderTitle {
+            return "Placeholder lyrics (debug build). No synced lyrics were found for this song."
+        }
+        #endif
+        return "Lyrics: \(song.matchedTitle) – \(song.matchedArtist), from LRCLIB. Timing may be slightly off."
+    }
+
     private func lineText(_ line: LyricLine) -> some View {
         let selected = viewModel.isInSelection(line)
         let active = viewModel.activeLineID == line.id
         return Text(line.text)
-            .font(.title3.weight(active ? .bold : .semibold))
+            .font(.body.weight(active ? .bold : .semibold))
             .foregroundStyle(active ? Color.plumInk : selected ? Color.plumInkSecondary : Color(.tertiaryLabel))
             .multilineTextAlignment(.center)
             .animation(.easeOut(duration: 0.15), value: active)
