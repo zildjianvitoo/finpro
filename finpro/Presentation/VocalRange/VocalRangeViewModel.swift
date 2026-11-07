@@ -143,6 +143,26 @@ final class VocalRangeViewModel {
         }
     }
 
+    /// Goes back one step and forgets the note captured there, so it is measured again.
+    func previous() {
+        stopListening()
+        guard let previous = Prompt(rawValue: prompt.rawValue - 1) else { return }
+        switch prompt {
+        case .speaking: break
+        case .lowest: lowestMIDI = nil
+        case .highest: highestMIDI = nil
+        }
+        switch previous {
+        case .speaking: baselineMIDI = nil
+        case .lowest: lowestMIDI = nil
+        case .highest: break
+        }
+        prompt = previous
+        status = .idle
+        holdProgress = 0
+        liveMIDI = nil
+    }
+
     func save() {
         guard case .finished(let range) = status else { return }
         repository.save(range)

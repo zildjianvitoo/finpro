@@ -9,8 +9,10 @@ import Foundation
 
 enum VoiceClassification {
     static func classify(range: VocalRange, isFemale: Bool) -> (name: String, comfortLowMIDI: Float, comfortHighMIDI: Float) {
-        let low = range.lowestMIDI
-        let high = range.highestMIDI
+        // Classify on the same whole notes the screen shows, so a range labelled C3-G4 always
+        // gets the same voice type however many cents above or below G4 it was sung.
+        let low = range.lowestMIDI.rounded()
+        let high = range.highestMIDI.rounded()
 
         let comfortLow = min(high - 4, low + 3)
         let comfortHigh = max(comfortLow + 4, high - 3)
