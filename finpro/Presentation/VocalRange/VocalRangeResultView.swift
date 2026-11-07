@@ -13,248 +13,229 @@ struct VocalRangeResultView: View {
     let onDone: () -> Void
     let onRetake: () -> Void
 
-    @State private var selectedTransposition: String = "-2"
+    /// Song key offset in semitones; 0 is the original key.
+    @State private var selectedTransposition = -2
 
-    private let transpositionOptions = ["Original", "-2", "-1", "+1"]
+    private let transpositionOptions = [0, -2, -1, 1]
 
-    private var lowName: String {
-        PitchMath.noteName(midi: Int(range.lowestMIDI.rounded()))
-    }
+    /// Inset of the buttons from the screen edge.
+    private let buttonInset: CGFloat = 24
+    /// Inset of the sections and the recommendation card per the design.
+    private let contentInset: CGFloat = 44
+    private let chipHeight: CGFloat = 38
+    private let chipMinWidth: CGFloat = 62
+    private let cornerRadius: CGFloat = 12
 
-    private var highName: String {
-        PitchMath.noteName(midi: Int(range.highestMIDI.rounded()))
-    }
+    @ScaledMetric(relativeTo: .largeTitle) private var voiceTypeSize: CGFloat = 56
+    /// Line height of the voice type at full size, kept when a long name (e.g. MEZZO-SOPRANO)
+    /// shrinks to fit, so the header height does not change between results.
+    @ScaledMetric(relativeTo: .largeTitle) private var voiceTypeLineHeight: CGFloat = 67
 
     private var classification: (name: String, comfortLowMIDI: Float, comfortHighMIDI: Float) {
         VoiceClassification.classify(range: range, isFemale: isFemale)
     }
 
-    private var comfortLowName: String {
-        PitchMath.noteName(midi: Int(classification.comfortLowMIDI.rounded()))
-    }
-
-    private var comfortHighName: String {
-        PitchMath.noteName(midi: Int(classification.comfortHighMIDI.rounded()))
-    }
-
-    private var midName: String {
-        let mid = (range.lowestMIDI + range.highestMIDI) / 2
-        return PitchMath.noteName(midi: Int(mid.rounded()))
+    private func noteName(_ midi: Float) -> String {
+        PitchMath.noteName(midi: Int(midi.rounded()))
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            topBanner
+            header
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 0) {
                     comfortZoneSection
                     transpositionSection
-                    recommendationCard
+                        .padding(.top, 46)
                 }
-                .padding(.horizontal, 24)
+                .padding(.horizontal, contentInset)
                 .padding(.top, 24)
                 .padding(.bottom, 16)
             }
             .scrollBounceBehavior(.basedOnSize)
-            .background(Color(.systemBackground))
-            .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
 
             footer
         }
-        .background(Color(red: 0.22, green: 0.08, blue: 0.20))
-        .ignoresSafeArea(edges: .bottom)
+        .background(Color.onboardingBackground.ignoresSafeArea())
     }
 
-    // MARK: - Top Banner
+    // MARK: - Header
 
-    private var topBanner: some View {
-        VStack(alignment: .center, spacing: 8) {
-            Text("Your vocal range")
-                .font(.system(size: 11, weight: .regular))
-                .foregroundStyle(Color.white.opacity(0.7))
+    private var header: some View {
+        VStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Your vocal range")
+                    .font(.caption)
+                    .foregroundStyle(.white.opacity(0.8))
 
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text(classification.name)
-                    .font(.system(size: 34, weight: .bold))
-                    .foregroundStyle(.white)
+                HStack(alignment: .top, spacing: 6) {
+                    Text(classification.name)
+                        .font(.system(size: voiceTypeSize, weight: .medium))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.5)
+                        .foregroundStyle(.white)
 
-                Text("(\(lowName)-\(highName))")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.8))
+                    Text("(\(noteName(range.lowestMIDI))-\(noteName(range.highestMIDI)))")
+                        .font(.caption)
+                        .foregroundStyle(.white.opacity(0.8))
+                        .padding(.top, 8)
+                }
+                .frame(minHeight: voiceTypeLineHeight)
             }
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
 
             Text(isFemale ? "Female voice" : "Male voice")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(Color.brandPlum)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule()
-                        .fill(Color.white)
-                )
-                .padding(.top, 4)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(Color.plumNight)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 3)
+                .background(Capsule().fill(.white))
         }
-        .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.horizontal, 24)
-        .padding(.top, 16)
-        .padding(.bottom, 24)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, buttonInset)
+        .padding(.top, 40)
+        .padding(.bottom, 18)
+        .background(Color.plumNight.ignoresSafeArea(edges: .top))
     }
 
-    // MARK: - Comfort Zone Section
+    // MARK: - Comfort Zone
 
     private var comfortZoneSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Text("Your comfort zone")
-                    .font(.headline.bold())
-                    .foregroundStyle(.primary)
                 Spacer()
-                Text("(\(comfortLowName)-\(comfortHighName))")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(.primary)
+                Text("(\(noteName(classification.comfortLowMIDI))-\(noteName(classification.comfortHighMIDI)))")
             }
+            .font(.headline)
+            .foregroundStyle(Color.plumInk)
+            .accessibilityElement(children: .combine)
 
-            comfortBar
-
-            HStack {
-                Text(lowName)
-                Spacer()
-                Text(comfortLowName)
-                Spacer()
-                Text(midName)
-                Spacer()
-                Text(comfortHighName)
-                Spacer()
-                Text(highName)
-            }
-            .font(.system(size: 11, weight: .medium))
-            .foregroundStyle(.secondary)
+            ComfortZoneBar(
+                lowestMIDI: range.lowestMIDI,
+                highestMIDI: range.highestMIDI,
+                comfortLowMIDI: classification.comfortLowMIDI,
+                comfortHighMIDI: classification.comfortHighMIDI
+            )
+            .padding(.top, 34)
         }
     }
 
-    private var comfortBar: some View {
-        GeometryReader { proxy in
-            let width = proxy.size.width
-            let leftFraction: CGFloat = 0.20
-            let rightFraction: CGFloat = 0.80
-
-            ZStack(alignment: .leading) {
-                // Base dark track
-                Capsule()
-                    .fill(Color(red: 0.15, green: 0.15, blue: 0.15))
-                    .frame(height: 12)
-
-                // Lime comfort range fill
-                Capsule()
-                    .fill(Color.micIconHighlight)
-                    .frame(width: max(0, width * (rightFraction - leftFraction)), height: 12)
-                    .offset(x: width * leftFraction)
-
-                // Left boundary marker
-                Rectangle()
-                    .fill(Color.black)
-                    .frame(width: 2, height: 18)
-                    .offset(x: width * leftFraction)
-
-                // Right boundary marker
-                Rectangle()
-                    .fill(Color.black)
-                    .frame(width: 2, height: 18)
-                    .offset(x: width * rightFraction - 2)
-            }
-        }
-        .frame(height: 18)
-    }
-
-    // MARK: - Transposition Section
+    // MARK: - Transposition
 
     private var transpositionSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 4) {
             Text("Song transposition")
-                .font(.headline.bold())
-                .foregroundStyle(.primary)
+                .font(.headline)
+                .foregroundStyle(Color.plumInk)
 
-            Text("We'll use this song keys that feel comfortable")
+            Text("We’ll use song keys that feel comfortable")
                 .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.bottom, 6)
+                .foregroundStyle(Color.plumInkSecondary)
 
             HStack(spacing: 10) {
                 ForEach(transpositionOptions, id: \.self) { option in
-                    let isSelected = selectedTransposition == option
-                    Button {
-                        selectedTransposition = option
-                    } label: {
-                        Text(option)
-                            .font(.system(size: 13, weight: isSelected ? .bold : .medium))
-                            .foregroundStyle(isSelected ? Color.primary : Color.secondary)
-                            .frame(maxWidth: .infinity)
-                            .frame(height: 38)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(isSelected ? Color.voiceCardSelected : Color(.systemBackground))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .stroke(isSelected ? Color.brandPlum : Color.voiceCardBorder, lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
+                    chip(for: option)
                 }
             }
+            .padding(.top, 8)
         }
     }
 
-    // MARK: - Recommendation Card
+    private func chip(for option: Int) -> some View {
+        let isSelected = selectedTransposition == option
+        let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+
+        return Button {
+            selectedTransposition = option
+        } label: {
+            Text(label(for: option))
+                .font(.subheadline)
+                .foregroundStyle(Color.plumInk)
+                .padding(.horizontal, 8)
+                .frame(minWidth: chipMinWidth, maxWidth: option == 0 ? .infinity : nil)
+                .frame(minHeight: chipHeight)
+                .background(shape.fill(isSelected ? Color.voiceCardSelected : Color.clear))
+                .overlay(shape.strokeBorder(Color.chipBorder, lineWidth: 1))
+                .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(option == 0 ? "Original key" : "\(label(for: option)) semitones")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .sensoryFeedback(.selection, trigger: isSelected)
+    }
+
+    private func label(for option: Int) -> String {
+        option == 0 ? "Original" : option > 0 ? "+\(option)" : "\(option)"
+    }
+
+    // MARK: - Recommendation
+
+    private var recommendationMessage: String {
+        let steps = abs(selectedTransposition)
+        let unit = steps == 1 ? "semitone" : "semitones"
+        return switch selectedTransposition {
+        case 0: "We’ll keep the backing track and pitch guide in the original key."
+        case ..<0: "We’ll lower the backing track and pitch guide by \(steps) \(unit)."
+        default: "We’ll raise the backing track and pitch guide by \(steps) \(unit)."
+        }
+    }
 
     private var recommendationCard: some View {
-        HStack(alignment: .center, spacing: 14) {
-            Image(systemName: "sun.max")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(Color.brandPlum)
-                .frame(width: 34, height: 34)
-                .background(Circle().fill(Color(white: 0.94)))
+        HStack(spacing: 20) {
+            Image(systemName: "seal")
+                .font(.title3)
+                .foregroundStyle(.primary)
+                .accessibilityHidden(true)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text("Great match for \(selectedTransposition)")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(.primary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Great match for \(selectedTransposition == 0 ? "Original" : label(for: selectedTransposition).replacingOccurrences(of: "-", with: "−"))")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color.plumInk)
 
-                Text("We'll lower the backing track and pitch guide by 2 semitones.")
+                Text(recommendationMessage)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Color.plumInkSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 12)
         .background(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color(.systemBackground))
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(Color.surfaceElevated)
+                .shadow(color: .black.opacity(0.08), radius: 8, y: 2)
         )
-        .overlay(
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .stroke(Color(white: 0.90), lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.04), radius: 6, y: 2)
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Footer
 
     private var footer: some View {
-        VStack(spacing: 8) {
-            Button("Done", action: onDone)
-                .buttonStyle(.primary)
+        VStack(spacing: 0) {
+            recommendationCard
+                .padding(.horizontal, contentInset)
+                .padding(.bottom, 32)
 
-            Button("Retake", action: onRetake)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-                .frame(minHeight: 36)
+            Button("Done", action: onDone)
+                .buttonStyle(.primaryDeep)
+                .padding(.horizontal, buttonInset)
+
+            Button(action: onRetake) {
+                Text("Retake")
+                    .font(.caption)
+                    .underline()
+                    .foregroundStyle(Color.plumInkSecondary)
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 44)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
         }
-        .padding(.horizontal, 24)
         .padding(.top, 12)
-        .padding(.bottom, 36)
-        .background(Color(.systemBackground))
     }
 }
 

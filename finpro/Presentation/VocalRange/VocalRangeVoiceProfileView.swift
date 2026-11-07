@@ -31,8 +31,10 @@ struct VocalRangeVoiceProfileView: View {
 
     /// Inset of the buttons from the screen edge.
     private let buttonInset: CGFloat = 24
-    /// Inset of the text and cards, deeper than the buttons per the design (same as onboarding).
-    private let contentInset: CGFloat = 44
+    /// Leading inset of the text and cards, aligned with the other vocal range screens.
+    private let contentLeadingInset: CGFloat = 52
+    /// Trailing inset per the design, narrower so the subtitle lines and cards fit as drawn.
+    private let contentTrailingInset: CGFloat = 40
     /// Gap between the top bar and the title per the design.
     private let titleTopSpacing: CGFloat = 68
     /// Gap between the subtitle and the first card per the design.
@@ -54,7 +56,8 @@ struct VocalRangeVoiceProfileView: View {
                         }
                     }
                 }
-                .padding(.horizontal, contentInset)
+                .padding(.leading, contentLeadingInset)
+                .padding(.trailing, contentTrailingInset)
                 .padding(.top, titleTopSpacing)
             }
             .scrollBounceBehavior(.basedOnSize)

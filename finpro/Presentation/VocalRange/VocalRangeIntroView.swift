@@ -13,8 +13,8 @@ struct VocalRangeIntroView: View {
 
     /// Inset of the buttons from the screen edge.
     private let buttonInset: CGFloat = 24
-    /// Inset of the text, deeper than the buttons per the design (same as onboarding).
-    private let contentInset: CGFloat = 44
+    /// Inset of the text, deeper than the buttons per the vocal range design.
+    private let contentInset: CGFloat = 52
     /// Gap between the top bar and the title, placing it in the upper third per the design.
     private let titleTopSpacing: CGFloat = 124
     /// Keeps the title in place whether or not the back button is shown (large glass button height).

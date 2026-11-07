@@ -14,8 +14,8 @@ struct ListeningWaveform: View {
     var barColor: Color = Color.micIconHighlight
 
     private static let barCount = 25
-    private static let barWidth: CGFloat = 3
-    private static let barSpacing: CGFloat = 3
+    private static let barWidth: CGFloat = 2
+    private static let barSpacing: CGFloat = 2
     private static let maxHeight: CGFloat = 48
 
     var body: some View {
