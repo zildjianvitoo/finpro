@@ -45,3 +45,12 @@ them with taps, or add a launch argument that loads demo data.
 - Logic-only changes (state, enabled/disabled) need a build, not a screenshot.
 - Never run the build twice with different destinations; the script builds once for the booted device.
 - If the app does not show up after launch, run the script again instead of probing with screenshots.
+
+## Gotchas
+
+- More than one simulator can be booted; `simctl ... booted` then hits an arbitrary one while the
+  `control` tool targets another. Use the UDID (the script does) and pass `device` to `control`.
+- `control screenshot` can ignore `scale` and return the full 1206×2622 image. For screenshots after
+  taps, use `xcrun simctl io <UDID> screenshot f.png` and `sips --resampleWidth 300 f.png`.
+- The fakes container sings every segment correctly, so a failed attempt (retry countdown) never
+  happens on its own; to look at it, force the condition temporarily and revert.

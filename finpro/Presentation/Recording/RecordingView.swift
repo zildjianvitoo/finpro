@@ -25,7 +25,17 @@ struct RecordingView: View {
     private let lyricsInset: CGFloat = 32
     private let pitchGuideHeight: CGFloat = 120
     private let recordButtonSize: CGFloat = 72
+    private let stopButtonSize: CGFloat = 50
+    private let stopGlyphSize: CGFloat = 30
+    private let stopGlyphCornerRadius: CGFloat = 6
     private let timerRefresh: TimeInterval = 0.25
+    private let sectionSpacing: CGFloat = 10
+    private let controlsBottomPadding: CGFloat = 8
+    /// Countdown: the screen dims, the number sits in a white circle (design).
+    private let countdownDimOpacity = 0.4
+    private let countdownCircleSize: CGFloat = 150
+    /// How far the retry hint sits above the bottom of the pitch guide.
+    private let retryHintLift: CGFloat = 24
 
     init(viewModel: RecordingViewModel) {
         _viewModel = State(initialValue: viewModel)
@@ -36,6 +46,7 @@ struct RecordingView: View {
             Color.black.ignoresSafeArea()
             cameraLayer
             content
+            countdownLayer
         }
         .task { await viewModel.start() }
         .onChange(of: scenePhase) { _, phase in
@@ -62,7 +73,7 @@ struct RecordingView: View {
                  ? "Your cover will use the \(viewModel.passedCount) segments you passed."
                  : "No segment has passed yet.")
         }
-        .sheet(isPresented: $showsSettings) { settingsSheet }
+        .sheet(isPresented: $showsSettings) { RecordingSettingsSheet(viewModel: viewModel) }
     }
 
     // MARK: - Layers
@@ -153,10 +164,60 @@ struct RecordingView: View {
         .environment(\.colorScheme, .dark)
     }
 
+    // MARK: - Countdown
+
+    /// The countdown after a failed attempt (the missed notes stay on the pitch guide).
+    private var isRetryCountdown: Bool {
+        if case .countdown = viewModel.loop.phase { viewModel.lastResult?.passed == false } else { false }
+    }
+
+    /// Dims the screen and shows the number in a white circle; after a failed attempt a hint says
+    /// the phrase is sung again. Touches pass through so pause stays reachable.
+    @ViewBuilder
+    private var countdownLayer: some View {
+        if case .countdown(let remaining) = viewModel.loop.phase {
+            ZStack {
+                Color.black.opacity(countdownDimOpacity)
+                    .ignoresSafeArea()
+
+                Text("\(remaining)")
+                    .font(.system(size: 72, weight: .bold))
+                    .foregroundStyle(Color.plumInk)
+                    .contentTransition(.numericText())
+                    .animation(.snappy, value: remaining)
+                    .frame(width: countdownCircleSize, height: countdownCircleSize)
+                    .background(Circle().fill(.white))
+                    .accessibilityLabel("Starting in \(remaining)")
+
+                if isRetryCountdown {
+                    retryHint
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                        .padding(.bottom, recordButtonSize + sectionSpacing + controlsBottomPadding + retryHintLift)
+                }
+            }
+            .allowsHitTesting(false)
+        }
+    }
+
+    private var retryHint: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "arrow.triangle.2.circlepath")
+                .font(.title3.weight(.medium))
+                .accessibilityHidden(true)
+            Text("Sing this phrase again")
+                .font(.subheadline.weight(.medium))
+        }
+        .foregroundStyle(Color.black.opacity(0.85))
+        .frame(width: 240, height: 72)
+        .background(.white.opacity(0.55), in: .rect(cornerRadius: 16))
+        .environment(\.colorScheme, .light)
+        .accessibilityElement(children: .combine)
+    }
+
     // MARK: - While recording
 
     private var recordingOverlay: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: sectionSpacing) {
             topBar
 
             if showsLyrics, !viewModel.lyrics.isEmpty {
@@ -236,36 +297,18 @@ struct RecordingView: View {
         }
     }
 
+    /// Recording: pause, record (ends the session), settings. Paused: the red record button takes
+    /// the pause button's place to resume, and the stop square in the middle ends the session.
     private var controls: some View {
         HStack {
-            LiquidGlassGroup {
-                Button {
-                    viewModel.isPaused ? viewModel.resume() : viewModel.pause()
-                } label: {
-                    Image(systemName: viewModel.isPaused ? "play.fill" : "pause.fill")
-                        .foregroundStyle(.white)
-                }
-                .glassCircleButtonStyle()
-                .disabled(!viewModel.canPause)
-                .accessibilityLabel(viewModel.isPaused ? "Resume" : "Pause")
-                .accessibilityHint(viewModel.isPaused ? "Restarts the current segment after a countdown" : "")
+            Group {
+                if viewModel.isPaused { resumeButton } else { pauseButton }
             }
+            .frame(width: recordButtonSize, alignment: .leading)
 
             Spacer()
 
-            Button {
-                confirmsEnd = true
-            } label: {
-                Circle()
-                    .fill(Color.red)
-                    .padding(5)
-                    .background(Circle().strokeBorder(.white.opacity(0.9), lineWidth: 3))
-                    .frame(width: recordButtonSize, height: recordButtonSize)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            .disabled(viewModel.status != .recording)
-            .accessibilityLabel("End recording")
+            if viewModel.isPaused { stopButton } else { endButton }
 
             Spacer()
 
@@ -277,102 +320,95 @@ struct RecordingView: View {
                         .foregroundStyle(.white)
                 }
                 .glassCircleButtonStyle()
-                .accessibilityLabel("Display settings")
+                .accessibilityLabel("Recording settings")
             }
+            .frame(width: recordButtonSize, alignment: .trailing)
         }
         .padding(.horizontal, sideInset + 8)
-        .padding(.bottom, 8)
+        .padding(.bottom, controlsBottomPadding)
+    }
+
+    private var pauseButton: some View {
+        LiquidGlassGroup {
+            Button {
+                viewModel.pause()
+            } label: {
+                Image(systemName: "pause.fill")
+                    .foregroundStyle(.white)
+            }
+            .glassCircleButtonStyle()
+            .disabled(!viewModel.canPause)
+            .accessibilityLabel("Pause")
+        }
+    }
+
+    /// The red record button; while paused it resumes (the current segment restarts after a countdown).
+    private var resumeButton: some View {
+        Button {
+            viewModel.resume()
+        } label: {
+            recordCircle(size: recordButtonSize)
+        }
+        .buttonStyle(.plain)
+        .disabled(!viewModel.canPause)
+        .accessibilityLabel("Resume recording")
+        .accessibilityHint("Restarts the current segment after a countdown")
+    }
+
+    private var endButton: some View {
+        Button {
+            confirmsEnd = true
+        } label: {
+            recordCircle(size: recordButtonSize)
+        }
+        .buttonStyle(.plain)
+        .disabled(viewModel.status != .recording)
+        .accessibilityLabel("End recording")
+    }
+
+    private var stopButton: some View {
+        Button {
+            confirmsEnd = true
+        } label: {
+            RoundedRectangle(cornerRadius: stopGlyphCornerRadius, style: .continuous)
+                .fill(Color.red)
+                .frame(width: stopGlyphSize, height: stopGlyphSize)
+                .frame(width: stopButtonSize, height: stopButtonSize)
+                .background(Circle().fill(.black.opacity(0.35)))
+                .overlay(Circle().strokeBorder(.white.opacity(0.35), lineWidth: 2))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(viewModel.status != .recording)
+        .accessibilityLabel("End recording")
+    }
+
+    private func recordCircle(size: CGFloat) -> some View {
+        Circle()
+            .fill(Color.red)
+            .padding(5)
+            .background(Circle().strokeBorder(.white.opacity(0.9), lineWidth: 3))
+            .frame(width: size, height: size)
+            .contentShape(Circle())
     }
 
     @ViewBuilder
     private var phaseInfo: some View {
         switch viewModel.loop.phase {
-        case .countdown(let remaining):
-            Text("\(remaining)")
-                .font(.system(size: 72, weight: .bold, design: .rounded))
-                .contentTransition(.numericText())
         case .preRoll:
             Label("Listen…", systemImage: "ear")
                 .font(.title3.bold())
-        case .paused:
-            VStack(spacing: 4) {
-                Label("Paused", systemImage: "pause.circle.fill")
-                    .font(.title3.bold())
-                Text("Resume to sing this part again.")
-                    .font(.footnote)
-                    .foregroundStyle(.white.opacity(0.8))
-            }
-            .padding(14)
-            .background(.black.opacity(0.5), in: .rect(cornerRadius: 14))
-        case .showingResult:
-            if let result = viewModel.lastResult {
-                CorrectionOverlayView(passed: result.passed, score: Double(result.score),
-                                      missedNotes: missedNoteNames(result))
-                    .padding(.horizontal)
-            }
         case .singing:
             if let result = viewModel.lastResult, result.passed {
                 Label("Segment \(result.segmentIndex + 1) passed", systemImage: "checkmark.circle.fill")
                     .font(.subheadline.bold())
                     .foregroundStyle(.green)
             }
-        case .idle, .ended:
+        case .idle, .ended, .countdown, .showingResult, .paused:
+            // The missed notes on the pitch guide are the result, the countdown has its own layer,
+            // and the paused state is shown by the resume and stop buttons.
             EmptyView()
         }
-    }
-
-    // MARK: - Settings
-
-    private var settingsSheet: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text(viewModel.progressTitle)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(Color.plumInk)
-                    RecordingDisplaySettingsCard()
-                    if viewModel.supportsReferenceVocal {
-                        Toggle("Reference vocal", isOn: Binding(
-                            get: { viewModel.referenceVocalEnabled },
-                            set: { viewModel.setReferenceVocalEnabled($0) }))
-                            .tint(Color.plumNight)
-                            .accessibilityHint("Switch between reference mix and instrumental without stopping recording")
-                    }
-                    if let microphone = viewModel.microphoneName {
-                        Label("Microphone: \(microphone)", systemImage: "headphones")
-                            .font(.footnote)
-                            .foregroundStyle(Color.plumInkSecondary)
-                    }
-                    if viewModel.isSpeakerTest {
-                        Label("Speaker test mode: scores are not reliable", systemImage: "speaker.wave.3")
-                            .font(.footnote)
-                            .foregroundStyle(.purple)
-                    }
-                    #if DEBUG
-                    pitchDebug
-                    #endif
-                }
-                .padding()
-            }
-            .background(Color.onboardingBackground)
-            .navigationTitle("Display")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { showsSettings = false }
-                }
-            }
-        }
-        .presentationDetents([.medium, .large])
-    }
-
-    /// Debug builds: is the microphone heard, and how often? 20 samples/s is the target (50 ms hop).
-    private var pitchDebug: some View {
-        let stats = viewModel.pitchStats
-        let level = stats.lastLevelDB.isFinite ? "\(Int(stats.lastLevelDB)) dB" : "silent"
-        return Text("Mic \(stats.lastNote ?? "—") · \(stats.samplesPerSecond)/s · voiced \(stats.voicedPercent)% · \(level)")
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(Color.plumInkSecondary)
     }
 
     private func stoppedState(_ error: UserFacingError, primary: (String, () -> Void)?) -> some View {
@@ -391,7 +427,8 @@ struct RecordingView: View {
     // MARK: - Data for the pitch guide
 
     private var pianoRollNotes: [PianoRollView.Note] {
-        let missed = viewModel.loop.phase == .showingResult ? Set(viewModel.lastResult?.missedNoteIDs ?? []) : []
+        let showsMissed = viewModel.loop.phase == .showingResult || isRetryCountdown
+        let missed = showsMissed ? Set(viewModel.lastResult?.missedNoteIDs ?? []) : []
         let plan = viewModel.song.transposition
         return viewModel.song.segments.flatMap(\.targetNotes).map {
             PianoRollView.Note(id: $0.id, midi: plan.transposed($0), start: $0.startTime, end: $0.endTime,
@@ -421,12 +458,6 @@ struct RecordingView: View {
         return notes.map(viewModel.song.transposition.transposed)
     }
 
-    private func missedNoteNames(_ result: RecordingViewModel.SegmentResult) -> [String] {
-        let plan = viewModel.song.transposition
-        return viewModel.song.segments[result.segmentIndex].targetNotes
-            .filter { result.missedNoteIDs.contains($0.id) }
-            .map { PitchMath.noteName(midi: plan.transposed($0)) }
-    }
 }
 
 /// Darkens everything outside the centred 9:16 area that ends up in the video.
