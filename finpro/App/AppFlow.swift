@@ -34,6 +34,8 @@ final class AppFlow {
     /// Stems of the chosen song before transposition (Ready screen, original key).
     var separatedStems: SeparatedStems? { keyChoices?.stems }
     private(set) var compingPlan: CompingCompositionPlan?
+    /// Lyrics of the chosen part on the prepared song's timeline, for the recording screen.
+    private(set) var recordingLyrics: [LyricLine] = []
 
     init(container: AppContainer) {
         self.container = container
@@ -89,7 +91,8 @@ final class AppFlow {
         step = .chooseKey
     }
 
-    func keysPrepared(_ choices: PrepareSongUseCase.Choices) {
+    func keysPrepared(_ choices: PrepareSongUseCase.Choices, lyrics: [LyricLine] = []) {
+        recordingLyrics = lyrics
         choices.options.forEach { Contract.assertValid($0.song.validate()) }
         keyChoices = choices
         preparedSong = nil
@@ -120,6 +123,8 @@ final class AppFlow {
     /// Ready screen: user tapped Record. A new session starts, so files from the last one go (ZV-16).
     func startRecording() {
         guard let preparedSong else { return }
+        // A key preview from the previous screens must not play over the recording.
+        container.audioPreview.stop()
         #if DEBUG
         container.simulatedSinger?.prepare(song: preparedSong)
         #endif
@@ -144,6 +149,7 @@ final class AppFlow {
 
     func startOver() {
         keyChoices = nil
+        recordingLyrics = []
         preparationError = nil
         preparedSong = nil
         compingPlan = nil

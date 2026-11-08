@@ -72,20 +72,23 @@ final class ImportSongViewModel {
     @ObservationIgnored private let previewer: any AudioPreviewing
     @ObservationIgnored private let prepare: PrepareSongUseCase
     @ObservationIgnored private let vocalRange: () -> VocalRange?
-    /// Called with the key choices; each holds a prepared song, and `stems` the untransposed stems.
-    @ObservationIgnored private let onPrepared: (PrepareSongUseCase.Choices) -> Void
+    /// Called with the key choices (each holds a prepared song, and `stems` the untransposed
+    /// stems) and the lyrics of the chosen part on the prepared song's timeline.
+    @ObservationIgnored private let onPrepared: (PrepareSongUseCase.Choices, [LyricLine]) -> Void
     @ObservationIgnored private var preparation: Task<Void, Never>?
     /// The song being prepared, to return to its trimmer when going back.
     @ObservationIgnored private var preparingAudio: ImportedAudio?
     /// Key choices kept until the user continues from the "audio is ready" screen.
     @ObservationIgnored private var preparedChoices: PrepareSongUseCase.Choices?
+    /// Lyrics of the part being prepared, on the prepared song's timeline (0 = start of the part).
+    @ObservationIgnored private var preparedLyrics: [LyricLine] = []
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var lyricsLookup: Task<Void, Never>?
     @ObservationIgnored private var playback: Task<Void, Never>?
 
     init(inspector: any AudioFileInspecting, lyrics: any LyricsProviding, previewer: any AudioPreviewing,
          prepare: PrepareSongUseCase,
-         vocalRange: @escaping () -> VocalRange?, onPrepared: @escaping (PrepareSongUseCase.Choices) -> Void) {
+         vocalRange: @escaping () -> VocalRange?, onPrepared: @escaping (PrepareSongUseCase.Choices, [LyricLine]) -> Void) {
         self.inspector = inspector
         self.lyricsProvider = lyrics
         self.previewer = previewer
@@ -135,6 +138,7 @@ final class ImportSongViewModel {
         stopSelectionPreview()
         let trim = selectionStart...(selectionStart + selectionLength)
         preparingAudio = audio
+        preparedLyrics = lyricsOnPreparedTimeline(trim)
         status = .preparing(step: "Starting…")
         let token = generation
         preparation = Task { [prepare] in
@@ -166,7 +170,7 @@ final class ImportSongViewModel {
     /// From the "audio is ready" screen: hand the key choices to the next step.
     func continueWithPreparedSong() {
         guard let preparedChoices else { return }
-        onPrepared(preparedChoices)
+        onPrepared(preparedChoices, preparedLyrics)
     }
 
     /// Back from the preparing or ready screen to the trimmer of the same song.
@@ -221,6 +225,20 @@ final class ImportSongViewModel {
     }
 
     // MARK: - Lyrics
+
+    /// The lines sung in `trim`, shifted so the part starts at 0 like the prepared song.
+    private func lyricsOnPreparedTimeline(_ trim: ClosedRange<TimeInterval>) -> [LyricLine] {
+        guard case .found(let song) = lyrics else { return [] }
+        let offset = trim.lowerBound
+        let length = trim.upperBound - trim.lowerBound
+        return song.lines
+            .filter { ($0.words.last?.end ?? $0.end) > trim.lowerBound && $0.start < trim.upperBound }
+            .map { line in
+                LyricLine(id: line.id, text: line.text,
+                          start: line.start - offset, end: min(length, line.end - offset),
+                          words: line.words.map { LyricWord(text: $0.text, start: $0.start - offset, end: $0.end - offset) })
+            }
+    }
 
     /// Looks up synced lyrics for `lyricsTitle` / `lyricsArtist` (also the manual search).
     func searchLyrics() {

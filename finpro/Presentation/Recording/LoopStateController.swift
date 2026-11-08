@@ -4,6 +4,8 @@
 //
 //  The recording loop as a pure state machine (PRD §5.6, §6.1):
 //  preRoll → singing → evaluate → { passed → singing(next) | failed → result → countdown → preRoll } → ended.
+//  Pause can interrupt any running phase; resuming restarts the current segment with a countdown,
+//  so a take never spans a pause.
 //  It only decides; RecordingViewModel performs the actions. All times are capture-clock seconds
 //  (`now`) or song-timeline seconds (`songTime`), never wall-clock time.
 //
@@ -20,6 +22,8 @@ nonisolated struct LoopStateController: Sendable {
         case singing
         /// TRY AGAIN result is on screen; playback is stopped.
         case showingResult
+        /// Paused by the user: playback is stopped and nothing is evaluated.
+        case paused
         case ended
     }
 
@@ -65,7 +69,7 @@ nonisolated struct LoopStateController: Sendable {
 
     mutating func tick(now: TimeInterval, songTime: TimeInterval?) -> Action {
         switch phase {
-        case .idle, .ended:
+        case .idle, .ended, .paused:
             return .none
         case .countdown:
             if now >= countdownEndsAt, let segment = currentSegment {
@@ -104,6 +108,33 @@ nonisolated struct LoopStateController: Sendable {
         resultEndsAt = now + Self.resultDuration
         phase = .showingResult
         return .stopPlayback
+    }
+
+    /// Whether the user can pause now (a segment is under way).
+    var canPause: Bool {
+        switch phase {
+        case .countdown, .preRoll, .singing, .showingResult: true
+        case .idle, .paused, .ended: false
+        }
+    }
+
+    /// Stops the current attempt without logging it; the same attempt number is used again.
+    mutating func pause() -> Action {
+        guard canPause else { return .none }
+        let wasPlaying = phase == .preRoll || phase == .singing
+        if wasPlaying, attempts.indices.contains(segmentIndex) {
+            attempts[segmentIndex] = max(0, attempts[segmentIndex] - 1)
+        }
+        phase = .paused
+        return wasPlaying ? .stopPlayback : .none
+    }
+
+    /// Restarts the current segment with the usual silent countdown.
+    mutating func resume(now: TimeInterval) -> Action {
+        guard phase == .paused else { return .none }
+        countdownEndsAt = now + TimeInterval(configuration.countdownSeconds)
+        phase = .countdown(remaining: configuration.countdownSeconds)
+        return .none
     }
 
     mutating func end() {
