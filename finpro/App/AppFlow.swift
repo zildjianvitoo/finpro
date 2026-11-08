@@ -45,6 +45,16 @@ final class AppFlow {
         } else {
             step = container.vocalRange.load() == nil ? .vocalRange : .home
         }
+        #if DEBUG
+        // `-startScreen` launch argument (DebugOptions): only steps that need no earlier data.
+        switch DebugOptions.launchScreen {
+        case "onboarding": step = .onboarding
+        case "vocalRange": step = .vocalRange
+        case "home": step = .home
+        case "importSong": step = .importSong
+        default: break
+        }
+        #endif
         // Leftovers from a session that ended in a crash.
         SessionFiles.cleanUp()
         container.modelPrewarmer?.start()

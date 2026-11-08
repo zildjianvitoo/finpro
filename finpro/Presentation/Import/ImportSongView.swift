@@ -12,6 +12,9 @@ import UniformTypeIdentifiers
 struct ImportSongView: View {
     @State private var viewModel: ImportSongViewModel
     @State private var picking = false
+    #if DEBUG
+    @State private var openedLaunchFile = false
+    #endif
     let onBack: () -> Void
     let onUseDemo: () -> Void
 
@@ -58,6 +61,14 @@ struct ImportSongView: View {
         .background(Color.onboardingBackground.ignoresSafeArea())
         .fileImporter(isPresented: $picking, allowedContentTypes: Self.types) { viewModel.picked($0) }
         .onDisappear { viewModel.cancelPreparation() }
+        #if DEBUG
+        .onAppear {
+            // `-importFile` launch argument (DebugOptions): open a file without the picker, once.
+            guard !openedLaunchFile, let url = DebugOptions.launchImportFile else { return }
+            openedLaunchFile = true
+            viewModel.picked(.success(url))
+        }
+        #endif
     }
 
     // MARK: - Shared frame
