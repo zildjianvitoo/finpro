@@ -15,7 +15,7 @@ Goal: see a screen with as few tool calls and image tokens as possible.
    .claude/skills/ui-verify/ui-verify.sh <screen> [importFile]
    ```
 
-   `screen`: `onboarding`, `vocalRange`, `home`, `importSong`. Its last output line is the PNG path.
+   `screen`: `onboarding`, `vocalRange`, `home`, `importSong`, `recording` (demo song, first key; the tips card still needs one tap on "Got It, Let’s Record" at about (201, 543), and the fake singer finishes all segments in about 25 s). Its last output line is the PNG path.
 2. Read that PNG once. It is 400 px wide, enough to compare layout, spacing and colors with Figma.
 3. Edit, then re-run with `SKIP_BUILD=1` only if nothing in Swift changed; otherwise run it normally.
 
@@ -34,7 +34,7 @@ Files (`.../Containers/Shared/AppGroup/<id>/File Provider Storage`, the group wh
 
 Debug builds read two launch arguments (`DebugOptions`): `-startScreen <step>` (applied in
 `AppFlow.init`) and `-importFile <path>` (applied in `ImportSongView`). Release builds ignore them.
-Steps that need earlier data (`chooseKey`, `ready`, `recording`, `export`) have no argument; reach
+Steps that need earlier data (`chooseKey`, `ready`, `export`) have no argument; reach
 them with taps, or add a launch argument that loads demo data.
 
 ## Keep it cheap

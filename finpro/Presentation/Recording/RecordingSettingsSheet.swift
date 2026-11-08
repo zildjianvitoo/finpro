@@ -11,6 +11,8 @@ import SwiftUI
 
 struct RecordingSettingsSheet: View {
     let viewModel: RecordingViewModel
+    /// The full pitch guide layout always shows the guide, so only lyrics are offered there.
+    var offersPitchGuide = true
 
     private enum Page {
         case main, lyrics, pitchGuide
@@ -64,9 +66,11 @@ struct RecordingSettingsSheet: View {
                 Spacer()
                 entry("Lyrics", systemImage: "music.note.list") { page = .lyrics }
                 Spacer()
-                Spacer()
-                entry("Pitch Guide", systemImage: "music.quarternote.3") { page = .pitchGuide }
-                Spacer()
+                if offersPitchGuide {
+                    Spacer()
+                    entry("Pitch Guide", systemImage: "music.quarternote.3") { page = .pitchGuide }
+                    Spacer()
+                }
             }
 
             extras

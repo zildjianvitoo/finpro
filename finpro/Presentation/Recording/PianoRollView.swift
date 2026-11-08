@@ -20,9 +20,17 @@ struct PianoRollView: View {
         var isMissed = false
     }
 
+    /// `.overlay` sits on the camera (dark, translucent); `.fullGuide` is the large plum panel of
+    /// the full pitch guide layout, where hit notes turn lime and missed ones red.
+    enum Style {
+        case overlay, fullGuide
+    }
+
     static let visibleDuration: TimeInterval = 4
     static let playheadPosition = 0.25
     static let rangePadding = 3
+    static let overlayNoteHeight: CGFloat = 10
+    static let fullGuideNoteHeight: CGFloat = 20
     /// C D E F G A B: the rows drawn and named, as in the design.
     static let naturalPitchClasses: Set<Int> = [0, 2, 4, 5, 7, 9, 11]
 
@@ -39,6 +47,7 @@ struct PianoRollView: View {
     var wordLabels: [UUID: String] = [:]
     /// Opacity of the dark panel behind the roll (a display setting).
     var backgroundOpacity = 0.6
+    var style = Style.overlay
 
     private let cornerRadius: CGFloat = 16
     private let labelWidth: CGFloat = 30
@@ -49,7 +58,7 @@ struct PianoRollView: View {
                 draw(in: &context, size: size, now: songTime())
             }
         }
-        .background(.black.opacity(backgroundOpacity), in: .rect(cornerRadius: cornerRadius))
+        .background(panel)
         .overlay(alignment: .topLeading) {
             if trail.contains(where: { $0.midi != nil }) {
                 Label {
@@ -66,6 +75,16 @@ struct PianoRollView: View {
         }
         .accessibilityElement()
         .accessibilityLabel("Pitch guide")
+    }
+
+    @ViewBuilder
+    private var panel: some View {
+        switch style {
+        case .overlay:
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(.black.opacity(backgroundOpacity))
+        case .fullGuide:
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(Color.guidePanel)
+        }
     }
 
     private var midiRange: ClosedRange<Int> {
@@ -107,11 +126,15 @@ struct PianoRollView: View {
         let windowStart = current - Self.visibleDuration * Self.playheadPosition
         let windowEnd = windowStart + Self.visibleDuration
         for note in notes where note.end > windowStart && note.start < windowEnd && range.contains(note.midi) {
-            let height = max(4, min(10, rowHeight * 0.8))
+            let height = max(4, min(style == .fullGuide ? Self.fullGuideNoteHeight : Self.overlayNoteHeight, rowHeight * 0.8))
             let rect = CGRect(x: x(note.start), y: y(Double(note.midi)) - height / 2,
                               width: max(height, x(note.end) - x(note.start) - 2), height: height)
             let isPrevious = dimmedBefore.map { note.end <= $0 + 1e-6 } ?? false
-            let color: Color = note.isMissed ? .red : isPrevious ? .gray.opacity(0.45)
+            let isHit = style == .fullGuide && !note.isMissed
+                && trail.contains { $0.isHit && $0.songTime >= note.start && $0.songTime < note.end }
+            let missed: Color = style == .fullGuide ? .noteMiss : .red
+            let color: Color = note.isMissed ? missed : isPrevious ? .gray.opacity(0.45)
+                : isHit ? .noteHit
                 : (note.start <= current && current < note.end ? .white : .white.opacity(0.85))
             context.fill(Path(roundedRect: rect, cornerRadius: height / 2), with: .color(color))
             if let word = wordLabels[note.id] {

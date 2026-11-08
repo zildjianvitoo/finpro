@@ -14,6 +14,8 @@ enum RecordingDisplaySettings {
     static let lyricsOpacityKey = "recording.lyricsOpacity"
     static let showsPitchGuideKey = "recording.showsPitchGuide"
     static let pitchGuideOpacityKey = "recording.pitchGuideOpacity"
+    /// Recording layout: false = full-screen camera with overlays, true = small camera and a large pitch guide.
+    static let usesFullGuideKey = "recording.usesFullGuide"
 
     static let defaultLyricsOpacity = 0.7
     static let defaultPitchGuideOpacity = 0.5

@@ -14,12 +14,16 @@ struct RecordingView: View {
     @State private var viewModel: RecordingViewModel
     @State private var confirmsEnd = false
     @State private var showsSettings = false
+    /// Lets the camera and the pitch guide glide between the two layouts.
+    @Namespace private var layoutNamespace
     @Environment(\.scenePhase) private var scenePhase
 
     @AppStorage(RecordingDisplaySettings.showsLyricsKey) private var showsLyrics = true
     @AppStorage(RecordingDisplaySettings.lyricsOpacityKey) private var lyricsOpacity = RecordingDisplaySettings.defaultLyricsOpacity
     @AppStorage(RecordingDisplaySettings.showsPitchGuideKey) private var showsPitchGuide = true
     @AppStorage(RecordingDisplaySettings.pitchGuideOpacityKey) private var pitchGuideOpacity = RecordingDisplaySettings.defaultPitchGuideOpacity
+
+    @AppStorage(RecordingDisplaySettings.usesFullGuideKey) private var usesFullGuide = false
 
     private let sideInset: CGFloat = 16
     private let lyricsInset: CGFloat = 32
@@ -36,6 +40,18 @@ struct RecordingView: View {
     private let countdownCircleSize: CGFloat = 150
     /// How far the retry hint sits above the bottom of the pitch guide.
     private let retryHintLift: CGFloat = 24
+    /// Full pitch guide layout: small camera preview on top of the guide card (design).
+    private let thumbnailWidth: CGFloat = 137
+    private let thumbnailHeight: CGFloat = 189
+    private let thumbnailCornerRadius: CGFloat = 16
+    private let thumbnailGuideSpacing: CGFloat = 16
+    private let layoutAnimation = Animation.smooth(duration: 0.45)
+    private let guideCardInset: CGFloat = 32
+    private let guideCardPadding: CGFloat = 14
+    private let guideCardCornerRadius: CGFloat = 20
+    private let toolbarButtonSize: CGFloat = 44
+    /// Soft shadow under the round buttons on the light full guide background.
+    private let lightLayoutShadowOpacity = 0.15
 
     init(viewModel: RecordingViewModel) {
         _viewModel = State(initialValue: viewModel)
@@ -43,11 +59,13 @@ struct RecordingView: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
-            cameraLayer
+            (isFullGuideLayout ? Color.guideBackground : Color.black).ignoresSafeArea()
+            if !isFullGuideLayout { cameraLayer }
             content
             countdownLayer
         }
+        // @AppStorage changes land outside withAnimation, so animate on the value itself.
+        .animation(layoutAnimation, value: usesFullGuide)
         .task { await viewModel.start() }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .background else { return }
@@ -73,23 +91,50 @@ struct RecordingView: View {
                  ? "Your cover will use the \(viewModel.passedCount) segments you passed."
                  : "No segment has passed yet.")
         }
-        .sheet(isPresented: $showsSettings) { RecordingSettingsSheet(viewModel: viewModel) }
+        .sheet(isPresented: $showsSettings) { RecordingSettingsSheet(viewModel: viewModel, offersPitchGuide: !isFullGuideLayout) }
     }
+
+    // MARK: - Layout
+
+    /// The full pitch guide layout applies while recording; the tips card and the error states
+    /// always sit on the camera.
+    private var isFullGuideLayout: Bool {
+        usesFullGuide && (viewModel.status == .recording || (viewModel.status == .starting && viewModel.isCameraReady))
+    }
+
+    /// Icons and buttons: white over the camera, dark over the light full guide background.
+    private var controlTint: Color { isFullGuideLayout ? Color.plumInk : .white }
 
     // MARK: - Layers
 
+    private enum LayoutID {
+        case camera, guide
+    }
+
+    /// The camera: the whole screen with the 9:16 frame guide, or the small preview of the full
+    /// pitch guide layout. One surface in both places, matched so it moves between them.
     @ViewBuilder
-    private var cameraLayer: some View {
+    private var cameraSurface: some View {
         if let source = viewModel.previewSource, viewModel.isCameraReady {
             CameraPreviewView(session: source.previewSession, device: source.previewDevice)
-                .ignoresSafeArea()
-            FrameGuide()
-                .ignoresSafeArea()
         } else if viewModel.isCameraReady, viewModel.status != .ready {
             // Simulator / fakes: there is no camera, the loop still runs.
-            Label("No camera preview", systemImage: "video.slash")
-                .font(.footnote)
-                .foregroundStyle(.white.opacity(0.4))
+            Color.black.overlay {
+                Image(systemName: "video.slash")
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var cameraLayer: some View {
+        cameraSurface
+            .matchedGeometryEffect(id: LayoutID.camera, in: layoutNamespace)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .ignoresSafeArea()
+        if viewModel.previewSource != nil, viewModel.isCameraReady {
+            FrameGuide()
+                .ignoresSafeArea()
         }
     }
 
@@ -216,45 +261,97 @@ struct RecordingView: View {
 
     // MARK: - While recording
 
+    /// Top bar and controls stay put; the middle changes with the layout.
     private var recordingOverlay: some View {
         VStack(spacing: sectionSpacing) {
             topBar
 
-            if showsLyrics, !viewModel.lyrics.isEmpty {
-                RecordingLyricsView(lines: viewModel.lyrics,
-                                    songTime: viewModel.displaySongTime,
-                                    backgroundOpacity: lyricsOpacity)
-                    .padding(.horizontal, lyricsInset)
-            }
-
-            Spacer()
-            phaseInfo
-            Spacer()
-
-            if viewModel.showsBluetoothWarning {
-                Label("Wired earphones give the best sync", systemImage: "airpodspro")
-                    .font(.caption)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(.orange.opacity(0.85), in: .capsule)
-            }
-
-            if showsPitchGuide {
-                PianoRollView(notes: pianoRollNotes,
-                              trail: viewModel.trail,
-                              focusMIDI: focusMIDI,
-                              songTime: viewModel.displaySongTime,
-                              dimmedBefore: viewModel.loop.phase == .preRoll ? viewModel.loop.currentSegment?.audioStartTime : nil,
-                              isPaused: confirmsEnd || showsSettings,
-                              wordLabels: wordLabels,
-                              backgroundOpacity: pitchGuideOpacity)
-                    .frame(height: pitchGuideHeight)
-                    .padding(.horizontal, sideInset)
+            if isFullGuideLayout {
+                fullGuideMiddle
+            } else {
+                cameraMiddle
             }
 
             controls
         }
-        .foregroundStyle(.white)
+        .foregroundStyle(controlTint)
+    }
+
+    /// Full-screen camera: lyrics teleprompter on top, the small pitch guide above the controls.
+    @ViewBuilder
+    private var cameraMiddle: some View {
+        if showsLyrics, !viewModel.lyrics.isEmpty {
+            RecordingLyricsView(lines: viewModel.lyrics,
+                                songTime: viewModel.displaySongTime,
+                                backgroundOpacity: lyricsOpacity)
+                .padding(.horizontal, lyricsInset)
+                .transition(.opacity)
+        }
+
+        Spacer()
+        phaseInfo
+        Spacer()
+
+        bluetoothWarning
+
+        if showsPitchGuide {
+            pitchGuide(style: .overlay)
+                .matchedGeometryEffect(id: LayoutID.guide, in: layoutNamespace)
+                .frame(height: pitchGuideHeight)
+                .padding(.horizontal, sideInset)
+        }
+    }
+
+    @ViewBuilder
+    private var bluetoothWarning: some View {
+        if viewModel.showsBluetoothWarning {
+            Label("Wired earphones give the best sync", systemImage: "airpodspro")
+                .font(.caption)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(.orange.opacity(0.85), in: .capsule)
+        }
+    }
+
+    private func pitchGuide(style: PianoRollView.Style) -> some View {
+        PianoRollView(notes: pianoRollNotes,
+                      trail: viewModel.trail,
+                      focusMIDI: focusMIDI,
+                      songTime: viewModel.displaySongTime,
+                      dimmedBefore: viewModel.loop.phase == .preRoll ? viewModel.loop.currentSegment?.audioStartTime : nil,
+                      isPaused: confirmsEnd || showsSettings,
+                      wordLabels: wordLabels,
+                      backgroundOpacity: pitchGuideOpacity,
+                      style: style)
+    }
+
+    // MARK: - Full pitch guide layout
+
+    /// Small camera preview above a large pitch guide card; no lyrics teleprompter.
+    @ViewBuilder
+    private var fullGuideMiddle: some View {
+        VStack(spacing: thumbnailGuideSpacing) {
+            cameraSurface
+                .matchedGeometryEffect(id: LayoutID.camera, in: layoutNamespace)
+                .frame(width: thumbnailWidth, height: thumbnailHeight)
+                .clipShape(.rect(cornerRadius: thumbnailCornerRadius))
+                .accessibilityLabel("Camera preview")
+
+            pitchGuide(style: .fullGuide)
+                .matchedGeometryEffect(id: LayoutID.guide, in: layoutNamespace)
+                .padding(guideCardPadding)
+                .frame(maxHeight: .infinity)
+                .background(RoundedRectangle(cornerRadius: guideCardCornerRadius, style: .continuous)
+                    .fill(Color.guideFrame))
+                .overlay(alignment: .top) {
+                    phaseInfo
+                        .foregroundStyle(.white)
+                        .padding(.top, guideCardPadding * 4)
+                }
+        }
+        .padding(.horizontal, sideInset * 2)
+
+        bluetoothWarning
     }
 
     private var topBar: some View {
@@ -271,16 +368,32 @@ struct RecordingView: View {
                     } label: {
                         Image(systemName: "chevron.left")
                             .fontWeight(.semibold)
-                            .foregroundStyle(.white)
+                            .foregroundStyle(controlTint)
                     }
                     .glassCircleButtonStyle()
                     .accessibilityLabel("Back")
                 }
                 Spacer()
+                if viewModel.status != .ready { layoutToggle }
             }
         }
         .frame(minHeight: 48)
         .padding(.horizontal, sideInset)
+    }
+
+    /// Switches between the full-screen camera and the full pitch guide.
+    private var layoutToggle: some View {
+        Button {
+            withAnimation(layoutAnimation) { usesFullGuide.toggle() }
+        } label: {
+            Image(systemName: "viewfinder")
+                .font(.title3)
+                .foregroundStyle(controlTint)
+                .frame(width: toolbarButtonSize, height: toolbarButtonSize)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(usesFullGuide ? "Show full camera" : "Show full pitch guide")
     }
 
     private var timer: some View {
@@ -317,7 +430,7 @@ struct RecordingView: View {
                     showsSettings = true
                 } label: {
                     Image(systemName: "slider.horizontal.3")
-                        .foregroundStyle(.white)
+                        .foregroundStyle(controlTint)
                 }
                 .glassCircleButtonStyle()
                 .accessibilityLabel("Recording settings")
@@ -334,7 +447,7 @@ struct RecordingView: View {
                 viewModel.pause()
             } label: {
                 Image(systemName: "pause.fill")
-                    .foregroundStyle(.white)
+                    .foregroundStyle(controlTint)
             }
             .glassCircleButtonStyle()
             .disabled(!viewModel.canPause)
@@ -374,8 +487,9 @@ struct RecordingView: View {
                 .fill(Color.red)
                 .frame(width: stopGlyphSize, height: stopGlyphSize)
                 .frame(width: stopButtonSize, height: stopButtonSize)
-                .background(Circle().fill(.black.opacity(0.35)))
-                .overlay(Circle().strokeBorder(.white.opacity(0.35), lineWidth: 2))
+                .background(Circle().fill(isFullGuideLayout ? .white.opacity(0.9) : .black.opacity(0.35)))
+                .overlay(Circle().strokeBorder(.white.opacity(isFullGuideLayout ? 0.9 : 0.35), lineWidth: 2))
+                .shadow(color: .black.opacity(isFullGuideLayout ? lightLayoutShadowOpacity : 0), radius: 4, y: 1)
                 .contentShape(Circle())
         }
         .buttonStyle(.plain)
@@ -389,6 +503,7 @@ struct RecordingView: View {
             .padding(5)
             .background(Circle().strokeBorder(.white.opacity(0.9), lineWidth: 3))
             .frame(width: size, height: size)
+            .shadow(color: .black.opacity(isFullGuideLayout ? lightLayoutShadowOpacity : 0), radius: 4, y: 1)
             .contentShape(Circle())
     }
 

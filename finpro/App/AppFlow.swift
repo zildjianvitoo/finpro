@@ -52,13 +52,30 @@ final class AppFlow {
         case "vocalRange": step = .vocalRange
         case "home": step = .home
         case "importSong": step = .importSong
+        case "recording": step = .importSong // the demo song is prepared below, then recording starts
         default: break
         }
         #endif
         // Leftovers from a session that ended in a crash.
         SessionFiles.cleanUp()
         container.modelPrewarmer?.start()
+        #if DEBUG
+        if DebugOptions.launchScreen == "recording" {
+            Task { await openRecordingWithDemoSong() }
+        }
+        #endif
     }
+
+    #if DEBUG
+    /// `-startScreen recording`: prepares the demo song, picks its first key and starts recording,
+    /// so the recording screen can be checked without tapping through the flow.
+    private func openRecordingWithDemoSong() async {
+        await loadDemoSong()
+        guard let song = keyChoices?.options.first?.song else { return }
+        songPrepared(song)
+        startRecording()
+    }
+    #endif
 
     /// User completed or skipped the onboarding walkthrough.
     func onboardingFinished() {
