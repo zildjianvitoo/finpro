@@ -80,9 +80,8 @@ struct RootView: View {
         .animation(.default, value: flow.step)
         #if DEBUG
         .overlay(alignment: .topTrailing) {
-            // Hidden where the screen's own top bar uses that corner
-            // (recording: End Session, vocal range: help, onboarding: Skip).
-            if flow.step != .recording && flow.step != .vocalRange && flow.step != .onboarding {
+            // Debug builds only, and only on Home: the designed screens have no button there.
+            if flow.step == .home {
                 Button("Debug Settings", systemImage: "slider.horizontal.3") {
                     showsDebugSettings = true
                 }
