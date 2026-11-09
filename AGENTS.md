@@ -11,6 +11,7 @@ Before migration work, read `docs/MIGRATION-GUIDE.md` and `docs/MIGRATION-STATUS
 1. `docs/prd.md` — the spec (still worded as the PoC spec; update it with the user, not alone).
 2. `docs/COLLABORATION.md` — folder ownership, contract-change process, conventions (team/branch parts are from the PoC, see `docs/MIGRATION-GUIDE.md` §8).
 3. Everything in `finpro/Domain/` — the shared data contracts. Use these types; never create parallel versions (e.g. no new `Segment` when `SongSegment` exists).
+4. `docs/DESIGN-SOURCE.md` — where the design lives (Sketch file "[C6] Project Besar", read through the Sketch MCP configured in `.mcp.json`) and how to read exact colors, fonts and sizes from it. Screenshots in `docs/design/` are only a snapshot; when Sketch is reachable, it wins.
 
 ## Do not modify without explicit permission from the user
 - `finpro/Domain/Entities/`, `finpro/Domain/Repositories/`, `finpro/Domain/Contracts/` — shared contracts. If you believe a contract must change, STOP and explain the proposal instead of editing. Never change a contract to make a build error go away.
@@ -19,7 +20,7 @@ Before migration work, read `docs/MIGRATION-GUIDE.md` and `docs/MIGRATION-STATUS
 - Folders owned by other team members (see `docs/COLLABORATION.md` §2).
 
 ## Code rules
-- UI Slicing workflow (Mandatory): For every UI slicing task, always build, deploy to the booted iOS simulator (`xcrun simctl install booted <app>` & `launch`), capture automated screenshots (`xcrun simctl io booted screenshot <path.png>`), perform multimodal visual inspection against Figma mockups, and iterate on styling/layout until it matches 100% before concluding.
+- UI Slicing workflow (Mandatory): For every UI slicing task, always build, deploy to the booted iOS simulator (`xcrun simctl install booted <app>` & `launch`), capture automated screenshots (`xcrun simctl io booted screenshot <path.png>`), perform multimodal visual inspection against the Sketch design (`docs/DESIGN-SOURCE.md`; screenshots in `docs/design/` if Sketch is not reachable), and iterate on styling/layout until it matches 100% before concluding.
 - Every non-UI type (capture, DSP, playback, analysis, composition, use cases, repositories) is declared `nonisolated`. The project defaults to MainActor isolation; realtime audio/video callbacks must never call MainActor code.
 - ViewModels: `@Observable`, MainActor (default). Views call ViewModels, ViewModels call Use Cases, never AVFoundation/CoreML directly.
 - No magic numbers: thresholds and durations come from `AppConfiguration`.

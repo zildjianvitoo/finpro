@@ -15,7 +15,7 @@ Goal: see a screen with as few tool calls and image tokens as possible.
    .claude/skills/ui-verify/ui-verify.sh <screen> [importFile]
    ```
 
-   `screen`: `onboarding`, `vocalRange`, `home`, `importSong`, `recording` (demo song, first key; the tips card still needs one tap on "Got It, Let’s Record" at about (201, 543), and the fake singer finishes all segments in about 25 s). Its last output line is the PNG path.
+   `screen`: `onboarding`, `vocalRange`, `home`, `importSong`, `export` (fixture cover on the fakes: complete page, then Preview Cover, See all), `recording` (demo song, first key; the tips card still needs one tap on "Got It, Let’s Record" at about (201, 543), and the fake singer finishes all segments in about 25 s). Its last output line is the PNG path.
 2. Read that PNG once. It is 400 px wide, enough to compare layout, spacing and colors with Figma.
 3. Edit, then re-run with `SKIP_BUILD=1` only if nothing in Swift changed; otherwise run it normally.
 

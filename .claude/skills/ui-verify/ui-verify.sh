@@ -3,7 +3,7 @@
 # screenshot. One call instead of tapping through the flow.
 #
 #   ui-verify.sh [screen] [importFile]
-#     screen      onboarding | vocalRange | home | importSong | recording   (default: home)
+#     screen      onboarding | vocalRange | home | importSong | recording | export   (default: home)
 #     importFile  absolute path of an audio file; opens it in the Add a song screen (trimmer)
 #
 # Prints the screenshot path on the last line. Env: DEVICE (name, default "iPhone 17 Pro"),
