@@ -74,7 +74,7 @@ final class ImportSongViewModel {
     @ObservationIgnored private let vocalRange: () -> VocalRange?
     /// Called with the key choices (each holds a prepared song, and `stems` the untransposed
     /// stems) and the lyrics of the chosen part on the prepared song's timeline.
-    @ObservationIgnored private let onPrepared: (PrepareSongUseCase.Choices, [LyricLine]) -> Void
+    @ObservationIgnored private let onPrepared: (PrepareSongUseCase.Choices, [LyricLine], String?) -> Void
     @ObservationIgnored private var preparation: Task<Void, Never>?
     /// The song being prepared, to return to its trimmer when going back.
     @ObservationIgnored private var preparingAudio: ImportedAudio?
@@ -88,7 +88,8 @@ final class ImportSongViewModel {
 
     init(inspector: any AudioFileInspecting, lyrics: any LyricsProviding, previewer: any AudioPreviewing,
          prepare: PrepareSongUseCase,
-         vocalRange: @escaping () -> VocalRange?, onPrepared: @escaping (PrepareSongUseCase.Choices, [LyricLine]) -> Void) {
+         vocalRange: @escaping () -> VocalRange?,
+         onPrepared: @escaping (PrepareSongUseCase.Choices, [LyricLine], String?) -> Void) {
         self.inspector = inspector
         self.lyricsProvider = lyrics
         self.previewer = previewer
@@ -170,7 +171,12 @@ final class ImportSongViewModel {
     /// From the "audio is ready" screen: hand the key choices to the next step.
     func continueWithPreparedSong() {
         guard let preparedChoices else { return }
-        onPrepared(preparedChoices, preparedLyrics)
+        onPrepared(preparedChoices, preparedLyrics, preparingAudio.map(Self.displayName))
+    }
+
+    /// "Artist - Title", or just the title when the artist is unknown.
+    private static func displayName(of audio: ImportedAudio) -> String {
+        [audio.artist, audio.title].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " - ")
     }
 
     /// Back from the preparing or ready screen to the trimmer of the same song.

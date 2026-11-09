@@ -36,6 +36,8 @@ final class AppFlow {
     private(set) var compingPlan: CompingCompositionPlan?
     /// Lyrics of the chosen part on the prepared song's timeline, for the recording screen.
     private(set) var recordingLyrics: [LyricLine] = []
+    /// "Artist - Title" of the imported song, for the final result screens (nil for the demo).
+    private(set) var songName: String?
 
     init(container: AppContainer) {
         self.container = container
@@ -53,6 +55,11 @@ final class AppFlow {
         case "home": step = .home
         case "importSong": step = .importSong
         case "recording": step = .importSong // the demo song is prepared below, then recording starts
+        case "export":
+            // The fixture plan on the fakes container: the final result screens without recording.
+            compingPlan = DomainFixtures.compingPlan()
+            songName = "LANY - Stuck"
+            step = .export
         default: break
         }
         #endif
@@ -118,8 +125,9 @@ final class AppFlow {
         step = .chooseKey
     }
 
-    func keysPrepared(_ choices: PrepareSongUseCase.Choices, lyrics: [LyricLine] = []) {
+    func keysPrepared(_ choices: PrepareSongUseCase.Choices, lyrics: [LyricLine] = [], songName: String? = nil) {
         recordingLyrics = lyrics
+        self.songName = songName
         choices.options.forEach { Contract.assertValid($0.song.validate()) }
         keyChoices = choices
         preparedSong = nil
@@ -174,7 +182,14 @@ final class AppFlow {
         step = .ready
     }
 
+    /// Final result screen: record the same song again.
+    func retakeCover() {
+        compingPlan = nil
+        startRecording()
+    }
+
     func startOver() {
+        songName = nil
         keyChoices = nil
         recordingLyrics = []
         preparationError = nil

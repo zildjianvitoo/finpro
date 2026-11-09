@@ -37,4 +37,6 @@ extension ButtonStyle where Self == PrimaryButtonStyle {
     static var primary: PrimaryButtonStyle { PrimaryButtonStyle() }
     static var primaryWithDot: PrimaryButtonStyle { PrimaryButtonStyle(showsDot: true) }
     static var primaryDeep: PrimaryButtonStyle { PrimaryButtonStyle(fill: .plumDeep) }
+    /// The quieter second action under a primary one.
+    static var primaryMuted: PrimaryButtonStyle { PrimaryButtonStyle(fill: .secondaryActionFill) }
 }

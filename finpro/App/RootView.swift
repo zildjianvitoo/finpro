@@ -72,7 +72,8 @@ struct RootView: View {
                 }
             case .export:
                 if let plan = flow.compingPlan {
-                    ExportPreviewView(viewModel: makeCompingViewModel(plan: plan), onStartOver: flow.startOver)
+                    ExportPreviewView(viewModel: makeCompingViewModel(plan: plan), onRetake: flow.retakeCover,
+                                      onStartOver: flow.startOver)
                 }
             }
         }
@@ -128,7 +129,7 @@ struct RootView: View {
                                         transposition: container.audioTransposition,
                                         configuration: container.configuration),
             vocalRange: { container.vocalRange.load() },
-            onPrepared: { flow.keysPrepared($0, lyrics: $1) })
+            onPrepared: { flow.keysPrepared($0, lyrics: $1, songName: $2) })
     }
 
     private func makeRecordingViewModel(song: PreparedSong) -> RecordingViewModel {
@@ -151,6 +152,7 @@ struct RootView: View {
         let container = flow.container
         return CompingViewModel(
             plan: plan,
+            songName: flow.songName,
             useCase: AutoCompingVideoUseCase(takeLog: container.takeLog, videoComposition: container.videoComposition),
             videoLibrary: container.videoLibrary)
     }
