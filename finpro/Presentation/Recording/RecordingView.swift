@@ -405,7 +405,7 @@ struct RecordingView: View {
                 .foregroundStyle(.white)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
-                .background(Capsule().fill(Color.red))
+                .background(Capsule().fill(Color.recordRed))
                 .accessibilityLabel("Recording time")
         }
     }
@@ -484,7 +484,7 @@ struct RecordingView: View {
             confirmsEnd = true
         } label: {
             RoundedRectangle(cornerRadius: stopGlyphCornerRadius, style: .continuous)
-                .fill(Color.red)
+                .fill(Color.recordRed)
                 .frame(width: stopGlyphSize, height: stopGlyphSize)
                 .frame(width: stopButtonSize, height: stopButtonSize)
                 .background(Circle().fill(isFullGuideLayout ? .white.opacity(0.9) : .black.opacity(0.35)))
@@ -499,7 +499,7 @@ struct RecordingView: View {
 
     private func recordCircle(size: CGFloat) -> some View {
         Circle()
-            .fill(Color.red)
+            .fill(Color.recordRed)
             .padding(5)
             .background(Circle().strokeBorder(.white.opacity(0.9), lineWidth: 3))
             .frame(width: size, height: size)
