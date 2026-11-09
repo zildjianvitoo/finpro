@@ -12,8 +12,10 @@ sizes, spacing) instead of guessing them from screenshots.
   - **Design System** — shared components (today: `Primary Button`, `secondary`). Grows with the design system work.
   - **Artifact** — scratch.
 - Device frame: 402 × 874 pt (iPhone 17). Units in Sketch are points, the same as SwiftUI.
-- `docs/design/*.png` are screenshots of frames taken along the way, named by capture time. They can be
-  older than the file; Sketch wins when it is reachable.
+- Screenshots of frames, named by capture time, live in versioned folders under `docs/design/`.
+  **Active reference: none yet (waiting for the redesign; it goes in `docs/design/v2/`).** `docs/design/v1/` is the
+  archived first design: do not read it unless asked. Until `v2/` exists, use Sketch for the current design.
+  Screenshots can be older than the file; Sketch wins when it is reachable.
 
 ### Screens on Hi-Fid (frame names)
 
