@@ -11,7 +11,7 @@ Before migration work, read `docs/MIGRATION-GUIDE.md` and `docs/MIGRATION-STATUS
 1. `docs/prd.md` — the spec (still worded as the PoC spec; update it with the user, not alone).
 2. `docs/COLLABORATION.md` — folder ownership, contract-change process, conventions (team/branch parts are from the PoC, see `docs/MIGRATION-GUIDE.md` §8).
 3. Everything in `finpro/Domain/` — the shared data contracts. Use these types; never create parallel versions (e.g. no new `Segment` when `SongSegment` exists).
-4. `docs/DESIGN-SOURCE.md` — where the design lives (Sketch file "[C6] Project Besar", read through the Sketch MCP configured in `.mcp.json`) and how to read exact colors, fonts and sizes from it. Screenshots in `docs/design/` are only a snapshot; when Sketch is reachable, it wins.
+4. `docs/DESIGN-SOURCE.md` — where the design lives (Sketch file "[C6] Project Besar") and the colors/fonts/sizes snapshot. Screenshots in `docs/design/` are the default reference. The Sketch MCP (local `.mcp.json`, set up per that doc) is for exact values only (colors, font sizes, spacing) when something looks off: query narrowly with `run_code`, avoid Sketch screenshots, and do not re-read what the doc already lists.
 
 ## Do not modify without explicit permission from the user
 - `finpro/Domain/Entities/`, `finpro/Domain/Repositories/`, `finpro/Domain/Contracts/` — shared contracts. If you believe a contract must change, STOP and explain the proposal instead of editing. Never change a contract to make a build error go away.
@@ -20,7 +20,7 @@ Before migration work, read `docs/MIGRATION-GUIDE.md` and `docs/MIGRATION-STATUS
 - Folders owned by other team members (see `docs/COLLABORATION.md` §2).
 
 ## Code rules
-- UI Slicing workflow (Mandatory): For every UI slicing task, always build, deploy to the booted iOS simulator (`xcrun simctl install booted <app>` & `launch`), capture automated screenshots (`xcrun simctl io booted screenshot <path.png>`), perform multimodal visual inspection against the Sketch design (`docs/DESIGN-SOURCE.md`; screenshots in `docs/design/` if Sketch is not reachable), and iterate on styling/layout until it matches 100% before concluding.
+- UI Slicing workflow (Mandatory): build, run on the simulator (use the `ui-verify` skill: launch arguments + one small screenshot, no tapping through the flow), compare with the design in `docs/design/`, and iterate until colors, layout and structure match. Small spacing/font differences are fine; wrong colors or structure are not.
 - Every non-UI type (capture, DSP, playback, analysis, composition, use cases, repositories) is declared `nonisolated`. The project defaults to MainActor isolation; realtime audio/video callbacks must never call MainActor code.
 - ViewModels: `@Observable`, MainActor (default). Views call ViewModels, ViewModels call Use Cases, never AVFoundation/CoreML directly.
 - No magic numbers: thresholds and durations come from `AppConfiguration`.
@@ -39,7 +39,7 @@ Before migration work, read `docs/MIGRATION-GUIDE.md` and `docs/MIGRATION-STATUS
 
 ## Before you finish
 - The app builds: `xcodebuild -project finpro.xcodeproj -scheme finpro -destination 'generic/platform=iOS Simulator' build`
-- When slicing UI: run automated visual verification on booted simulator (`xcrun simctl install booted <app>`, `launch`, take screenshot via `xcrun simctl io booted screenshot <path.png>`), visually inspect and compare with Figma design, and iterate until UI matches before finishing.
+- When slicing UI: the visual check above is done (see the UI Slicing workflow).
 - If anything in `finpro/Domain/` was touched: `./scripts/check-contracts.sh` passes.
 - If anything in `finpro/Data/Composition/` was touched: `./scripts/check-comping.sh` passes.
 - At handoff points, call the contract checks (`validate()` / `Contract.assertValid`), see `docs/COLLABORATION.md` §4.
