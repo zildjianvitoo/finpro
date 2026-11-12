@@ -129,6 +129,8 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
 * **Timing:** evaluation runs at `segment end + latencyOffset + 150 ms` (see §7.1).
 * **Session start:** the session begins with the silent `3.. 2.. 1..` countdown, then the pre-roll, so the singer and the pitch detector are ready before the first note *(added 2026-11-01 after device testing)*.
 * **After every segment:** playback continues uninterrupted into the next segment; a segment is never repeated *(changed 2026-11-12, auto-rewind removed)*.
+* **Delete last segment (⌫, added 2026-11-12):** after a confirmation, the last finished segment is deleted (the current one when none is finished) and sung again after `3.. 2.. 1..` and the pre-roll; the session pauses while the dialog is open. The deleted take stays in the raw video but is marked removed in the take log (a `.failed` entry for that segment), and `passedTakesPrefix()` returns the **latest** take of each segment, so a re-sung segment replaces the old one.
+* **Record button ring:** a red ring on the edge of the record button fills with the progress through the song, with a white mark at the start of every segment and at the end of the filled part. While recording the button is a larger translucent disc with a red rounded square (tap to pause); when ready or paused it is a red disc (tap to start or resume).
 * **Pause / resume:** pausing stops playback and scoring; resuming shows `3.. 2.. 1..` (3 s, silent) → **pre-roll** of 2.0 s of reference audio before the current segment start (from 0 if not available) → that segment again, so a take never spans a pause. Pre-roll and countdown are never part of a take's video range.
 
 ### 5.7 Session End & Partial Export
