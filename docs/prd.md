@@ -8,8 +8,8 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
 1. **Vocal Range Test & Auto-Transpose:** The user's comfortable vocal range is measured once. The reference song (guide notes, earphone audio, and backing music) is transposed by semitones to fit that range.
 2. **Reference Separation, Audio-to-MIDI & Auto-Segmentation:** Importing a full reference song (full mix with the original vocals, trimmed to 15–60 s), separating it into a vocal stem and an instrumental stem (see §3 for the two-track strategy), extracting the vocal melody into target MIDI notes, and slicing the song into phrase segments based on breathing pauses/silences.
 3. **Continuous Camera Recording + Synced Reference Playback + Live Piano Roll:** Recording a single, uninterrupted 9:16 vertical video (`RawMasterVideo.mov`) while playing the reference audio through earphones and rendering a semi-transparent real-time Piano Roll overlay in the center of the screen.
-4. **Segment Evaluation & Seamless Auto-Rewind Loop:** Evaluating pitch accuracy at the end of each phrase segment. If the score is `< 75%` (**TRY AGAIN**), highlight missed notes, show a `3.. 2.. 1..` countdown, and rewind the Piano Roll playhead + reference audio to the start of the current segment WITHOUT pausing the camera recording. If `>= 75%` (**PASSED**), log the valid video `CMTimeRange` and continue straight into the next segment.
-5. **Automated Comping & Mixdown (Auto-Cut, Stitch & Mix):** When all segments pass — or the user ends the session early — slice `RawMasterVideo.mov` using the logged `CMTimeRange`s, place each passed take at its exact position on the song timeline, dissolve the video and crossfade the vocal takes (150 ms) at each cut, mix the user's vocal with the **instrumental (no original vocals)**, and export a single `FinalCoverVideo.mp4` ready for social media upload.
+4. **Segment Evaluation (no repeat) *(changed 2026-11-12)*:** Evaluating pitch accuracy at the end of each phrase segment. A segment is never repeated: whatever its score, the valid video `CMTimeRange` is logged (status `completed`, the measured score is kept) and playback continues straight into the next segment. The piano roll shows hits in green and misses in red as the notes go by. The earlier auto-rewind (TRY AGAIN below 75% → missed notes, `3.. 2.. 1..`, replay of the segment) was removed.
+5. **Automated Comping & Mixdown (Auto-Cut, Stitch & Mix):** When all segments are sung — or the user ends the session early — slice `RawMasterVideo.mov` using the logged `CMTimeRange`s, place each passed take at its exact position on the song timeline, dissolve the video and crossfade the vocal takes (150 ms) at each cut, mix the user's vocal with the **instrumental (no original vocals)**, and export a single `FinalCoverVideo.mp4` ready for social media upload.
 
 ---
 
@@ -24,14 +24,14 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
 
 ### 2.2 Out of Scope (PoC)
 * Lyrics on the recording screen, editing lyrics, manual editing of guide notes, MIDI import.
-* Choosing between multiple passed takes of the same segment, voluntarily re-recording a passed segment.
+* Choosing between multiple takes of the same segment, voluntarily re-recording a segment.
 * Vocal effects (reverb, EQ, auto-tune), video transitions other than the short dissolve at cuts (§5.9), filters.
 * Landscape, iPad, accounts/backend, direct upload to social platforms, cloud processing. *(Exception: the lyrics lookup in §5.2 sends only the title, artist and duration to LRCLIB; audio never leaves the device.)*
 
 ### 2.3 Platform
 * **iOS 18.0+, iPhone only, portrait only.** Testing requires a physical iPhone (front camera + mic).
 * **Swift 5 language mode** with the project's existing settings: `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, Approachable Concurrency. SwiftUI with `@Observable` (Observation framework). See §7.4 for the realtime-audio isolation rule.
-* **UI language: English** (all strings, including statuses PASSED / TRY AGAIN).
+* **UI language: English** (all strings).
 
 ---
 
@@ -58,11 +58,9 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
 2. **Step 2 (Offline Preparation):** Stem separation → guide extraction from the vocal stem → segmentation → transposition plan → offline render of transposed earphone mix and transposed instrumental. Progress shown step by step.
 3. **Step 3 (Ready Screen):** Shows segment count, chosen transposition (e.g. "−3 semitones"), and an earphone check. Record is disabled when audio output is the built-in speaker/receiver.
 4. **Step 4 (Uninterrupted Session):** User taps Record. Front camera (9:16) + headset microphone record continuously into `RawMasterVideo.mov`. Pre-roll then Segment 1 plays in the earphones; the piano roll scrolls and the user's live pitch trail is drawn (green = within ±50 cents, red = off).
-5. **Step 5 (Evaluation Loop):** At the end of Segment N (+ latency tail):
-   * **TRY AGAIN (< 75%):** playback stops, missed notes flash red, `3.. 2.. 1..` countdown, pre-roll, Segment N again. Camera keeps rolling.
-   * **PASSED (≥ 75%):** green badge flashes; playback has already continued seamlessly into Segment N+1 (no stop, no countdown).
-6. **Step 6 (End):** Session ends when the last segment passes, or when the user taps **End Session** (confirmation: *Export N of M segments* / *Keep recording* / *Discard*), or on an interruption (§5.8).
-7. **Step 7 (Comping & Export):** Passed takes are stitched onto the song timeline, mixed with the transposed instrumental, exported as `FinalCoverVideo.mp4`, and presented with player, Share, and Save to Photos.
+5. **Step 5 (Evaluation Loop):** At the end of Segment N (+ latency tail) the segment is scored and its take logged as `completed` whatever the score; playback has already continued seamlessly into Segment N+1 (no stop, no countdown, no repeat). Camera keeps rolling.
+6. **Step 6 (End):** Session ends when the last segment has been sung, or when the user taps **End Session** (confirmation: *Export N of M segments* / *Keep recording* / *Discard*), or on an interruption (§5.8).
+7. **Step 7 (Comping & Export):** The logged takes are stitched onto the song timeline, mixed with the transposed instrumental, exported as `FinalCoverVideo.mp4`, and presented with player, Share, and Save to Photos.
 
 ---
 
@@ -118,7 +116,7 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
   * Scroll: playhead fixed at 25% from the left; ~4 s visible (≈1 s past, ≈3 s look-ahead).
   * Blocks: target notes (transposed). Trail: user's pitch, green within ±50 cents, red otherwise, none when unvoiced.
   * During pre-roll, the previous material is shown greyed out.
-* Top bar: `Segment 3 / 7 · Attempt 2`, Bluetooth warning when applicable, Phase 1 badge, **End Session** button.
+* Top bar: back button and timer; Bluetooth warning when applicable, Phase 1 badge, **End Session** button.
 * **The overlay is UI only and is never burned into the recorded video.**
 
 ### 5.6 Evaluation & Loop
@@ -126,16 +124,16 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
 * **Evaluated frames:** frames where a target note is active, **excluding the first 100 ms of each note** (attack). Frames with no target note are ignored.
 * **Hit:** user voiced AND `|Δcents| ≤ hitToleranceCents` (80, octave-folded) against the target at time `t`, or any target note within ±100 ms of `t` (timing tolerance). $\Delta_{\text{cents}} = 100 \times (M_{\text{user}} - M_{\text{target}})$. A target-active frame where the user is silent is a **miss**.
 * **Octaves are ignored** when comparing pitch (singing the melody an octave lower/higher is in tune), and the trail is drawn in the target's octave *(device feedback 2026-11-01)*.
-* **Score** = hits / **voiced** evaluated frames when the singer is voiced for ≥ 60% of the evaluated frames; otherwise hits / all evaluated frames (silence = miss). PASSED if ≥ 0.75. A segment with zero evaluated frames auto-passes. *(Changed 2026-11-01: on a real song the original singer is voiced only ~74% of the time, so "silence = miss" failed 73% of the original singer's own segments; with this rule and ±80¢ the original passes 100%, while singing 2 semitones off or not singing passes 0%.)*
-* **Missed note** (flashed red) = note whose own hit ratio < 50%.
+* **Score** = hits / **voiced** evaluated frames when the singer is voiced for ≥ 60% of the evaluated frames; otherwise hits / all evaluated frames (silence = miss). The score is logged with the take and drives no decision (no pass threshold since 2026-11-12). A segment with zero evaluated frames scores 1.0. *(Changed 2026-11-01: on a real song the original singer is voiced only ~74% of the time, so "silence = miss" failed 73% of the original singer's own segments; with this rule and ±80¢ the original passes 100%, while singing 2 semitones off or not singing passes 0%.)*
+* **Missed note** (red on the piano roll) = note whose own hit ratio < 50%; the roll turns a note red once it has gone by without a correct sample.
 * **Timing:** evaluation runs at `segment end + latencyOffset + 150 ms` (see §7.1).
-* **Session start:** the first attempt also begins with the silent `3.. 2.. 1..` countdown, then the pre-roll, so the singer and the pitch detector are ready before the first note *(added 2026-11-01 after device testing)*.
-* **On PASSED:** playback continues uninterrupted into the next segment.
-* **On TRY AGAIN:** stop playback → result (~1 s, missed notes red) → `3.. 2.. 1..` (3 s, silent) → **pre-roll** of 2.0 s of reference audio before the segment start (from 0 if not available) → segment. Pre-roll and countdown are never part of a take's video range.
+* **Session start:** the session begins with the silent `3.. 2.. 1..` countdown, then the pre-roll, so the singer and the pitch detector are ready before the first note *(added 2026-11-01 after device testing)*.
+* **After every segment:** playback continues uninterrupted into the next segment; a segment is never repeated *(changed 2026-11-12, auto-rewind removed)*.
+* **Pause / resume:** pausing stops playback and scoring; resuming shows `3.. 2.. 1..` (3 s, silent) → **pre-roll** of 2.0 s of reference audio before the current segment start (from 0 if not available) → that segment again, so a take never spans a pause. Pre-roll and countdown are never part of a take's video range.
 
 ### 5.7 Session End & Partial Export
-* Because progress is sequential, passed segments are always a prefix `1…N`.
-* Full export when all M segments pass; partial export of `1…N` when the user ends early or on interruption. Instrumental is cut at the end of segment N with a 1.0 s fade-out over the final second.
+* Because progress is sequential, finished segments are always a prefix `1…N`.
+* Full export when all M segments have been sung; partial export of `1…N` when the user ends early or on interruption. Instrumental is cut at the end of segment N with a 1.0 s fade-out over the final second.
 * If N = 0: message "Nothing to export yet", option to restart.
 
 ### 5.8 Interruptions & Limits
@@ -145,7 +143,7 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
 
 ### 5.9 Comping, Mixdown & Export
 * Composition timeline = song timeline (trimmed reference, starting at 0).
-* For each passed segment `i`: insert its take plus the `crossfade` handles (150 ms, none before the first take or after the last) at composition time `segment.audioStartTime − handle`.
+* For each logged segment `i`: insert its take plus the `crossfade` handles (150 ms, none before the first take or after the last) at composition time `segment.audioStartTime − handle`.
 * **Video (v3.3):** takes alternate between two composition video tracks (A/B); an `AVMutableVideoComposition` shows one take at a time and **dissolves** (outgoing take's opacity 1 → 0 over the incoming one) during `crossfade`, centred on each boundary. Layer transforms keep the portrait orientation and mirroring; the composition keeps the recording's colour tags (BT.709/HLG).
 * **Vocal audio:** takes alternate between two composition audio tracks (A/B) with complementary **equal-power** ramps (sine in / cosine out, as 8 linear `setVolumeRamp` pieces) over the same `crossfade` window → no level dip at the cut. (A single track only produces a dip, not a crossfade.)
 * Boundaries sit in the breathing pauses between phrases (§5.3), so the 150 ms transition rarely overlaps singing.
@@ -163,8 +161,8 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
 1. **`VocalRangeTestView` & `VocalRangeViewModel`** — §5.1.
 2. **`AudioImportView` & `PrepViewModel`** — importer, trimmer, disclaimer, step-by-step processing state, ready screen with earphone check.
 3. **`RecordingPianoRollView` & `RecordingViewModel`** — camera preview, piano roll, top bar, End Session dialog.
-4. **`CorrectionOverlayView` & `LoopStateController`** — drives the session state machine:
-   `idle → preRoll → singing(segment) → evaluating → { passed → singing(next) | failed → showingResult → countdown → preRoll } → ended → exporting → done`
+4. **`LoopStateController`** — drives the session state machine:
+   `idle → countdown → preRoll → singing(segment) → evaluating → singing(next) … → ended → exporting → done` (pause → paused → countdown → preRoll restarts the current segment)
 5. **`ExportPreviewView` & `CompingViewModel`** — progress, player, Share, Save.
 6. **`DebugSettingsView`** — edits `PoCConfiguration` (§8).
 
@@ -242,7 +240,9 @@ public struct PitchEvaluation: Sendable {
 
 public enum SegmentAttemptStatus: String, Sendable {
     case passed, failed
-    public var displayLabel: String { self == .passed ? "PASSED" : "TRY AGAIN" }
+    /// Sung to the end and kept in the cover whatever the score (added 2026-11-12).
+    case completed
+    public var displayLabel: String { self == .passed ? "PASSED" : (self == .completed ? "DONE" : "TRY AGAIN") }
 }
 
 public struct TakeAttemptLog: Identifiable, Sendable {
@@ -259,8 +259,8 @@ public struct CompingCompositionPlan: Sendable {
     public let rawVideoURL: URL
     public let instrumentalURL: URL
     public let segments: [SongSegment]      // For timeline placement
-    public let validTakes: [TakeAttemptLog] // 1 passed take per segment, prefix 1...N
-    public let endTime: TimeInterval        // End of last passed segment
+    public let validTakes: [TakeAttemptLog] // 1 kept take per segment, prefix 1...N
+    public let endTime: TimeInterval        // End of last kept segment
     public let crossfadeDuration: CMTime    // 150 ms (video dissolve + vocal crossfade)
     public let instrumentalFadeOut: TimeInterval // 1.0 s for partial export, 0 for full
     public let vocalGain: Float
@@ -419,7 +419,7 @@ public protocol VideoCompositionRepository: Sendable {
 ---
 
 ## 10. Acceptance Criteria (PoC)
-1. Demo song: full flow (range test → import → record with at least one TRY AGAIN → export) runs on a physical iPhone without crashes.
+1. Demo song: full flow (range test → import → record → export) runs on a physical iPhone without crashes.
 2. Vocal vs instrumental sync in the final video: drift < 40 ms over the whole clip (wired earphones).
 3. Cut accuracy: each take starts within ±1 frame of its planned file time.
 4. No audible clicks at segment boundaries.
@@ -481,7 +481,7 @@ Detailed per-person backlogs: `docs/backlog/ikzaz.md`, `docs/backlog/takin.md`, 
 | Owner | Board rows | Scope (PRD sections) |
 |---|---|---|
 | **Ikzaz** | Row 1 — Import → Audio→MIDI → Guide | Vocal range test UI + persistence (§5.1); import, trim, disclaimer (§5.2); stem separation incl. center-channel fallback (§3); Basic Pitch + CREPE fallback, segmentation (§5.3); transposition plan + offline render (§5.4); `PrepareSongUseCase`. *(proposed)* Track A demo asset prep on Mac; Track B CoreML separation spike + written result; import error messages. |
-| **Takin** | Row 2 — Record → Sing → Live feedback<br>Row 3 — Evaluate → Rewind / Continue | Capture + `AVAssetWriter` + master clock (§6.5.4, §7.1); reference playback with pre-roll (§6.5.5); audio session + earphone/route check (§7.2); live CREPE pitch (`CrepePitchDetector`, shared) + `TrackLivePitchUseCase`; recording screen + piano roll (§5.5); `EvaluateSegmentUseCase`, `LoopStateController` state machine, countdown, missed-note highlight (§5.6); `SessionTakeLogRepository`; End Session trigger + interruption detection (§5.7–5.8). |
+| **Takin** | Row 2 — Record → Sing → Live feedback<br>Row 3 — Evaluate → Continue | Capture + `AVAssetWriter` + master clock (§6.5.4, §7.1); reference playback with pre-roll (§6.5.5); audio session + earphone/route check (§7.2); live CREPE pitch (`CrepePitchDetector`, shared) + `TrackLivePitchUseCase`; recording screen + piano roll (§5.5); `EvaluateSegmentUseCase`, `LoopStateController` state machine, countdown, missed-note highlight (§5.6); `SessionTakeLogRepository`; End Session trigger + interruption detection (§5.7–5.8). |
 | **Zildjian Vito** | Row 4 — End Record → Pick takes → Cut + stitch | `AutoCompingVideoUseCase`, `VideoCompositionRepositoryImpl`: timeline placement, A/B crossfade, instrumental mix, mirroring, export (§5.9); partial export (§5.7). *(proposed)* Export Preview screen (player, Share, Save to Photos); app shell, navigation, `AppContainer` wiring; synthesized demo fallback (§7.5) so everyone can test early; Debug Settings (§8); permission screens + error handling UI (§9); PRD owner / integrator. |
 | **All (day 1)** | — | Agree and freeze Domain entities + repository protocols (§6.2–6.3) before parallel work starts. Changes after that go through a quick team review. |
 
@@ -496,7 +496,7 @@ Detailed per-person backlogs: `docs/backlog/ikzaz.md`, `docs/backlog/takin.md`, 
 
 ### 12.3 Integration milestones
 1. **M1 — Contracts frozen:** Domain entities + protocols merged; fakes available.
-2. **M2 — Synthesized end-to-end:** synthesized demo → record → at least one TRY AGAIN → export. Proves clock sync and cutting (§10.2–10.4) before real audio analysis is plugged in.
+2. **M2 — Synthesized end-to-end:** synthesized demo → record → export. Proves clock sync and cutting (§10.2–10.4) before real audio analysis is plugged in.
 3. **M3 — Real song end-to-end:** Track A demo with Basic Pitch guide, transposition, and instrumental mix.
 4. **M4 — Track B verdict:** go/no-go for on-device separation of imported songs. *(Go, 2026-11-03: htdemucs.)*
 
