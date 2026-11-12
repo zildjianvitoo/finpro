@@ -87,6 +87,25 @@ nonisolated enum LoopStateControllerChecks {
         _ = early.segmentEvaluated()
         early.end()
         try check(early.completedCount == 1, "early end keeps 1 completed: \(early.completedCount)")
+
+        // Retake: one segment only, then the pass finishes.
+        let second = segments[1]
+        var retake = LoopStateController(segments: segments, configuration: configuration, range: 1..<2)
+        try check(retake.segmentIndex == 1, "a retake starts on its segment")
+        _ = retake.begin(now: -3)
+        try check(retake.tick(now: 0, songTime: nil) == .startPlayback(from: max(0, second.audioStartTime - configuration.preRoll)),
+                  "a retake plays the pre-roll before its segment")
+        _ = retake.tick(now: 0, songTime: second.audioStartTime)
+        try check(retake.tick(now: 4, songTime: second.audioEndTime + configuration.evaluationTail) == .evaluate(segmentIndex: 1),
+                  "the retaken segment is evaluated")
+        try check(retake.segmentEvaluated() == .finish && retake.phase == .ended, "a retake finishes after its segment")
+
+        // Continue: from a later segment; deleting never goes before it.
+        var resumed = LoopStateController(segments: segments, configuration: configuration, range: 1..<segments.count)
+        _ = resumed.begin(now: -3)
+        _ = resumed.tick(now: 0, songTime: nil)
+        try check(resumed.goBackOneSegment(now: 1) == .stopPlayback && resumed.segmentIndex == 1,
+                  "continue: delete stays on the first segment of the pass")
         return count
     }
 }

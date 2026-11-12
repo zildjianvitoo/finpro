@@ -36,13 +36,19 @@ nonisolated struct LoopStateController: Sendable {
 
     let segments: [SongSegment]
     let configuration: AppConfiguration
+    /// The segments this pass sings: all of them for a session, one for a retake, the rest of the
+    /// song to continue.
+    let range: Range<Int>
     private(set) var phase: Phase = .idle
-    private(set) var segmentIndex = 0
+    private(set) var segmentIndex: Int
     private var countdownEndsAt: TimeInterval = 0
 
-    init(segments: [SongSegment], configuration: AppConfiguration) {
+    init(segments: [SongSegment], configuration: AppConfiguration, range: Range<Int>? = nil) {
         self.segments = segments
         self.configuration = configuration
+        let all = 0..<segments.count
+        self.range = range?.clamped(to: all) ?? all
+        segmentIndex = self.range.lowerBound
     }
 
     var currentSegment: SongSegment? { segments.indices.contains(segmentIndex) ? segments[segmentIndex] : nil }
@@ -82,7 +88,7 @@ nonisolated struct LoopStateController: Sendable {
     mutating func segmentEvaluated() -> Action {
         guard phase == .singing else { return .none }
         segmentIndex += 1
-        guard segmentIndex < segments.count else {
+        guard segmentIndex < range.upperBound else {
             phase = .ended
             return .finish
         }
@@ -120,7 +126,8 @@ nonisolated struct LoopStateController: Sendable {
         // Possible while a segment is under way or paused (the dialog pauses the session first).
         guard canPause || phase == .paused else { return .none }
         let wasPlaying = phase == .preRoll || phase == .singing
-        segmentIndex = max(0, segmentIndex - 1)
+        // Never before the first segment of this pass: earlier ones belong to an earlier recording.
+        segmentIndex = max(range.lowerBound, segmentIndex - 1)
         countdownEndsAt = now + TimeInterval(configuration.countdownSeconds)
         phase = .countdown(remaining: configuration.countdownSeconds)
         return wasPlaying ? .stopPlayback : .none

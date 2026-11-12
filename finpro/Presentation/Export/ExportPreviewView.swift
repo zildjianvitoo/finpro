@@ -29,11 +29,18 @@ struct ExportPreviewView: View {
     @State private var showsSaveError = false
     let onRetake: () -> Void
     let onStartOver: () -> Void
+    /// Sing one clip again (its segment index); the new take replaces it in the cover.
+    let onRetakeClip: (Int) -> Void
+    /// Sing on from the first segment not in the cover.
+    let onContinue: () -> Void
 
-    init(viewModel: CompingViewModel, onRetake: @escaping () -> Void, onStartOver: @escaping () -> Void) {
+    init(viewModel: CompingViewModel, onRetake: @escaping () -> Void, onStartOver: @escaping () -> Void,
+         onRetakeClip: @escaping (Int) -> Void = { _ in }, onContinue: @escaping () -> Void = {}) {
         _viewModel = State(initialValue: viewModel)
         self.onRetake = onRetake
         self.onStartOver = onStartOver
+        self.onRetakeClip = onRetakeClip
+        self.onContinue = onContinue
     }
 
     private let screenInset: CGFloat = 17
@@ -278,13 +285,18 @@ struct ExportPreviewView: View {
         let isSelected = !isMerging && viewModel.selectedClipID == clip.id
         return VStack(spacing: 8) {
             Button {
-                viewModel.selectClip(clip.id)
-                player?.seek(to: clip.start)
+                // The first tap selects a clip; tapping the selected one (showing Retake) retakes it.
+                if isSelected {
+                    player?.pause()
+                    onRetakeClip(clip.id)
+                } else {
+                    viewModel.selectClip(clip.id)
+                    player?.seek(to: clip.start)
+                }
             } label: {
                 clipFrame(of: clip)
                     .frame(width: clipWidth, height: clipHeight)
                     .overlay {
-                        // Retaking a clip comes later (needs several raw videos per cover).
                         if isSelected {
                             VStack(spacing: 0) {
                                 Image(systemName: "arrow.trianglehead.counterclockwise")
@@ -330,10 +342,21 @@ struct ExportPreviewView: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Clip \(clip.id + 1), \(viewModel.timeRange(of: clip))\(clip.needsRetake ? ", needs retake" : "")")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityHint(isSelected ? "Double-tap to sing this clip again" : "Double-tap to select")
     }
 
-    /// Continue Recording: shown when the session ended early. The action comes later, with Retake.
+    /// Continue Recording: shown when the session ended early.
     private var continueTile: some View {
+        Button {
+            player?.pause()
+            onContinue()
+        } label: {
+            continueTileLabel
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var continueTileLabel: some View {
         VStack(spacing: 6) {
             Image(systemName: "plus.square.fill")
                 .font(.title)

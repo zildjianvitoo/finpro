@@ -3,7 +3,7 @@
 //  finpro
 //
 //  Where a recording session keeps its large files, and how they are cleaned up (ZV-16).
-//  Owner: Zildjian Vito. Capture (Takin) writes the raw video to `rawVideoURL`;
+//  Owner: Zildjian Vito. Capture (Takin) writes each recording pass to its own `newRawVideoURL()`;
 //  comping writes the final cover to `finalVideoURL`.
 //
 
@@ -14,7 +14,11 @@ nonisolated enum SessionFiles {
         FileManager.default.temporaryDirectory.appendingPathComponent("Session", isDirectory: true)
     }
 
-    static var rawVideoURL: URL { directory.appendingPathComponent("RawMasterVideo.mov") }
+    /// A new raw video file for one recording pass: the session, then each retake or continue
+    /// gets its own, so earlier passes stay available for the cover.
+    static func newRawVideoURL() -> URL {
+        directory.appendingPathComponent("RawMasterVideo-\(UUID().uuidString).mov")
+    }
     static var finalVideoURL: URL { directory.appendingPathComponent("FinalCoverVideo.mp4") }
 
     /// Free space for important data on the app's volume, in bytes (PRD §5.8 storage checks).
@@ -27,6 +31,11 @@ nonisolated enum SessionFiles {
     /// Creates the session folder if needed.
     static func prepareDirectory() throws {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    /// Deletes one file of this session (the raw video of a discarded pass).
+    static func remove(_ url: URL) {
+        try? FileManager.default.removeItem(at: url)
     }
 
     /// Deletes every file from earlier sessions (raw recording, final export, leftovers after a crash).

@@ -34,6 +34,8 @@ final class AppFlow {
     /// Stems of the chosen song before transposition (Ready screen, original key).
     var separatedStems: SeparatedStems? { keyChoices?.stems }
     private(set) var compingPlan: CompingCompositionPlan?
+    /// What the recording screen records next: the session, or a retake / continue of the cover.
+    private(set) var recordingPass = RecordingPass.session
     /// Lyrics of the chosen part on the prepared song's timeline, for the recording screen.
     private(set) var recordingLyrics: [LyricLine] = []
     /// "Artist - Title" of the imported song, for the final result screens (nil for the demo).
@@ -162,15 +164,35 @@ final class AppFlow {
 
     /// Ready screen: user tapped Record. A new session starts, so files from the last one go (ZV-16).
     func startRecording() {
+        guard preparedSong != nil else { return }
+        container.takeLog.clear()
+        SessionFiles.cleanUp()
+        try? SessionFiles.prepareDirectory()
+        record(.session)
+    }
+
+    /// Final result screen: sing one clip again; its new take replaces the old one in the cover.
+    func retakeClip(segment: Int) {
+        guard let compingPlan else { return }
+        record(RecordingPass(kind: .retake(segment: segment), earlierRawVideoURLs: compingPlan.rawVideoURLs))
+    }
+
+    /// Final result screen: the session ended early; sing on from the first segment not in the cover.
+    func continueRecording() {
+        guard let compingPlan, compingPlan.isPartial else { return }
+        record(RecordingPass(kind: .continueFrom(segment: compingPlan.validTakes.count),
+                             earlierRawVideoURLs: compingPlan.rawVideoURLs))
+    }
+
+    /// Opens the recording screen for a pass. The take log and earlier raw videos are kept.
+    private func record(_ pass: RecordingPass) {
         guard let preparedSong else { return }
         // A key preview from the previous screens must not play over the recording.
         container.audioPreview.stop()
         #if DEBUG
         container.simulatedSinger?.prepare(song: preparedSong)
         #endif
-        container.takeLog.clear()
-        SessionFiles.cleanUp()
-        try? SessionFiles.prepareDirectory()
+        recordingPass = pass
         step = .recording
     }
 
@@ -182,7 +204,12 @@ final class AppFlow {
     }
 
     /// Recording screen (Takin) ended with nothing passed, or the user discarded the session.
+    /// A discarded retake or continue goes back to the cover as it was.
     func sessionDiscarded() {
+        if !recordingPass.isSession, compingPlan != nil {
+            step = .export
+            return
+        }
         container.takeLog.clear()
         step = .ready
     }

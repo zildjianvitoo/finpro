@@ -64,6 +64,8 @@ final class RecordingViewModel {
     }
 
     let song: PreparedSong
+    /// The session, a retake of one clip, or continuing the song.
+    let pass: RecordingPass
     /// Synced lyrics on the song timeline (empty when none were found).
     let lyrics: [LyricLine]
     private(set) var status: Status = .starting
@@ -112,9 +114,11 @@ final class RecordingViewModel {
          configuration: AppConfiguration,
          allowsSpeaker: Bool = false,
          lyrics: [LyricLine] = [],
+         pass: RecordingPass = .session,
          onFinish: @escaping (CompingCompositionPlan) -> Void,
          onDiscard: @escaping () -> Void) {
         self.song = song
+        self.pass = pass
         self.lyrics = lyrics
         self.capture = capture
         self.playback = playback
@@ -127,7 +131,8 @@ final class RecordingViewModel {
         self.allowsSpeaker = allowsSpeaker
         trailDisplay = StabilizePitchDisplayUseCase(configuration: configuration)
         noteDisplay = StabilizePitchDisplayUseCase(configuration: configuration)
-        loop = LoopStateController(segments: song.segments, configuration: configuration)
+        loop = LoopStateController(segments: song.segments, configuration: configuration,
+                                   range: pass.segmentRange(segmentCount: song.segments.count))
         route = routeMonitor.currentRoute
     }
 
@@ -185,6 +190,17 @@ final class RecordingViewModel {
     }
 
     var isPaused: Bool { loop.phase == .paused }
+    /// This pass sang something that goes into the cover: a finished segment of the session, or a
+    /// take of this retake or continue that was not deleted.
+    var hasNewTakes: Bool {
+        if pass.isSession { return completedCount > 0 }
+        let latest = Dictionary(grouping: takeLog.allAttempts(), by: \.segmentIndex).compactMapValues(\.last)
+        return latest.values.contains { $0.recordingPass == pass.index && $0.status != .failed }
+    }
+    /// A retake sings one clip, so there is no earlier segment of this pass to delete.
+    var canDeleteSegment: Bool {
+        if case .retake = pass.kind { false } else { true }
+    }
     var canPause: Bool { status == .recording && (loop.canPause || isPaused) }
 
     /// Time since recording started, on the capture clock (display only; cuts never use it).
@@ -299,13 +315,14 @@ final class RecordingViewModel {
     /// raw video but is marked as removed in the take log, so it never reaches the cover.
     func deleteLastSegment() {
         // Not once the last segment is done: the session is already finishing.
-        guard status == .recording, loop.canPause || isPaused else { return }
-        let target = max(0, loop.segmentIndex - 1)
-        if loop.segmentIndex > 0,
+        guard status == .recording, canDeleteSegment, loop.canPause || isPaused else { return }
+        let target = max(loop.range.lowerBound, loop.segmentIndex - 1)
+        if loop.segmentIndex > loop.range.lowerBound,
            let removed = takeLog.allAttempts().last(where: { $0.segmentIndex == target }), removed.status != .failed {
             takeLog.logAttempt(TakeAttemptLog(
                 segmentIndex: target,
                 attemptNumber: removed.attemptNumber + 1,
+                recordingPass: pass.index,
                 videoTimeRange: removed.videoTimeRange,
                 accuracyScore: 0,
                 missedNoteIDs: [],
@@ -320,7 +337,7 @@ final class RecordingViewModel {
     /// End Session → "Export N of M", or the session limit / last segment.
     func finish() async {
         guard let url = await stopCapture() else { return }
-        if let plan = planner.makePlan(rawVideoURLs: [url], song: song, configuration: configuration) {
+        if let plan = planner.makePlan(rawVideoURLs: pass.earlierRawVideoURLs + [url], song: song, configuration: configuration) {
             onFinish(plan)
         } else {
             status = .interrupted(.nothingToExport)
@@ -333,7 +350,7 @@ final class RecordingViewModel {
         let microphoneMissing = (capture as? any MicrophoneInputProviding)?.isHeadsetMicrophoneActive == false
         if await stopCapture() != nil {
             status = .interrupted(microphoneMissing ? .headsetMicrophoneRequired
-                                  : (completedCount > 0 ? .recordingInterrupted : .nothingToExport))
+                                  : (takeLog.passedTakesPrefix().isEmpty ? .nothingToExport : .recordingInterrupted))
         }
     }
 
@@ -345,14 +362,20 @@ final class RecordingViewModel {
     /// Export what passed before the interruption.
     func exportAfterInterruption() {
         guard let rawVideoURL,
-              let plan = planner.makePlan(rawVideoURLs: [rawVideoURL], song: song, configuration: configuration) else { return }
+              let plan = planner.makePlan(rawVideoURLs: pass.earlierRawVideoURLs + [rawVideoURL], song: song, configuration: configuration) else { return }
         onFinish(plan)
     }
 
+    /// Drops what this pass recorded. A retake or continue goes back to the cover as it was.
     func discard() async {
         if isCapturing { _ = await stopCapture() }
-        takeLog.clear()
-        SessionFiles.cleanUp()
+        if pass.isSession {
+            takeLog.clear()
+            SessionFiles.cleanUp()
+        } else {
+            takeLog.discardAttempts(inPass: pass.index)
+            if let rawVideoURL { SessionFiles.remove(rawVideoURL) }
+        }
         onDiscard()
     }
 
@@ -452,6 +475,7 @@ final class RecordingViewModel {
         takeLog.logAttempt(TakeAttemptLog(
             segmentIndex: index,
             attemptNumber: takeLog.allAttempts().filter { $0.segmentIndex == index }.count + 1,
+            recordingPass: pass.index,
             videoTimeRange: range,
             accuracyScore: result.score,
             missedNoteIDs: result.missedNoteIDs,

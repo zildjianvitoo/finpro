@@ -168,8 +168,7 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
                     guard let microphoneUID = self.selectedMicrophoneUID else { throw HeadsetMicrophoneError.unavailable }
                     try HeadsetMicrophoneSession.verify(microphoneUID)
                     try SessionFiles.prepareDirectory()
-                    let url = SessionFiles.rawVideoURL
-                    try? FileManager.default.removeItem(at: url)
+                    let url = SessionFiles.newRawVideoURL()
                     let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
                     // The video input is added on the first frame, once its real size is known.
                     let audio = AVAssetWriterInput(mediaType: .audio, outputSettings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: Self.audioSampleRate, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: Self.audioBitRate])

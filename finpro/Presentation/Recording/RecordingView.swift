@@ -307,7 +307,9 @@ struct RecordingView: View {
         ZStack {
             settingsButton.position(x: width * settingsX, y: recordButtonSize / 2)
             recordButton.position(x: width * recordX, y: recordButtonSize / 2)
-            deleteButton.position(x: width * deleteX, y: recordButtonSize / 2)
+            if viewModel.canDeleteSegment {
+                deleteButton.position(x: width * deleteX, y: recordButtonSize / 2)
+            }
             doneButton.position(x: width * doneX, y: recordButtonSize / 2)
         }
         .frame(width: width, height: recordButtonSize)
@@ -378,8 +380,11 @@ struct RecordingView: View {
     /// Done: exports the segments finished so far. With none finished yet it asks what to do instead.
     private var doneButton: some View {
         Button {
-            if viewModel.completedCount > 0 {
+            if viewModel.hasNewTakes {
                 Task { await viewModel.finish() }
+            } else if !viewModel.pass.isSession {
+                // Nothing new in this retake or continue: back to the cover as it was.
+                Task { await viewModel.discard() }
             } else {
                 confirmsEnd = true
             }
