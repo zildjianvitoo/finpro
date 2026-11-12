@@ -154,7 +154,8 @@ struct RootView: View {
             plan: plan,
             songName: flow.songName,
             useCase: AutoCompingVideoUseCase(takeLog: container.takeLog, videoComposition: container.videoComposition),
-            videoLibrary: container.videoLibrary)
+            videoLibrary: container.videoLibrary,
+            passThreshold: container.configuration.passThreshold)
     }
 }
 

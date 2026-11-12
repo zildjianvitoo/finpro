@@ -26,12 +26,14 @@ final class CompingViewModel {
         case failed(String)
     }
 
-    /// One passed take of the cover, with the part of the song it covers.
+    /// One take of the cover, with the part of the song it covers.
     struct Clip: Identifiable, Equatable {
         /// The segment index.
         let id: Int
         let start: TimeInterval
         let end: TimeInterval
+        /// Sung below the pass threshold: marked "Needs Retake".
+        let needsRetake: Bool
     }
 
     let plan: CompingCompositionPlan
@@ -46,15 +48,18 @@ final class CompingViewModel {
     private let useCase: AutoCompingVideoUseCase
     private let videoLibrary: any VideoLibrarySaving
     private let thumbnailProvider: any ClipThumbnailProviding
+    private let passThreshold: Float
 
     init(plan: CompingCompositionPlan, songName: String? = nil, useCase: AutoCompingVideoUseCase,
          videoLibrary: any VideoLibrarySaving,
-         thumbnailProvider: any ClipThumbnailProviding = AVClipThumbnailProvider()) {
+         thumbnailProvider: any ClipThumbnailProviding = AVClipThumbnailProvider(),
+         passThreshold: Float = AppConfiguration().passThreshold) {
         self.plan = plan
         self.songName = songName
         self.useCase = useCase
         self.videoLibrary = videoLibrary
         self.thumbnailProvider = thumbnailProvider
+        self.passThreshold = passThreshold
         selectedClipID = plan.validTakes.first?.segmentIndex
     }
 
@@ -63,9 +68,13 @@ final class CompingViewModel {
     var clips: [Clip] {
         plan.validTakes.compactMap { take in
             plan.segments.first { $0.index == take.segmentIndex }
-                .map { Clip(id: $0.index, start: $0.audioStartTime, end: $0.audioEndTime) }
+                .map { Clip(id: $0.index, start: $0.audioStartTime, end: $0.audioEndTime,
+                            needsRetake: take.accuracyScore < passThreshold) }
         }
     }
+
+    /// The session ended before the last segment, so recording can go on (Continue Recording).
+    var canContinueRecording: Bool { plan.isPartial }
 
     /// "2:18 • 5 clips"
     var subtitle: String {
@@ -73,8 +82,9 @@ final class CompingViewModel {
         return "\(Self.format(plan.endTime)) • \(count) \(count == 1 ? "clip" : "clips")"
     }
 
+    /// "00:13-00:17"
     func timeRange(of clip: Clip) -> String {
-        "\(Self.format(clip.start))–\(Self.format(clip.end))"
+        "\(Self.clock(clip.start))-\(Self.clock(clip.end))"
     }
 
     func selectClip(_ id: Int) {
@@ -83,6 +93,12 @@ final class CompingViewModel {
 
     private static func format(_ seconds: TimeInterval) -> String {
         Duration.seconds(seconds).formatted(.time(pattern: .minuteSecond))
+    }
+
+    /// Minutes and seconds, both with two digits ("01:05").
+    static func clock(_ seconds: TimeInterval) -> String {
+        let total = max(0, Int(seconds.rounded(.down)))
+        return String(format: "%02d:%02d", total / 60, total % 60)
     }
 
     var summary: String {
