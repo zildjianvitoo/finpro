@@ -15,7 +15,7 @@ Guide: `docs/MIGRATION-GUIDE.md` (copy) — the original lives at
   - [x] `ConfigurationStore` restarts at schema version 1 with no PoC migration steps; `PlaceholderScreen` removed (guide §4: not migrated)
   - [x] `Tests/*.swift` stay standalone scripts (no test target yet): VocalKeyChecks 44, RealtimeRegressionChecks 83, RealtimePitchChecks 25 pass. The VocalKeyChecks recipe (PoC `docs/test-reports/vocal-key-selection.md`) now needs `-D DEBUG`, because it compiles `FakeVocalRangeRepository`
 - [ ] 5. (postponed) App shell runs end to end on iPhone (PoC views for now) — copied and builds, not yet run on a device
-- [ ] 6. (postponed) Parity test on iPhone vs PoC passed (song: ___, date: ___)
+- [ ] 6. (postponed) Parity test on iPhone vs PoC passed (song: ___, date: ___). The PoC loop repeated failed segments, the new one never does (2026-11-12), so parity now means: same preparation (separation, guide, transposition), same sync and cut accuracy (PRD §10), and a cover that contains every segment once; the TRY AGAIN cases of the PoC checklist no longer apply
 - [x] 7. Renames approved and done (2026-11-04)
   - `PoCConfiguration` → `AppConfiguration` (type, 3 files, UserDefaults keys), 148 file headers `//  poc-c6` → `//  finpro`, Logger fallback subsystem `finpro`, LRCLIB user agent `finpro/1.0 (Apple Developer Academy)`. No behavior or threshold changes; all checks pass
   - Still open: add the repo URL to the LRCLIB user agent once the GitHub repo exists; `docs/prd.md` still says `PoCConfiguration` (update with the user)
@@ -23,7 +23,10 @@ Guide: `docs/MIGRATION-GUIDE.md` (copy) — the original lives at
   - [x] Home screen (`Presentation/Home/`): HomeView, HomeViewModel, palette and cards (`SurfaceButton`, `SurfaceCard`, `VocalRangePill`) (2026-11-06)
   - [x] App Onboarding (`Presentation/Onboarding/`): EasySingLogoView splash + 3 swipeable walkthrough pages with iOS 26+ Liquid Glass (`.liquidGlassCircle()`, `.liquidGlassCapsule()`) (2026-11-06)
   - [x] Vocal range flow (`Presentation/VocalRange/`): intro -> voice profile cards (female/male) -> warmup -> humming -> lowest note -> highest note -> result screen (Soprano/Tenor, comfort zone bar, transposition pills) (2026-11-06)
-  - [ ] Import / key selection / ready / recording / export: waiting for designs
+  - [x] Import / key selection / ready / recording / export screens sliced from the Sketch design (2026-11-07 to 2026-11-12). Recording is now the Concept 1 and 2 screen: lyrics card or lyrics inside the pitch guide, frosted pitch guide with size slider, record button with a song progress ring, delete the last segment, settings sheet. Final result screens read the plan from the fixture or a real session
+  - [x] Design system from the Sketch page "Design System": color ramps and semantic tokens (dark values derived), typography, radius, buttons, debug gallery `-startScreen designSystem`; docs in `docs/DESIGN-SOURCE.md`
+  - [x] Recording loop without repeats (2026-11-12): every segment is sung once and kept (`SegmentAttemptStatus.completed`, contract PR #4); the take log keeps the latest take per segment. PRD §4, §5.5–5.7 updated
+  - [ ] Real-song run of the new recording flow on an iPhone (see steps 5 and 6)
 - [ ] 9. PoC tagged poc-final (by user)
 
 ## Decisions log
@@ -33,3 +36,7 @@ Guide: `docs/MIGRATION-GUIDE.md` (copy) — the original lives at
 - 2026-11-04: Fakes and debug screens excluded from Release builds. A Release build on the simulator runs the real repositories (no simulated singer).
 - 2026-11-04: user approved the step 7 rename. `scripts/` Swift files were updated only for the type name and headers.
 - 2026-11-04: bootstrap commits (project + imported layers + rename) go on `main` as the base; all later work, starting with step 8, goes on a separate branch. GitHub repo comes later. Steps 5–6 (device run, parity test) postponed; step 8 starts from design screenshots/files from the user.
+- 2026-11-09: the design source is the Sketch file "[C6] Project Besar" (read through the Sketch MCP, see `docs/DESIGN-SOURCE.md`); screenshots in `docs/design/` are archived by version.
+- 2026-11-12: design system tokens added next to the old colorsets; old colorsets are removed when the screen using them is re-sliced.
+- 2026-11-12: the recording session no longer repeats a segment (auto-rewind removed); the take log status `completed` was added in contract PR #4 (`contract/completed-take-status`). Pause and resume still restart the current segment after a countdown. The delete button removes the last finished segment and sings it again.
+- 2026-11-12: audit of the device path (capture, playback anchor, live pitch, take ranges, comping) by reading the code: nothing changed since the PoC except the loop and the take log; the models are wired in `AppContainer.makeDefault()` (CREPE tiny for live pitch and the guide, HTDemucs with a center-channel fallback); fakes and the simulated singer exist only in simulator Debug builds. Not run on a device: no iPhone was connected.
