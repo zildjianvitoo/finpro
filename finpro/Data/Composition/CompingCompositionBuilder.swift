@@ -39,13 +39,36 @@ nonisolated struct CompingCompositionBuilder {
     /// (sine/cosine) curve is approximated.
     static let fadeSteps = 8
 
-    func build(_ plan: CompingCompositionPlan) async throws -> Output {
-        let raw = AVURLAsset(url: plan.rawVideoURL)
-        guard let rawVideo = try await raw.loadTracks(withMediaType: .video).first else {
-            throw CompingError.missingTrack("raw video")
+    /// The video and audio track of one recording pass's raw file.
+    private struct Source {
+        /// Kept alive while building: a track only holds its asset weakly.
+        let asset: AVURLAsset
+        let video: AVAssetTrack
+        let audio: AVAssetTrack
+    }
+
+    /// Loads the raw file of every pass a take comes from.
+    private func sources(for plan: CompingCompositionPlan) async throws -> [Int: Source] {
+        var sources: [Int: Source] = [:]
+        for pass in Set(plan.validTakes.map(\.recordingPass)).sorted() {
+            guard plan.rawVideoURLs.indices.contains(pass) else { throw CompingError.missingTrack("raw video of pass \(pass)") }
+            let raw = AVURLAsset(url: plan.rawVideoURLs[pass])
+            guard let video = try await raw.loadTracks(withMediaType: .video).first else {
+                throw CompingError.missingTrack("raw video of pass \(pass)")
+            }
+            guard let audio = try await raw.loadTracks(withMediaType: .audio).first else {
+                throw CompingError.missingTrack("raw audio of pass \(pass)")
+            }
+            sources[pass] = Source(asset: raw, video: video, audio: audio)
         }
-        guard let rawAudio = try await raw.loadTracks(withMediaType: .audio).first else {
-            throw CompingError.missingTrack("raw audio")
+        return sources
+    }
+
+    func build(_ plan: CompingCompositionPlan) async throws -> Output {
+        let sources = try await sources(for: plan)
+        // Every pass is filmed by the same camera setup, so the first take's file sets orientation and size.
+        guard let first = plan.validTakes.first, let rawVideo = sources[first.recordingPass]?.video else {
+            throw CompingError.missingTrack("raw video")
         }
         let instrumentalAsset = AVURLAsset(url: plan.instrumentalURL)
         guard let instrumental = try await instrumentalAsset.loadTracks(withMediaType: .audio).first else {
@@ -76,15 +99,16 @@ nonisolated struct CompingCompositionBuilder {
 
         for (position, take) in plan.validTakes.enumerated() {
             let segment = plan.segments[take.segmentIndex]
+            guard let source = sources[take.recordingPass] else { throw CompingError.missingTrack("raw video of pass \(take.recordingPass)") }
             // Where the segment itself starts inside the raw file (the take range includes the handles).
             let segmentStartInRaw = take.videoTimeRange.start.seconds + handle
 
             // No handle before the first take (song starts at 0) or after the last one (song ends at endTime).
             let lead = position == 0 ? 0 : handle
             let tail = position == lastIndex ? 0 : handle
-            let source = CMTimeRange(start: time(segmentStartInRaw - lead), duration: time(segment.audioDuration + lead + tail))
-            try videoTracks[position % 2].insertTimeRange(source, of: rawVideo, at: time(segment.audioStartTime - lead))
-            try vocalTracks[position % 2].insertTimeRange(source, of: rawAudio, at: time(segment.audioStartTime - lead))
+            let range = CMTimeRange(start: time(segmentStartInRaw - lead), duration: time(segment.audioDuration + lead + tail))
+            try videoTracks[position % 2].insertTimeRange(range, of: source.video, at: time(segment.audioStartTime - lead))
+            try vocalTracks[position % 2].insertTimeRange(range, of: source.audio, at: time(segment.audioStartTime - lead))
 
             // Crossfade window is centered on each boundary.
             let parameters = vocalParameters[position % 2]

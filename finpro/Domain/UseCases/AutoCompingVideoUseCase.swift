@@ -13,12 +13,13 @@ nonisolated struct AutoCompingVideoUseCase {
     let videoComposition: any VideoCompositionRepository
 
     /// nil when no segment has passed yet ("Nothing to export yet").
-    func makePlan(rawVideoURL: URL, song: PreparedSong, configuration: AppConfiguration) -> CompingCompositionPlan? {
+    /// `rawVideoURLs`: the raw video of every recording pass so far, indexed by `TakeAttemptLog.recordingPass`.
+    func makePlan(rawVideoURLs: [URL], song: PreparedSong, configuration: AppConfiguration) -> CompingCompositionPlan? {
         let takes = takeLog.passedTakesPrefix()
         guard let last = takes.last else { return nil }
         let isPartial = takes.count < song.segments.count
         let plan = CompingCompositionPlan(
-            rawVideoURL: rawVideoURL,
+            rawVideoURLs: rawVideoURLs,
             instrumentalURL: song.instrumentalURL,
             segments: song.segments,
             validTakes: takes,

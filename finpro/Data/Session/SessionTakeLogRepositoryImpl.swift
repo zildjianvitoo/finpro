@@ -33,6 +33,12 @@ nonisolated final class SessionTakeLogRepositoryImpl: SessionTakeLogRepository, 
         return prefix
     }
 
+    func discardAttempts(inPass recordingPass: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        attempts.removeAll { $0.recordingPass == recordingPass }
+    }
+
     func clear() {
         lock.lock()
         defer { lock.unlock() }
