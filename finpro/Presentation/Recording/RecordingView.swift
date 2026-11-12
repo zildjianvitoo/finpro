@@ -20,7 +20,7 @@ struct RecordingView: View {
     @AppStorage(RecordingDisplaySettings.showsLyricsKey) private var showsLyrics = true
     @AppStorage(RecordingDisplaySettings.showsPitchGuideKey) private var showsPitchGuide = true
     @AppStorage(RecordingDisplaySettings.lyricsInGuideKey) private var lyricsInGuide = RecordingDisplaySettings.defaultLyricsInGuide
-    @AppStorage(RecordingDisplaySettings.pitchGuideOpacityKey) private var pitchGuideOpacity = RecordingDisplaySettings.defaultPitchGuideOpacity
+    @AppStorage(RecordingDisplaySettings.pitchGuideScaleKey) private var pitchGuideScale = RecordingDisplaySettings.defaultPitchGuideScale
     @AppStorage(RecordingDisplaySettings.lyricsTextStepKey) private var lyricsTextStep = RecordingDisplaySettings.defaultLyricsTextStep
 
     /// Measurements of the design (iPhone 17 Pro, 402 × 874 pt).
@@ -240,7 +240,7 @@ struct RecordingView: View {
                       isPaused: confirmsEnd || confirmsDiscard || showsSettings,
                       wordLabels: wordLabels,
                       lyricsHeight: lyricsInPanel ? RecordingDisplaySettings.guideLyricsHeight : 0,
-                      backgroundOpacity: pitchGuideOpacity)
+                      scale: pitchGuideScale)
             .overlay(alignment: .bottom) {
                 if lyricsInPanel {
                     RecordingGuideLyricsView(lines: viewModel.lyrics, songTime: viewModel.displaySongTime)

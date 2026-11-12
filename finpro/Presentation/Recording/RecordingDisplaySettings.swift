@@ -19,7 +19,12 @@ enum RecordingDisplaySettings {
     /// Text size of the lyrics card, an index into `lyricsTextStyles`.
     static let lyricsTextStepKey = "recording.lyricsTextStep"
 
+    /// Size of the notes, lines and voice dot of the pitch guide, 0...1 (the Pitch Guide slider).
+    static let pitchGuideScaleKey = "recording.pitchGuideScale"
+
     static let defaultLyricsInGuide = true
+    /// The middle of the slider is the design's default look; the right end is "Pitch Max".
+    static let defaultPitchGuideScale = 0.5
     static let defaultLyricsTextStep = 0
     static let lyricsTextStyles: [Font] = [.appSubheadline, .appBody, .appTitle3]
 
@@ -37,7 +42,7 @@ enum RecordingDisplaySettings {
     }
 
     static let defaultLyricsOpacity = 0.7
-    static let defaultPitchGuideOpacity = 0.8
+    static let defaultPitchGuideOpacity = 0.5
     /// Below this the panels are hard to read over the camera.
     static let minimumOpacity = 0.1
     static let opacityStep = 0.1

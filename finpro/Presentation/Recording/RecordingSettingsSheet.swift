@@ -3,7 +3,7 @@
 //  finpro
 //
 //  Bottom sheet opened from the recording screen's settings button: Original Vocal, Lyrics, a
-//  Pitch Guide opacity slider and, at the bottom, where the lyrics sit (Concept 1 card near the
+//  Pitch Guide size slider and, at the bottom, where the lyrics sit (Concept 1 card near the
 //  camera, or Concept 2 inside the pitch guide). Values are the per-user preferences in
 //  RecordingDisplaySettings.
 //
@@ -18,7 +18,7 @@ struct RecordingSettingsSheet: View {
 
     @AppStorage(RecordingDisplaySettings.showsLyricsKey) private var showsLyrics = true
     @AppStorage(RecordingDisplaySettings.lyricsInGuideKey) private var lyricsInGuide = RecordingDisplaySettings.defaultLyricsInGuide
-    @AppStorage(RecordingDisplaySettings.pitchGuideOpacityKey) private var pitchGuideOpacity = RecordingDisplaySettings.defaultPitchGuideOpacity
+    @AppStorage(RecordingDisplaySettings.pitchGuideScaleKey) private var pitchGuideScale = RecordingDisplaySettings.defaultPitchGuideScale
 
     private let horizontalInset: CGFloat = 24
     private let rowHeight: CGFloat = 50
@@ -81,8 +81,8 @@ struct RecordingSettingsSheet: View {
                 .foregroundStyle(.white)
             HStack(spacing: 12) {
                 Image(systemName: "textformat.size.smaller")
-                Slider(value: $pitchGuideOpacity, in: RecordingDisplaySettings.minimumOpacity...1) {
-                    Text("Pitch Guide opacity")
+                Slider(value: $pitchGuideScale, in: 0...1) {
+                    Text("Pitch Guide size")
                 }
                 .tint(.blue)
                 Image(systemName: "textformat.size.larger")

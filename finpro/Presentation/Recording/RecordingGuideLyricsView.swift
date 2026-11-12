@@ -3,7 +3,7 @@
 //  finpro
 //
 //  Concept 2: the lyrics inside the pitch guide panel, under the notes: the line being sung in
-//  bold, the next one lighter. When the line changes, both glide up one row.
+//  bold, the next one in regular weight. When the line changes, both glide up one row.
 //
 
 import SwiftUI
@@ -13,7 +13,6 @@ struct RecordingGuideLyricsView: View {
     let songTime: () -> TimeInterval?
 
     private let refreshInterval: TimeInterval = 0.1
-    private let nextLineOpacity = 0.5
     private let rowHeight = RecordingDisplaySettings.guideLyricsHeight / 2
     private let glide = Animation.smooth(duration: 0.4)
 
@@ -39,10 +38,10 @@ struct RecordingGuideLyricsView: View {
     /// The current line sits on the upper row, the next one below it; others fade out.
     private func row(_ index: Int, current: Int) -> some View {
         let distance = index - current
-        let opacity: Double = distance == 0 ? 1 : distance == 1 ? nextLineOpacity : 0
+        let opacity: Double = distance == 0 || distance == 1 ? 1 : 0
         return Text(lines[index].text)
-            .font(.appHeadline)
-            .foregroundStyle(Color.primary800)
+            .font(distance == 0 ? .appHeadline : .appHeadline.weight(.regular))
+            .foregroundStyle(Color.secondaryButton)
             .lineLimit(1)
             .minimumScaleFactor(0.7)
             .padding(.horizontal, 12)

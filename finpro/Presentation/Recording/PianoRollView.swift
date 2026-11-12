@@ -30,7 +30,6 @@ struct PianoRollView: View {
     /// Space above the first and below the last line.
     static let topInset: CGFloat = 13
     static let bottomInset: CGFloat = 14
-    static let noteHeight: CGFloat = 16
     /// C D E F G A B: the rows drawn and named, as in the design.
     static let naturalPitchClasses: [Int] = [0, 2, 4, 5, 7, 9, 11]
 
@@ -61,6 +60,15 @@ struct PianoRollView: View {
         return octave * 12 + naturalPitchClasses[line - octave * 7]
     }
 
+    /// A size that grows with the slider: `mid` is the design's default look at the middle of the
+    /// slider, `high` the "Pitch Max" look at the right end, `low` the left end.
+    static func scaled(_ scale: Double, low: CGFloat, mid: CGFloat, high: CGFloat) -> CGFloat {
+        let clamped = min(max(scale, 0), 1)
+        return clamped <= 0.5
+            ? low + (mid - low) * CGFloat(clamped / 0.5)
+            : mid + (high - mid) * CGFloat((clamped - 0.5) / 0.5)
+    }
+
     /// Panel height for a number of lines, plus room for lyrics under them.
     static func height(rows: CGFloat, lyricsHeight: CGFloat = 0) -> CGFloat {
         topInset + rows * rowPitch + bottomInset + lyricsHeight
@@ -79,13 +87,12 @@ struct PianoRollView: View {
     var wordLabels: [UUID: String] = [:]
     /// Height reserved at the bottom for content drawn over the roll (the lyrics, in Concept 2).
     var lyricsHeight: CGFloat = 0
-    /// Opacity of the panel behind the roll (a display setting).
-    var backgroundOpacity = RecordingDisplaySettings.defaultPitchGuideOpacity
+    /// Size of the notes, lines and voice dot (a display setting, see `scaled`).
+    var scale = RecordingDisplaySettings.defaultPitchGuideScale
 
     private let cornerRadius: CGFloat = 16
     private let labelWidth: CGFloat = 35
     private let trailInset: CGFloat = 10
-    private let lineWidth: CGFloat = 3
 
     var body: some View {
         TimelineView(.animation(minimumInterval: nil, paused: isPaused)) { _ in
@@ -93,23 +100,37 @@ struct PianoRollView: View {
                 draw(in: &context, size: size, now: songTime())
             }
         }
-        .background(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(Color.secondaryButton.opacity(backgroundOpacity)))
+        .background {
+            // Sketch: material "Dark / Regular" (a background blur) with a light tint on top.
+            ZStack {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(.regularMaterial)
+                    .environment(\.colorScheme, .dark)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Palette.panel)
+            }
+        }
         .accessibilityElement()
         .accessibilityLabel("Pitch guide")
     }
 
     // MARK: - Colors
 
-    /// The plum-tinted light panel of the design, for both lyric placements.
+    /// The frosted panel of the design: a blurred dark material under a light tint at 20%, plum lines, light
+    /// notes and labels, a dark playhead and a lime dot where the voice is.
     private enum Palette {
-        static let line = Color.tertiaryText.opacity(0.8)
-        static let label = Color.primaryBrand
-        static let note = Color.secondaryText
+        static let panel = Color.secondaryButton.opacity(0.2)
+        static let line = Color.tertiaryText.opacity(0.6)
+        static let label = Color.secondaryButton
+        static let note = Color.secondaryButton
         static let playhead = Color.primary800
         static let dot = Color.secBrand
-        static let word = Color.primaryBrand
-        static let dotSize: CGFloat = 22
+        static let word = Color.secondaryButton
     }
+
+    private var noteHeight: CGFloat { Self.scaled(scale, low: 5, mid: 8, high: 16) }
+    private var lineWidth: CGFloat { Self.scaled(scale, low: 1, mid: 2, high: 4) }
+    private var dotSize: CGFloat { Self.scaled(scale, low: 8, mid: 12, high: 22) }
 
     // MARK: - Drawing
 
@@ -155,7 +176,7 @@ struct PianoRollView: View {
         let windowStart = current - Self.visibleDuration * Self.playheadPosition
         let windowEnd = windowStart + Self.visibleDuration
         for note in notes where note.end > windowStart && note.start < windowEnd {
-            let height = Self.noteHeight
+            let height = noteHeight
             let rect = CGRect(x: x(note.start), y: y(Double(note.midi)) - height / 2,
                               width: max(height, x(note.end) - x(note.start) - 2), height: height)
             let isPrevious = dimmedBefore.map { note.end <= $0 + 1e-6 } ?? false
@@ -184,10 +205,10 @@ struct PianoRollView: View {
         var playhead = Path()
         playhead.move(to: CGPoint(x: playheadX, y: rowsTop))
         playhead.addLine(to: CGPoint(x: playheadX, y: rowsTop + rowsHeight))
-        context.stroke(playhead, with: .color(Palette.playhead), lineWidth: 2)
+        context.stroke(playhead, with: .color(Palette.playhead), lineWidth: 3)
         if let last = trail.last, let midi = last.midi, current - last.songTime < maxJoin {
-            let radius = Palette.dotSize / 2
-            let dot = CGRect(x: x(last.songTime) - radius, y: y(Double(midi)) - radius, width: Palette.dotSize, height: Palette.dotSize)
+            let radius = dotSize / 2
+            let dot = CGRect(x: x(last.songTime) - radius, y: y(Double(midi)) - radius, width: dotSize, height: dotSize)
             context.fill(Path(ellipseIn: dot), with: .color(Palette.dot))
         }
     }
