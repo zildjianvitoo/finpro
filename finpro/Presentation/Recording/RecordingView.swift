@@ -50,8 +50,6 @@ struct RecordingView: View {
     /// Countdown: the screen dims, the number sits in a white circle (design).
     private let countdownDimOpacity = 0.4
     private let countdownCircleSize: CGFloat = 150
-    /// How far the retry hint sits above the centre of the pitch guide.
-    private let retryHintLift: CGFloat = 36
 
     init(viewModel: RecordingViewModel) {
         _viewModel = State(initialValue: viewModel)
@@ -69,7 +67,7 @@ struct RecordingView: View {
                 Color.black
                 cameraLayer(layout)
                 content(layout)
-                countdownLayer(layout)
+                countdownLayer
             }
             .frame(width: layout.size.width, height: layout.size.height, alignment: .top)
             .ignoresSafeArea()
@@ -88,8 +86,8 @@ struct RecordingView: View {
             }
         }
         .confirmationDialog("End session?", isPresented: $confirmsEnd, titleVisibility: .visible) {
-            if viewModel.passedCount > 0 {
-                Button("Export \(viewModel.passedCount) of \(viewModel.segmentCount)") {
+            if viewModel.completedCount > 0 {
+                Button("Export \(viewModel.completedCount) of \(viewModel.segmentCount)") {
                     Task { await viewModel.finish() }
                 }
             }
@@ -98,9 +96,9 @@ struct RecordingView: View {
             }
             Button("Keep Recording", role: .cancel) {}
         } message: {
-            Text(viewModel.passedCount > 0
-                 ? "Your cover will use the \(viewModel.passedCount) segments you passed."
-                 : "No segment has passed yet.")
+            Text(viewModel.completedCount > 0
+                 ? "Your cover will use the \(viewModel.completedCount) segments you finished."
+                 : "No segment has been finished yet.")
         }
         .confirmationDialog("Discard this recording?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
             Button("Discard", role: .destructive) {
@@ -122,8 +120,6 @@ struct RecordingView: View {
         let top: CGFloat
 
         var videoHeight: CGFloat { min(size.width * 16 / 9, size.height - top) }
-        /// Black space below the camera frame.
-        var bottomInset: CGFloat { max(0, size.height - top - videoHeight) }
     }
 
     private var lyricsAvailable: Bool { showsLyrics && !viewModel.lyrics.isEmpty }
@@ -178,8 +174,8 @@ struct RecordingView: View {
             stoppedState(error, primary: ("Try Again", { Task { await viewModel.start() } }))
                 .frame(maxHeight: .infinity)
         case .interrupted(let error), .failed(let error):
-            stoppedState(error, primary: viewModel.passedCount > 0
-                         ? ("Export \(viewModel.passedCount) of \(viewModel.segmentCount)", { viewModel.exportAfterInterruption() })
+            stoppedState(error, primary: viewModel.completedCount > 0
+                         ? ("Export \(viewModel.completedCount) of \(viewModel.segmentCount)", { viewModel.exportAfterInterruption() })
                          : nil)
                 .frame(maxHeight: .infinity)
         }
@@ -237,7 +233,7 @@ struct RecordingView: View {
                       trail: viewModel.trail,
                       focusMIDI: focusMIDI,
                       songTime: viewModel.displaySongTime,
-                      dimmedBefore: viewModel.loop.phase == .preRoll ? viewModel.loop.currentSegment?.audioStartTime : nil,
+                      dimmedBefore: viewModel.singingFrom,
                       isPaused: confirmsEnd || confirmsDiscard || showsSettings,
                       wordLabels: wordLabels,
                       lyricsHeight: lyricsInPanel ? RecordingDisplaySettings.guideLyricsHeight : 0,
@@ -390,10 +386,10 @@ struct RecordingView: View {
         .accessibilityLabel("Discard recording")
     }
 
-    /// Done: exports what passed. With nothing passed yet it asks what to do instead.
+    /// Done: exports the segments finished so far. With none finished yet it asks what to do instead.
     private var doneButton: some View {
         Button {
-            if viewModel.passedCount > 0 {
+            if viewModel.completedCount > 0 {
                 Task { await viewModel.finish() }
             } else {
                 confirmsEnd = true
@@ -455,15 +451,10 @@ struct RecordingView: View {
 
     // MARK: - Countdown
 
-    /// The countdown after a failed attempt (the missed notes stay on the pitch guide).
-    private var isRetryCountdown: Bool {
-        if case .countdown = viewModel.loop.phase { viewModel.lastResult?.passed == false } else { false }
-    }
-
-    /// Dims the screen and shows the number in a white circle; after a failed attempt a hint says
-    /// the phrase is sung again. Touches pass through so the controls stay reachable.
+    /// Dims the screen and shows the number in a white circle, before the first segment and after
+    /// a pause. Touches pass through so the controls stay reachable.
     @ViewBuilder
-    private func countdownLayer(_ layout: VideoLayout) -> some View {
+    private var countdownLayer: some View {
         if case .countdown(let remaining) = viewModel.loop.phase {
             ZStack {
                 Color.black.opacity(countdownDimOpacity)
@@ -476,50 +467,17 @@ struct RecordingView: View {
                     .frame(width: countdownCircleSize, height: countdownCircleSize)
                     .background(Circle().fill(.white))
                     .accessibilityLabel("Starting in \(remaining)")
-
-                if isRetryCountdown {
-                    retryHint
-                        .frame(maxHeight: .infinity, alignment: .bottom)
-                        .padding(.bottom, layout.bottomInset + controlsBottomInset + recordButtonSize + guideControlsGap
-                                 + guideHeight / 2 - retryHintLift)
-                }
             }
             .allowsHitTesting(false)
         }
     }
 
-    private var retryHint: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .font(.appTitle3.weight(.medium))
-                .accessibilityHidden(true)
-            Text("Sing this phrase again")
-                .font(.appSubheadline.weight(.medium))
-        }
-        .foregroundStyle(Color.black.opacity(0.85))
-        .frame(width: 240, height: 72)
-        .background(.white.opacity(0.55), in: .rect(cornerRadius: AppRadius.medium))
-        .environment(\.colorScheme, .light)
-        .accessibilityElement(children: .combine)
-    }
-
     @ViewBuilder
     private var phaseInfo: some View {
-        switch viewModel.loop.phase {
-        case .preRoll:
+        if viewModel.loop.phase == .preRoll {
             Label("Listen…", systemImage: "ear")
                 .font(.appTitle3.bold())
                 .foregroundStyle(.white)
-        case .singing:
-            if let result = viewModel.lastResult, result.passed {
-                Label("Segment \(result.segmentIndex + 1) passed", systemImage: "checkmark.circle.fill")
-                    .font(.appSubheadline.bold())
-                    .foregroundStyle(Color.pitchHit)
-            }
-        case .idle, .ended, .countdown, .showingResult, .paused:
-            // The missed notes on the pitch guide are the result, the countdown has its own layer,
-            // and the paused state is shown by the record button.
-            EmptyView()
         }
     }
 
@@ -539,12 +497,9 @@ struct RecordingView: View {
     // MARK: - Data for the pitch guide
 
     private var pianoRollNotes: [PianoRollView.Note] {
-        let showsMissed = viewModel.loop.phase == .showingResult || isRetryCountdown
-        let missed = showsMissed ? Set(viewModel.lastResult?.missedNoteIDs ?? []) : []
         let plan = viewModel.song.transposition
         return viewModel.song.segments.flatMap(\.targetNotes).map {
-            PianoRollView.Note(id: $0.id, midi: plan.transposed($0), start: $0.startTime, end: $0.endTime,
-                               isMissed: missed.contains($0.id))
+            PianoRollView.Note(id: $0.id, midi: plan.transposed($0), start: $0.startTime, end: $0.endTime)
         }
     }
 

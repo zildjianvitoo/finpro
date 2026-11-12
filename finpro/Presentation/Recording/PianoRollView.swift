@@ -17,7 +17,6 @@ struct PianoRollView: View {
         let midi: Int
         let start: TimeInterval
         let end: TimeInterval
-        var isMissed = false
     }
 
     static let visibleDuration: TimeInterval = 4
@@ -81,7 +80,7 @@ struct PianoRollView: View {
     /// Notes of the current segment, used to centre the vertical range.
     let focusMIDI: [Int]
     let songTime: () -> TimeInterval?
-    /// PRD §5.5: during pre-roll, notes before this time (previous material) are drawn greyed out.
+    /// PRD §5.5: notes before this time (material before the part being sung) are drawn greyed out.
     var dimmedBefore: TimeInterval?
     /// Stops redrawing (e.g. while a dialog is open) to leave CPU time for audio and video.
     var isPaused = false
@@ -182,8 +181,10 @@ struct PianoRollView: View {
             let rect = CGRect(x: x(note.start), y: y(Double(note.midi)) - height / 2,
                               width: max(height, x(note.end) - x(note.start) - 2), height: height)
             let isPrevious = dimmedBefore.map { note.end <= $0 + 1e-6 } ?? false
-            let isHit = !note.isMissed && trail.contains { $0.isHit && $0.songTime >= note.start && $0.songTime < note.end }
-            let color: Color = note.isMissed ? .noteMiss : isPrevious ? .gray.opacity(0.45)
+            let isHit = trail.contains { $0.isHit && $0.songTime >= note.start && $0.songTime < note.end }
+            // A note that went by without a correct sample is a miss, shown red as it scrolls away.
+            let isMissed = !isPrevious && !isHit && note.end <= current
+            let color: Color = isMissed ? .noteMiss : isPrevious ? .gray.opacity(0.45)
                 : isHit ? .pitchHit
                 : Palette.note.opacity(note.start <= current && current < note.end ? 1 : 0.85)
             context.fill(Path(roundedRect: rect, cornerRadius: height / 2), with: .color(color))

@@ -27,7 +27,7 @@ nonisolated final class SessionTakeLogRepositoryImpl: SessionTakeLogRepository, 
         defer { lock.unlock() }
         var prefix: [TakeAttemptLog] = []
         while let take = attempts.first(where: {
-            $0.segmentIndex == prefix.count && $0.status == .passed
+            $0.segmentIndex == prefix.count && $0.status != .failed
         }) {
             prefix.append(take)
         }
