@@ -106,9 +106,58 @@ Notes from probing this file:
 - Fills, borders and radii: read `style.fills[].color`, `style.borders`, `style.cornerRadii`; positions from `frame`
   (relative to the parent group, so add the parents' offsets for absolute values).
 
-## Snapshot of the design values (2026-11-09)
+## Design system in code (Sketch page "Design System", read 2026-11-12)
 
-Read from the document; re-read before relying on them, because the design is still changing.
+The single source of truth for colors, type, radii and buttons is the Sketch page **Design System** (one frame).
+The code mirrors it 1:1; compare with the debug gallery: `-startScreen designSystem` (`DesignSystemGalleryView`).
+
+**Colors** (asset catalog, generated symbols such as `Color.primary500`):
+
+| Sketch | Asset / symbol | Light | Dark (derived) |
+| --- | --- | --- | --- |
+| Primary ramp, 8 steps | `Primary100` … `Primary800` | `F3EAF1 C9A3BC A66B94 843D70 6A1E55 5D1941 4F123E 3F0D31` | same |
+| Secondary ramp (lime), 8 steps | `Secondary100` … `Secondary800` | `F7FDE8 E9FCBD DFFB87 D6FB61 B2D94A 91B52E 718F20 526A13` | same |
+| PrimaryBrand | `primaryBrand` | `6A1E55` | `A66B94` |
+| SecBrand | `secBrand` | `D6FB61` | `D6FB61` |
+| PrimaryDark | `primaryDark` | `4F123E` | `6A1E55` |
+| SmallButton | `smallButton` | `D6FB61` | `D6FB61` |
+| PrimaryButton | `primaryButton` | `6A1E55` | `843D70` |
+| SelectedButton | `selectedButton` | `4F123E` | `6A1E55` |
+| SecondaryButton | `secondaryButton` | `F3EAF2` | `3F0D31` |
+| Background | `screenBackground` (not `background`: it clashes with `ShapeStyle.background`) | `FAF7F9` | `1F0A19` |
+| BodyText | `bodyText` | `6A1E55` | `F3EAF1` |
+| SecText | `secText` | `843D70` | `C9A3BC` |
+| SecondaryText | `secondaryText` | `92547F` | `B07C9F` |
+| TertiaryText | `tertiaryText` | `B77FA6` | `8F5E82` |
+
+- Sketch has **light values only**. The dark column is derived by the rule "text roles move to the light end of the
+  ramp, fills move one step lighter so white text stays readable, the primary/selected relation (selected is darker)
+  is kept". It is not from the designer: review it before shipping dark mode.
+- Measured, not read: the lime ramp labels in Sketch are copy-pasted from the primary ramp, so the lime values come from
+  the swatch pixels (`D6FB61` appears as step 400, which cross-checks). `TertiaryText` is the placeholder text
+  `#Tertiary` in Sketch; its value is the swatch pixel `B77FA6`. Replace them if the designer fixes the page.
+- Old assets (`BrandPlum`, `PlumInk`, `Ring*`, `Surface*`, …) are not part of the design system. They stay until the
+  screen that uses them is re-sliced; delete each when its last user is gone.
+
+**Typography**: system text styles via `Font+Typography.swift`: `appLargeTitle` (Bold 34), `appTitle1` (SemiBold 28),
+`appTitle2` (SemiBold 22), `appTitle3` (20), `appHeadline` (SemiBold 17), `appBody` (17), `appSubheadline` (15),
+`appFootnote` (13), `appCaption` (12), `appCaption2` (11), `appCTA` (SemiBold 17). They follow Dynamic Type.
+
+**Radius**: `AppRadius.large` 20, `.medium` 16, `.small` 12.
+
+**Buttons** (`Presentation/DesignSystem/Buttons/`), 56 pt capsule, text `appCTA`:
+
+- `.appPrimary`: fill `primaryButton`, white text; pressed `primary800`; disabled fill `secondaryButton`, text `secText`.
+- `.appAccent` (Sketch "Secondary Button"): fill `smallButton`, text `primary800`; pressed `secondary500` (derived).
+- `.appIcon(.primary | .secondary | .tinted)`: 44 pt circle; fills `primaryButton` / `smallButton` / `secondaryButton`,
+  glyphs white / `primary800` / `primaryBrand`; pressed and disabled use opacity (derived).
+- Sketch backs these with the Liquid Glass "Button Backgrounds - Tinted" symbol; the code uses a plain tinted capsule,
+  which reproduces the colors exactly.
+
+## Older snapshot of document-wide values (2026-11-09)
+
+Read from the whole document before the Design System page was used; where it disagrees with the section above, the
+section above wins.
 
 - 39 swatches, many left over from exploration (`idk`, `hmm`, `BASE`, …). The ones the app uses:
   `bg #FAF7F9`, `primary text #3B1C32`, `second text #806D79`, `card #6A1E55`,
