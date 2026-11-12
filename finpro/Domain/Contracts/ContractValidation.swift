@@ -95,8 +95,8 @@ nonisolated enum TakeLogContract {
             fail("\(takes.count) takes for \(segments.count) segments")
         }
         for (position, take) in takes.enumerated() {
-            if take.status != .passed {
-                fail("take for segment \(take.segmentIndex) has status \(take.status)")
+            if take.status == .failed {
+                fail("take for segment \(take.segmentIndex) has status \(take.status); only passed or completed takes are handed over")
             }
             if take.segmentIndex != position {
                 fail("expected segment \(position) at position \(position), got \(take.segmentIndex) (must be prefix 0...N-1)")

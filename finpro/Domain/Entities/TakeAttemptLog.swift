@@ -10,10 +10,20 @@ import CoreMedia
 import Foundation
 
 nonisolated enum SegmentAttemptStatus: String, Sendable, Codable {
+    /// Scored at or above the pass threshold (the session repeated failed segments).
     case passed
     case failed
+    /// Sung to the end and kept in the cover whatever the score (the session no longer repeats
+    /// segments); `accuracyScore` still holds the measured score.
+    case completed
 
-    var displayLabel: String { self == .passed ? "PASSED" : "TRY AGAIN" }
+    var displayLabel: String {
+        switch self {
+        case .passed: "PASSED"
+        case .completed: "DONE"
+        case .failed: "TRY AGAIN"
+        }
+    }
 }
 
 nonisolated struct TakeAttemptLog: Identifiable, Sendable {
