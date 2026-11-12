@@ -2,9 +2,9 @@
 //  RecordingView.swift
 //  finpro
 //
-//  Recording screen (PRD §5.5): full-screen front camera with the 9:16 frame guide, a tips card
-//  before recording starts, then the timer, lyrics teleprompter, pitch guide and the pause,
-//  record (end session) and display settings controls.
+//  Recording screen (PRD §5.5): the front camera in its 9:16 frame, a tips card before recording
+//  starts, then the timer, the lyrics (a card near the camera, or inside the pitch guide), the
+//  pitch guide and the controls: settings, record (start / pause / resume), delete and done.
 //
 
 import SwiftUI
@@ -13,59 +13,69 @@ import UIKit
 struct RecordingView: View {
     @State private var viewModel: RecordingViewModel
     @State private var confirmsEnd = false
+    @State private var confirmsDiscard = false
     @State private var showsSettings = false
-    /// Lets the camera and the pitch guide glide between the two layouts.
-    @Namespace private var layoutNamespace
     @Environment(\.scenePhase) private var scenePhase
 
     @AppStorage(RecordingDisplaySettings.showsLyricsKey) private var showsLyrics = true
-    @AppStorage(RecordingDisplaySettings.lyricsOpacityKey) private var lyricsOpacity = RecordingDisplaySettings.defaultLyricsOpacity
     @AppStorage(RecordingDisplaySettings.showsPitchGuideKey) private var showsPitchGuide = true
+    @AppStorage(RecordingDisplaySettings.lyricsInGuideKey) private var lyricsInGuide = RecordingDisplaySettings.defaultLyricsInGuide
     @AppStorage(RecordingDisplaySettings.pitchGuideOpacityKey) private var pitchGuideOpacity = RecordingDisplaySettings.defaultPitchGuideOpacity
+    @AppStorage(RecordingDisplaySettings.lyricsTextStepKey) private var lyricsTextStep = RecordingDisplaySettings.defaultLyricsTextStep
 
-    @AppStorage(RecordingDisplaySettings.usesFullGuideKey) private var usesFullGuide = false
-
-    private let sideInset: CGFloat = 16
-    private let lyricsInset: CGFloat = 32
-    private let pitchGuideHeight: CGFloat = 120
-    private let recordButtonSize: CGFloat = 72
-    private let stopButtonSize: CGFloat = 50
-    private let stopGlyphSize: CGFloat = 30
-    private let stopGlyphCornerRadius: CGFloat = 6
+    /// Measurements of the design (iPhone 17 Pro, 402 × 874 pt).
+    private let backButtonSize: CGFloat = 44
+    private let topBarInset: CGFloat = 1
+    private let lyricsCardGap: CGFloat = 8
+    private let lyricsCardInset: CGFloat = 33
+    private let pitchGuideMaxWidth: CGFloat = 316
+    private let guideControlsGap: CGFloat = 22
+    private let recordButtonSize: CGFloat = 68
+    private let recordDotSize: CGFloat = 48
+    private let controlsBottomInset: CGFloat = 9
+    private let settingsButtonSize: CGFloat = 50
+    private let deleteGlyphSize: CGFloat = 28
+    private let doneGlyphSize: CGFloat = 36
+    private let pauseGlyphSize: CGFloat = 20
+    /// Horizontal centres of the controls as a share of the width (85, 201, 284 and 355 of 402).
+    private let settingsX = 0.211
+    private let recordX = 0.5
+    private let deleteX = 0.708
+    private let doneX = 0.883
     private let timerRefresh: TimeInterval = 0.25
-    private let sectionSpacing: CGFloat = 10
-    private let controlsBottomPadding: CGFloat = 8
+    private let timerCornerRadius: CGFloat = 10
+    private let timerHeight: CGFloat = 26
+    private let disabledOpacity = 0.4
     /// Countdown: the screen dims, the number sits in a white circle (design).
     private let countdownDimOpacity = 0.4
     private let countdownCircleSize: CGFloat = 150
-    /// How far the retry hint sits above the bottom of the pitch guide.
-    private let retryHintLift: CGFloat = 24
-    /// Full pitch guide layout: small camera preview on top of the guide card (design).
-    private let thumbnailWidth: CGFloat = 137
-    private let thumbnailHeight: CGFloat = 189
-    private let thumbnailCornerRadius: CGFloat = 16
-    private let thumbnailGuideSpacing: CGFloat = 16
-    private let layoutAnimation = Animation.smooth(duration: 0.45)
-    private let guideCardInset: CGFloat = 32
-    private let guideCardPadding: CGFloat = 14
-    private let guideCardCornerRadius: CGFloat = 20
-    private let toolbarButtonSize: CGFloat = 44
-    /// Soft shadow under the round buttons on the light full guide background.
-    private let lightLayoutShadowOpacity = 0.15
+    /// How far the retry hint sits above the centre of the pitch guide.
+    private let retryHintLift: CGFloat = 36
 
     init(viewModel: RecordingViewModel) {
         _viewModel = State(initialValue: viewModel)
     }
 
     var body: some View {
-        ZStack {
-            (isFullGuideLayout ? Color.guideBackground : Color.black).ignoresSafeArea()
-            if !isFullGuideLayout { cameraLayer }
-            content
-            countdownLayer
+        // The outer reader respects the safe area, so it reports the insets; the content then
+        // lays out on the full screen.
+        GeometryReader { outer in
+            let insets = outer.safeAreaInsets
+            let layout = VideoLayout(size: CGSize(width: outer.size.width + insets.leading + insets.trailing,
+                                                  height: outer.size.height + insets.top + insets.bottom),
+                                     top: insets.top)
+            ZStack(alignment: .top) {
+                Color.black
+                cameraLayer(layout)
+                content(layout)
+                countdownLayer(layout)
+            }
+            .frame(width: layout.size.width, height: layout.size.height, alignment: .top)
+            .ignoresSafeArea()
+            // The design is light only; tokens resolve light even when the phone is in dark mode.
+            .environment(\.colorScheme, .light)
         }
-        // @AppStorage changes land outside withAnimation, so animate on the value itself.
-        .animation(layoutAnimation, value: usesFullGuide)
+        .preferredColorScheme(.dark)
         .task { await viewModel.start() }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .background else { return }
@@ -91,28 +101,43 @@ struct RecordingView: View {
                  ? "Your cover will use the \(viewModel.passedCount) segments you passed."
                  : "No segment has passed yet.")
         }
-        .sheet(isPresented: $showsSettings) { RecordingSettingsSheet(viewModel: viewModel, offersPitchGuide: !isFullGuideLayout) }
+        .confirmationDialog("Discard this recording?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
+            Button("Discard", role: .destructive) {
+                Task { await viewModel.discard() }
+            }
+            Button("Keep Recording", role: .cancel) {}
+        } message: {
+            Text("Nothing from this session will be kept.")
+        }
+        .sheet(isPresented: $showsSettings) { RecordingSettingsSheet(viewModel: viewModel) }
     }
 
     // MARK: - Layout
 
-    /// The full pitch guide layout applies while recording; the tips card and the error states
-    /// always sit on the camera.
-    private var isFullGuideLayout: Bool {
-        usesFullGuide && (viewModel.status == .recording || (viewModel.status == .starting && viewModel.isCameraReady))
+    /// The camera shows in a 9:16 frame under the status bar, the part that ends up in the video;
+    /// the rest of the screen is black.
+    private struct VideoLayout {
+        let size: CGSize
+        let top: CGFloat
+
+        var videoHeight: CGFloat { min(size.width * 16 / 9, size.height - top) }
+        /// Black space below the camera frame.
+        var bottomInset: CGFloat { max(0, size.height - top - videoHeight) }
     }
 
-    /// Icons and buttons: white over the camera, dark over the light full guide background.
-    private var controlTint: Color { isFullGuideLayout ? Color.plumInk : .white }
+    private var lyricsAvailable: Bool { showsLyrics && !viewModel.lyrics.isEmpty }
+    /// Concept 2: the lyrics sit inside the pitch guide, which then needs the guide to be shown.
+    private var lyricsInPanel: Bool { lyricsAvailable && lyricsInGuide && showsPitchGuide }
+    /// Concept 1: a card near the camera (also when there is no pitch guide to hold them).
+    private var lyricsAsCard: Bool { lyricsAvailable && !lyricsInPanel }
+
+    private var guideHeight: CGFloat {
+        PianoRollView.height(rows: RecordingDisplaySettings.guideRows,
+                             lyricsHeight: lyricsInPanel ? RecordingDisplaySettings.guideLyricsHeight : 0)
+    }
 
     // MARK: - Layers
 
-    private enum LayoutID {
-        case camera, guide
-    }
-
-    /// The camera: the whole screen with the 9:16 frame guide, or the small preview of the full
-    /// pitch guide layout. One surface in both places, matched so it moves between them.
     @ViewBuilder
     private var cameraSurface: some View {
         if let source = viewModel.previewSource, viewModel.isCameraReady {
@@ -126,54 +151,272 @@ struct RecordingView: View {
         }
     }
 
-    @ViewBuilder
-    private var cameraLayer: some View {
+    private func cameraLayer(_ layout: VideoLayout) -> some View {
         cameraSurface
-            .matchedGeometryEffect(id: LayoutID.camera, in: layoutNamespace)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .ignoresSafeArea()
-        if viewModel.previewSource != nil, viewModel.isCameraReady {
-            FrameGuide()
-                .ignoresSafeArea()
-        }
+            .frame(width: layout.size.width, height: layout.videoHeight)
+            .clipped()
+            .padding(.top, layout.top)
     }
 
     @ViewBuilder
-    private var content: some View {
+    private func content(_ layout: VideoLayout) -> some View {
         switch viewModel.status {
         case .starting where !viewModel.isCameraReady:
             ProgressView("Getting ready…")
                 .tint(.white)
                 .foregroundStyle(.white)
-        case .ready:
-            VStack(spacing: 0) {
-                topBar
-                Spacer()
-                tipsCard
-                Spacer()
-            }
-        case .starting, .recording:
-            recordingOverlay
+                .frame(maxHeight: .infinity)
+        case .ready, .starting, .recording:
+            sessionOverlay(layout)
         case .finishing:
             ProgressView("Saving your recording…")
                 .tint(.white)
                 .foregroundStyle(.white)
+                .frame(maxHeight: .infinity)
         case .blocked(let error):
             stoppedState(error, primary: ("Try Again", { Task { await viewModel.start() } }))
+                .frame(maxHeight: .infinity)
         case .interrupted(let error), .failed(let error):
             stoppedState(error, primary: viewModel.passedCount > 0
                          ? ("Export \(viewModel.passedCount) of \(viewModel.segmentCount)", { viewModel.exportAfterInterruption() })
                          : nil)
+                .frame(maxHeight: .infinity)
         }
     }
 
-    // MARK: - Before recording
+    // MARK: - Before and while recording
+
+    /// Top bar, lyrics, pitch guide and controls over the camera frame; the tips card sits on top
+    /// of them until it is dismissed by starting the recording.
+    private func sessionOverlay(_ layout: VideoLayout) -> some View {
+        VStack(spacing: 0) {
+            topBar
+                .padding(.top, topBarInset)
+
+            if lyricsAsCard {
+                RecordingLyricsView(lines: viewModel.lyrics,
+                                    songTime: viewModel.displaySongTime,
+                                    textStep: lyricsTextStep,
+                                    onChangeTextSize: { lyricsTextStep = RecordingDisplaySettings.nextLyricsTextStep(after: lyricsTextStep) },
+                                    onHide: { withAnimation(.snappy) { showsLyrics = false } })
+                    .padding(.horizontal, lyricsCardInset)
+                    .padding(.top, lyricsCardGap)
+                    .transition(.opacity)
+            }
+
+            Spacer()
+            phaseInfo
+            Spacer()
+
+            bluetoothWarning
+
+            if showsPitchGuide {
+                pitchGuide
+                    .frame(maxWidth: pitchGuideMaxWidth)
+                    .frame(height: guideHeight)
+                    .padding(.bottom, guideControlsGap)
+            }
+
+            controls(width: layout.size.width)
+                .padding(.bottom, controlsBottomInset)
+        }
+        .padding(.top, layout.top)
+        .frame(width: layout.size.width, height: layout.top + layout.videoHeight, alignment: .top)
+        .overlay {
+            if viewModel.status == .ready {
+                tipsCard
+            }
+        }
+        .animation(.snappy, value: lyricsInGuide)
+        .animation(.snappy, value: showsLyrics)
+    }
+
+    private var pitchGuide: some View {
+        PianoRollView(notes: pianoRollNotes,
+                      trail: viewModel.trail,
+                      focusMIDI: focusMIDI,
+                      songTime: viewModel.displaySongTime,
+                      dimmedBefore: viewModel.loop.phase == .preRoll ? viewModel.loop.currentSegment?.audioStartTime : nil,
+                      isPaused: confirmsEnd || confirmsDiscard || showsSettings,
+                      wordLabels: wordLabels,
+                      lyricsHeight: lyricsInPanel ? RecordingDisplaySettings.guideLyricsHeight : 0,
+                      backgroundOpacity: pitchGuideOpacity)
+            .overlay(alignment: .bottom) {
+                if lyricsInPanel {
+                    RecordingGuideLyricsView(lines: viewModel.lyrics, songTime: viewModel.displaySongTime)
+                        .frame(height: RecordingDisplaySettings.guideLyricsHeight)
+                        .padding(.bottom, PianoRollView.bottomInset / 2)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var bluetoothWarning: some View {
+        if viewModel.showsBluetoothWarning {
+            Label("Wired earphones give the best sync", systemImage: "airpodspro")
+                .font(.appCaption)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(.orange.opacity(0.85), in: .capsule)
+                .padding(.bottom, 8)
+        }
+    }
+
+    private var topBar: some View {
+        ZStack {
+            timer
+            HStack {
+                LiquidGlassGroup {
+                    Button {
+                        if viewModel.status == .ready {
+                            Task { await viewModel.discard() }
+                        } else {
+                            confirmsEnd = true
+                        }
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .fontWeight(.semibold)
+                            .foregroundStyle(Color.black.opacity(0.9))
+                    }
+                    .glassCircleButtonStyle()
+                    .accessibilityLabel("Back")
+                }
+                Spacer()
+            }
+        }
+        .frame(minHeight: backButtonSize)
+        .padding(.horizontal, 16)
+    }
+
+    private var timer: some View {
+        TimelineView(.periodic(from: .now, by: timerRefresh)) { _ in
+            Text(Duration.seconds(viewModel.elapsedRecordingTime())
+                .formatted(.time(pattern: .minuteSecond(padMinuteToLength: 2))))
+                .font(.appBody.weight(.bold))
+                .monospacedDigit()
+                .foregroundStyle(.white)
+                .padding(.horizontal, 10)
+                .frame(height: timerHeight)
+                .background(RoundedRectangle(cornerRadius: timerCornerRadius, style: .continuous).fill(Color.timerRed))
+                .overlay(RoundedRectangle(cornerRadius: timerCornerRadius, style: .continuous).strokeBorder(.black.opacity(0.1), lineWidth: 1))
+                .shadow(color: .black.opacity(0.1), radius: 4, y: 1)
+                .accessibilityLabel("Recording time")
+        }
+    }
+
+    // MARK: - Controls
+
+    /// Settings, record (start / pause / resume), delete and done, at the places of the design.
+    private func controls(width: CGFloat) -> some View {
+        ZStack {
+            settingsButton.position(x: width * settingsX, y: recordButtonSize / 2)
+            recordButton.position(x: width * recordX, y: recordButtonSize / 2)
+            deleteButton.position(x: width * deleteX, y: recordButtonSize / 2)
+            doneButton.position(x: width * doneX, y: recordButtonSize / 2)
+        }
+        .frame(width: width, height: recordButtonSize)
+    }
+
+    private var settingsButton: some View {
+        Button {
+            showsSettings = true
+        } label: {
+            Image(systemName: "switch.2")
+        }
+        .buttonStyle(.appIcon(.tinted, size: settingsButtonSize))
+        .accessibilityLabel("Recording settings")
+    }
+
+    /// Red record button: starts the recording, pauses it, and resumes it while paused (the
+    /// current segment restarts after a countdown).
+    private var recordButton: some View {
+        Button {
+            switch viewModel.status {
+            case .ready: Task { await viewModel.beginRecording() }
+            default: if viewModel.isPaused { viewModel.resume() } else { viewModel.pause() }
+            }
+        } label: {
+            ZStack {
+                Circle().fill(.black.opacity(0.45))
+                Circle().strokeBorder(.white.opacity(0.6), lineWidth: 1.5)
+                Circle().fill(Color.recordRed).frame(width: recordDotSize, height: recordDotSize)
+                if viewModel.status == .recording, !viewModel.isPaused {
+                    Image(systemName: "pause.fill")
+                        .font(.system(size: pauseGlyphSize))
+                        .foregroundStyle(.white)
+                }
+            }
+            .frame(width: recordButtonSize, height: recordButtonSize)
+            .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(!canUseRecordButton)
+        .opacity(canUseRecordButton ? 1 : disabledOpacity)
+        .accessibilityLabel(recordButtonLabel)
+    }
+
+    private var canUseRecordButton: Bool {
+        switch viewModel.status {
+        case .ready: true
+        case .recording: viewModel.canPause
+        default: false
+        }
+    }
+
+    private var recordButtonLabel: String {
+        switch viewModel.status {
+        case .ready: "Start recording"
+        default: viewModel.isPaused ? "Resume recording" : "Pause recording"
+        }
+    }
+
+    private var deleteButton: some View {
+        Button {
+            if viewModel.status == .ready {
+                Task { await viewModel.discard() }
+            } else {
+                confirmsDiscard = true
+            }
+        } label: {
+            Image(systemName: "delete.left.fill")
+                .font(.system(size: deleteGlyphSize))
+                .foregroundStyle(Color.screenBackground)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Discard recording")
+    }
+
+    /// Done: exports what passed. With nothing passed yet it asks what to do instead.
+    private var doneButton: some View {
+        Button {
+            if viewModel.passedCount > 0 {
+                Task { await viewModel.finish() }
+            } else {
+                confirmsEnd = true
+            }
+        } label: {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: doneGlyphSize))
+                .foregroundStyle(Color.secBrand)
+                .frame(width: 44, height: 44)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(viewModel.status != .recording)
+        .opacity(viewModel.status == .recording ? 1 : disabledOpacity)
+        .accessibilityLabel("Finish recording")
+    }
+
+    // MARK: - Tips
 
     private var tipsCard: some View {
         VStack(alignment: .leading, spacing: 10) {
             Image(systemName: "headphones")
                 .font(.body)
-                .foregroundStyle(Color.plumNight)
+                .foregroundStyle(Color.primary800)
                 .environment(\.colorScheme, .light)
                 .frame(width: 32, height: 32)
                 .background(Circle().fill(.white))
@@ -181,12 +424,12 @@ struct RecordingView: View {
                 .accessibilityHidden(true)
 
             Text("Quick Recording Tips")
-                .font(.subheadline.weight(.semibold))
+                .font(.appSubheadline.weight(.semibold))
                 .foregroundStyle(.white)
                 .accessibilityAddTraits(.isHeader)
 
             Text("Wear headphones, keep your camera steady, and find a quiet place for the best recording.")
-                .font(.footnote)
+                .font(.appFootnote)
                 .foregroundStyle(.white.opacity(0.85))
                 .fixedSize(horizontal: false, vertical: true)
 
@@ -194,10 +437,10 @@ struct RecordingView: View {
                 Task { await viewModel.beginRecording() }
             } label: {
                 Text("Got It, Let’s Record")
-                    .font(.subheadline.weight(.semibold))
+                    .font(.appSubheadline.weight(.semibold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(Capsule().fill(Color.plumNight))
+                    .background(Capsule().fill(Color.primary800))
                     .contentShape(Capsule())
             }
             .buttonStyle(.plain)
@@ -217,17 +460,16 @@ struct RecordingView: View {
     }
 
     /// Dims the screen and shows the number in a white circle; after a failed attempt a hint says
-    /// the phrase is sung again. Touches pass through so pause stays reachable.
+    /// the phrase is sung again. Touches pass through so the controls stay reachable.
     @ViewBuilder
-    private var countdownLayer: some View {
+    private func countdownLayer(_ layout: VideoLayout) -> some View {
         if case .countdown(let remaining) = viewModel.loop.phase {
             ZStack {
                 Color.black.opacity(countdownDimOpacity)
-                    .ignoresSafeArea()
 
                 Text("\(remaining)")
                     .font(.system(size: 72, weight: .bold))
-                    .foregroundStyle(Color.plumInk)
+                    .foregroundStyle(Color.primary800)
                     .contentTransition(.numericText())
                     .animation(.snappy, value: remaining)
                     .frame(width: countdownCircleSize, height: countdownCircleSize)
@@ -237,7 +479,8 @@ struct RecordingView: View {
                 if isRetryCountdown {
                     retryHint
                         .frame(maxHeight: .infinity, alignment: .bottom)
-                        .padding(.bottom, recordButtonSize + sectionSpacing + controlsBottomPadding + retryHintLift)
+                        .padding(.bottom, layout.bottomInset + controlsBottomInset + recordButtonSize + guideControlsGap
+                                 + guideHeight / 2 - retryHintLift)
                 }
             }
             .allowsHitTesting(false)
@@ -247,264 +490,16 @@ struct RecordingView: View {
     private var retryHint: some View {
         VStack(spacing: 6) {
             Image(systemName: "arrow.triangle.2.circlepath")
-                .font(.title3.weight(.medium))
+                .font(.appTitle3.weight(.medium))
                 .accessibilityHidden(true)
             Text("Sing this phrase again")
-                .font(.subheadline.weight(.medium))
+                .font(.appSubheadline.weight(.medium))
         }
         .foregroundStyle(Color.black.opacity(0.85))
         .frame(width: 240, height: 72)
-        .background(.white.opacity(0.55), in: .rect(cornerRadius: 16))
+        .background(.white.opacity(0.55), in: .rect(cornerRadius: AppRadius.medium))
         .environment(\.colorScheme, .light)
         .accessibilityElement(children: .combine)
-    }
-
-    // MARK: - While recording
-
-    /// Top bar and controls stay put; the middle changes with the layout.
-    private var recordingOverlay: some View {
-        VStack(spacing: sectionSpacing) {
-            topBar
-
-            if isFullGuideLayout {
-                fullGuideMiddle
-            } else {
-                cameraMiddle
-            }
-
-            controls
-        }
-        .foregroundStyle(controlTint)
-    }
-
-    /// Full-screen camera: lyrics teleprompter on top, the small pitch guide above the controls.
-    @ViewBuilder
-    private var cameraMiddle: some View {
-        if showsLyrics, !viewModel.lyrics.isEmpty {
-            RecordingLyricsView(lines: viewModel.lyrics,
-                                songTime: viewModel.displaySongTime,
-                                backgroundOpacity: lyricsOpacity)
-                .padding(.horizontal, lyricsInset)
-                .transition(.opacity)
-        }
-
-        Spacer()
-        phaseInfo
-        Spacer()
-
-        bluetoothWarning
-
-        if showsPitchGuide {
-            pitchGuide(style: .overlay)
-                .matchedGeometryEffect(id: LayoutID.guide, in: layoutNamespace)
-                .frame(height: pitchGuideHeight)
-                .padding(.horizontal, sideInset)
-        }
-    }
-
-    @ViewBuilder
-    private var bluetoothWarning: some View {
-        if viewModel.showsBluetoothWarning {
-            Label("Wired earphones give the best sync", systemImage: "airpodspro")
-                .font(.caption)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(.orange.opacity(0.85), in: .capsule)
-        }
-    }
-
-    private func pitchGuide(style: PianoRollView.Style) -> some View {
-        PianoRollView(notes: pianoRollNotes,
-                      trail: viewModel.trail,
-                      focusMIDI: focusMIDI,
-                      songTime: viewModel.displaySongTime,
-                      dimmedBefore: viewModel.loop.phase == .preRoll ? viewModel.loop.currentSegment?.audioStartTime : nil,
-                      isPaused: confirmsEnd || showsSettings,
-                      wordLabels: wordLabels,
-                      backgroundOpacity: pitchGuideOpacity,
-                      style: style)
-    }
-
-    // MARK: - Full pitch guide layout
-
-    /// Small camera preview above a large pitch guide card; no lyrics teleprompter.
-    @ViewBuilder
-    private var fullGuideMiddle: some View {
-        VStack(spacing: thumbnailGuideSpacing) {
-            cameraSurface
-                .matchedGeometryEffect(id: LayoutID.camera, in: layoutNamespace)
-                .frame(width: thumbnailWidth, height: thumbnailHeight)
-                .clipShape(.rect(cornerRadius: thumbnailCornerRadius))
-                .accessibilityLabel("Camera preview")
-
-            pitchGuide(style: .fullGuide)
-                .matchedGeometryEffect(id: LayoutID.guide, in: layoutNamespace)
-                .padding(guideCardPadding)
-                .frame(maxHeight: .infinity)
-                .background(RoundedRectangle(cornerRadius: guideCardCornerRadius, style: .continuous)
-                    .fill(Color.guideFrame))
-                .overlay(alignment: .top) {
-                    phaseInfo
-                        .foregroundStyle(.white)
-                        .padding(.top, guideCardPadding * 4)
-                }
-        }
-        .padding(.horizontal, sideInset * 2)
-
-        bluetoothWarning
-    }
-
-    private var topBar: some View {
-        ZStack {
-            timer
-            HStack {
-                LiquidGlassGroup {
-                    Button {
-                        if viewModel.status == .ready {
-                            Task { await viewModel.discard() }
-                        } else {
-                            confirmsEnd = true
-                        }
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .fontWeight(.semibold)
-                            .foregroundStyle(controlTint)
-                    }
-                    .glassCircleButtonStyle()
-                    .accessibilityLabel("Back")
-                }
-                Spacer()
-                if viewModel.status != .ready { layoutToggle }
-            }
-        }
-        .frame(minHeight: 48)
-        .padding(.horizontal, sideInset)
-    }
-
-    /// Switches between the full-screen camera and the full pitch guide.
-    private var layoutToggle: some View {
-        Button {
-            withAnimation(layoutAnimation) { usesFullGuide.toggle() }
-        } label: {
-            Image(systemName: "viewfinder")
-                .font(.title3)
-                .foregroundStyle(controlTint)
-                .frame(width: toolbarButtonSize, height: toolbarButtonSize)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(usesFullGuide ? "Show full camera" : "Show full pitch guide")
-    }
-
-    private var timer: some View {
-        TimelineView(.periodic(from: .now, by: timerRefresh)) { _ in
-            Text(Duration.seconds(viewModel.elapsedRecordingTime())
-                .formatted(.time(pattern: .hourMinuteSecond(padHourToLength: 2))))
-                .font(.caption.weight(.medium))
-                .monospacedDigit()
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(Color.recordRed))
-                .accessibilityLabel("Recording time")
-        }
-    }
-
-    /// Recording: pause, record (ends the session), settings. Paused: the red record button takes
-    /// the pause button's place to resume, and the stop square in the middle ends the session.
-    private var controls: some View {
-        HStack {
-            Group {
-                if viewModel.isPaused { resumeButton } else { pauseButton }
-            }
-            .frame(width: recordButtonSize, alignment: .leading)
-
-            Spacer()
-
-            if viewModel.isPaused { stopButton } else { endButton }
-
-            Spacer()
-
-            LiquidGlassGroup {
-                Button {
-                    showsSettings = true
-                } label: {
-                    Image(systemName: "slider.horizontal.3")
-                        .foregroundStyle(controlTint)
-                }
-                .glassCircleButtonStyle()
-                .accessibilityLabel("Recording settings")
-            }
-            .frame(width: recordButtonSize, alignment: .trailing)
-        }
-        .padding(.horizontal, sideInset + 8)
-        .padding(.bottom, controlsBottomPadding)
-    }
-
-    private var pauseButton: some View {
-        LiquidGlassGroup {
-            Button {
-                viewModel.pause()
-            } label: {
-                Image(systemName: "pause.fill")
-                    .foregroundStyle(controlTint)
-            }
-            .glassCircleButtonStyle()
-            .disabled(!viewModel.canPause)
-            .accessibilityLabel("Pause")
-        }
-    }
-
-    /// The red record button; while paused it resumes (the current segment restarts after a countdown).
-    private var resumeButton: some View {
-        Button {
-            viewModel.resume()
-        } label: {
-            recordCircle(size: recordButtonSize)
-        }
-        .buttonStyle(.plain)
-        .disabled(!viewModel.canPause)
-        .accessibilityLabel("Resume recording")
-        .accessibilityHint("Restarts the current segment after a countdown")
-    }
-
-    private var endButton: some View {
-        Button {
-            confirmsEnd = true
-        } label: {
-            recordCircle(size: recordButtonSize)
-        }
-        .buttonStyle(.plain)
-        .disabled(viewModel.status != .recording)
-        .accessibilityLabel("End recording")
-    }
-
-    private var stopButton: some View {
-        Button {
-            confirmsEnd = true
-        } label: {
-            RoundedRectangle(cornerRadius: stopGlyphCornerRadius, style: .continuous)
-                .fill(Color.recordRed)
-                .frame(width: stopGlyphSize, height: stopGlyphSize)
-                .frame(width: stopButtonSize, height: stopButtonSize)
-                .background(Circle().fill(isFullGuideLayout ? .white.opacity(0.9) : .black.opacity(0.35)))
-                .overlay(Circle().strokeBorder(.white.opacity(isFullGuideLayout ? 0.9 : 0.35), lineWidth: 2))
-                .shadow(color: .black.opacity(isFullGuideLayout ? lightLayoutShadowOpacity : 0), radius: 4, y: 1)
-                .contentShape(Circle())
-        }
-        .buttonStyle(.plain)
-        .disabled(viewModel.status != .recording)
-        .accessibilityLabel("End recording")
-    }
-
-    private func recordCircle(size: CGFloat) -> some View {
-        Circle()
-            .fill(Color.recordRed)
-            .padding(5)
-            .background(Circle().strokeBorder(.white.opacity(0.9), lineWidth: 3))
-            .frame(width: size, height: size)
-            .shadow(color: .black.opacity(isFullGuideLayout ? lightLayoutShadowOpacity : 0), radius: 4, y: 1)
-            .contentShape(Circle())
     }
 
     @ViewBuilder
@@ -512,16 +507,17 @@ struct RecordingView: View {
         switch viewModel.loop.phase {
         case .preRoll:
             Label("Listen…", systemImage: "ear")
-                .font(.title3.bold())
+                .font(.appTitle3.bold())
+                .foregroundStyle(.white)
         case .singing:
             if let result = viewModel.lastResult, result.passed {
                 Label("Segment \(result.segmentIndex + 1) passed", systemImage: "checkmark.circle.fill")
-                    .font(.subheadline.bold())
-                    .foregroundStyle(.green)
+                    .font(.appSubheadline.bold())
+                    .foregroundStyle(Color.pitchHit)
             }
         case .idle, .ended, .countdown, .showingResult, .paused:
             // The missed notes on the pitch guide are the result, the countdown has its own layer,
-            // and the paused state is shown by the resume and stop buttons.
+            // and the paused state is shown by the record button.
             EmptyView()
         }
     }
@@ -571,27 +567,5 @@ struct RecordingView: View {
             ? viewModel.song.segments.flatMap(\.targetNotes)
             : segment.targetNotes
         return notes.map(viewModel.song.transposition.transposed)
-    }
-
-}
-
-/// Darkens everything outside the centred 9:16 area that ends up in the video.
-private struct FrameGuide: View {
-    var body: some View {
-        GeometryReader { geometry in
-            let size = geometry.size
-            let width = min(size.width, size.height * 9 / 16)
-            let height = width * 16 / 9
-            let rect = CGRect(x: (size.width - width) / 2, y: (size.height - height) / 2, width: width, height: height)
-            Path { path in
-                path.addRect(CGRect(origin: .zero, size: size))
-                path.addRect(rect)
-            }
-            .fill(.black.opacity(0.45), style: FillStyle(eoFill: true))
-            Rectangle()
-                .path(in: rect)
-                .stroke(.white.opacity(0.5), lineWidth: 1)
-        }
-        .allowsHitTesting(false)
     }
 }
