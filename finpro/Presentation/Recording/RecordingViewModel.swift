@@ -163,6 +163,27 @@ final class RecordingViewModel {
         }
     }
 
+    /// Share of the song sung so far, 0...1, for the ring of the record button. It stays at the
+    /// start of the current segment during the countdown, the pre-roll and a pause.
+    func songProgress() -> Double {
+        let duration = max(song.duration, 0.001)
+        let segmentStart = loop.currentSegment?.audioStartTime ?? 0
+        let time: TimeInterval
+        switch loop.phase {
+        case .idle: time = 0
+        case .countdown, .preRoll, .paused: time = segmentStart
+        case .singing: time = currentSongTime() ?? segmentStart
+        case .ended: time = duration
+        }
+        return min(max(time / duration, 0), 1)
+    }
+
+    /// Share of the song at which each segment after the first starts.
+    var segmentBoundaries: [Double] {
+        let duration = max(song.duration, 0.001)
+        return song.segments.dropFirst().map { $0.audioStartTime / duration }
+    }
+
     var isPaused: Bool { loop.phase == .paused }
     var canPause: Bool { status == .recording && (loop.canPause || isPaused) }
 
@@ -271,6 +292,28 @@ final class RecordingViewModel {
     func resume() {
         guard status == .recording, isPaused else { return }
         perform(loop.resume(now: capture.currentCaptureTime().seconds))
+    }
+
+    /// Deletes the last finished segment and goes back to sing it again after the countdown (the
+    /// current one when none is finished). Capture keeps running; the deleted take stays in the
+    /// raw video but is marked as removed in the take log, so it never reaches the cover.
+    func deleteLastSegment() {
+        guard status == .recording else { return }
+        let target = max(0, loop.segmentIndex - 1)
+        if loop.segmentIndex > 0,
+           let removed = takeLog.allAttempts().last(where: { $0.segmentIndex == target }), removed.status != .failed {
+            takeLog.logAttempt(TakeAttemptLog(
+                segmentIndex: target,
+                attemptNumber: removed.attemptNumber + 1,
+                videoTimeRange: removed.videoTimeRange,
+                accuracyScore: 0,
+                missedNoteIDs: [],
+                status: .failed))
+        }
+        anchor = nil
+        evaluations = []
+        trail = []
+        perform(loop.goBackOneSegment(now: capture.currentCaptureTime().seconds))
     }
 
     /// End Session → "Export N of M", or the session limit / last segment.
@@ -407,7 +450,7 @@ final class RecordingViewModel {
         // A segment is never repeated: it is kept whatever its score, which stays in the log.
         takeLog.logAttempt(TakeAttemptLog(
             segmentIndex: index,
-            attemptNumber: 1,
+            attemptNumber: takeLog.allAttempts().filter { $0.segmentIndex == index }.count + 1,
             videoTimeRange: range,
             accuracyScore: result.score,
             missedNoteIDs: result.missedNoteIDs,

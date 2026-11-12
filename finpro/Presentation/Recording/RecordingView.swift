@@ -13,7 +13,7 @@ import UIKit
 struct RecordingView: View {
     @State private var viewModel: RecordingViewModel
     @State private var confirmsEnd = false
-    @State private var confirmsDiscard = false
+    @State private var confirmsDeleteLast = false
     @State private var showsSettings = false
     @Environment(\.scenePhase) private var scenePhase
 
@@ -32,12 +32,10 @@ struct RecordingView: View {
     private let pitchGuideMaxWidth: CGFloat = 316
     private let guideControlsGap: CGFloat = 22
     private let recordButtonSize: CGFloat = 68
-    private let recordDotSize: CGFloat = 48
     private let controlsBottomInset: CGFloat = 9
     private let settingsButtonSize: CGFloat = 50
     private let deleteGlyphSize: CGFloat = 28
     private let doneGlyphSize: CGFloat = 36
-    private let pauseGlyphSize: CGFloat = 20
     /// Horizontal centres of the controls as a share of the width (85, 201, 284 and 355 of 402).
     private let settingsX = 0.211
     private let recordX = 0.5
@@ -100,13 +98,13 @@ struct RecordingView: View {
                  ? "Your cover will use the \(viewModel.completedCount) segments you finished."
                  : "No segment has been finished yet.")
         }
-        .confirmationDialog("Discard this recording?", isPresented: $confirmsDiscard, titleVisibility: .visible) {
-            Button("Discard", role: .destructive) {
-                Task { await viewModel.discard() }
-            }
-            Button("Keep Recording", role: .cancel) {}
+        .confirmationDialog("Delete the last segment?", isPresented: $confirmsDeleteLast, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) { viewModel.deleteLastSegment() }
+            Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Nothing from this session will be kept.")
+            Text(viewModel.completedCount > 0
+                 ? "Segment \(viewModel.completedCount) will be sung again from the start."
+                 : "The current segment will start again.")
         }
         .sheet(isPresented: $showsSettings) { RecordingSettingsSheet(viewModel: viewModel) }
     }
@@ -234,7 +232,7 @@ struct RecordingView: View {
                       focusMIDI: focusMIDI,
                       songTime: viewModel.displaySongTime,
                       dimmedBefore: viewModel.singingFrom,
-                      isPaused: confirmsEnd || confirmsDiscard || showsSettings,
+                      isPaused: confirmsEnd || confirmsDeleteLast || showsSettings,
                       wordLabels: wordLabels,
                       lyricsHeight: lyricsInPanel ? RecordingDisplaySettings.guideLyricsHeight : 0,
                       scale: pitchGuideScale)
@@ -325,29 +323,19 @@ struct RecordingView: View {
         .accessibilityLabel("Recording settings")
     }
 
-    /// Red record button: starts the recording, pauses it, and resumes it while paused (the
-    /// current segment restarts after a countdown).
+    /// Starts the recording, pauses it, and resumes it while paused (the current segment restarts
+    /// after a countdown). The ring around it shows the progress through the song.
     private var recordButton: some View {
-        Button {
+        RecordProgressButton(
+            mode: viewModel.status == .recording && !viewModel.isPaused ? .recording : .idle,
+            progress: viewModel.songProgress,
+            boundaries: viewModel.segmentBoundaries
+        ) {
             switch viewModel.status {
             case .ready: Task { await viewModel.beginRecording() }
             default: if viewModel.isPaused { viewModel.resume() } else { viewModel.pause() }
             }
-        } label: {
-            ZStack {
-                Circle().fill(.black.opacity(0.45))
-                Circle().strokeBorder(.white.opacity(0.6), lineWidth: 1.5)
-                Circle().fill(Color.recordRed).frame(width: recordDotSize, height: recordDotSize)
-                if viewModel.status == .recording, !viewModel.isPaused {
-                    Image(systemName: "pause.fill")
-                        .font(.system(size: pauseGlyphSize))
-                        .foregroundStyle(.white)
-                }
-            }
-            .frame(width: recordButtonSize, height: recordButtonSize)
-            .contentShape(Circle())
         }
-        .buttonStyle(.plain)
         .disabled(!canUseRecordButton)
         .opacity(canUseRecordButton ? 1 : disabledOpacity)
         .accessibilityLabel(recordButtonLabel)
@@ -368,13 +356,12 @@ struct RecordingView: View {
         }
     }
 
+    /// Deletes the last finished segment (after a confirmation) and sings it again, like deleting
+    /// the last clip of a short video. The session pauses while the dialog is open.
     private var deleteButton: some View {
         Button {
-            if viewModel.status == .ready {
-                Task { await viewModel.discard() }
-            } else {
-                confirmsDiscard = true
-            }
+            viewModel.pause()
+            confirmsDeleteLast = true
         } label: {
             Image(systemName: "delete.left.fill")
                 .font(.system(size: deleteGlyphSize))
@@ -383,7 +370,9 @@ struct RecordingView: View {
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Discard recording")
+        .disabled(viewModel.status != .recording)
+        .opacity(viewModel.status == .recording ? 1 : disabledOpacity)
+        .accessibilityLabel("Delete last segment")
     }
 
     /// Done: exports the segments finished so far. With none finished yet it asks what to do instead.

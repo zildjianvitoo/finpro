@@ -114,6 +114,18 @@ nonisolated struct LoopStateController: Sendable {
         return .none
     }
 
+    /// The user deleted the last finished segment: it (or the current one when none is finished)
+    /// is sung again after the usual silent countdown. Camera and capture keep running.
+    mutating func goBackOneSegment(now: TimeInterval) -> Action {
+        // Possible while a segment is under way or paused (the dialog pauses the session first).
+        guard canPause || phase == .paused else { return .none }
+        let wasPlaying = phase == .preRoll || phase == .singing
+        segmentIndex = max(0, segmentIndex - 1)
+        countdownEndsAt = now + TimeInterval(configuration.countdownSeconds)
+        phase = .countdown(remaining: configuration.countdownSeconds)
+        return wasPlaying ? .stopPlayback : .none
+    }
+
     mutating func end() {
         phase = .ended
     }
