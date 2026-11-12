@@ -149,7 +149,12 @@ final class AppFlow {
             let choices = try await prepare.makeChoices(stems: stems, notes: demo.segments.flatMap(\.targetNotes),
                                                         duration: demo.duration, vocalRange: range)
             guard step == .importSong else { return }
+            #if DEBUG
+            // The demo has no lyrics; placeholder lines let the lyrics settings be tried.
+            keysPrepared(choices, lyrics: DummyLyricsProvider.placeholder(duration: demo.duration).lines)
+            #else
             keysPrepared(choices)
+            #endif
         } catch {
             preparationError = .keyPreparationFailed
         }
