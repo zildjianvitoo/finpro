@@ -208,6 +208,35 @@ func maxStep(in samples: [Float], around seconds: TimeInterval, window: TimeInte
     return (start..<end).map { abs(samples[$0] - samples[$0 - 1]) }.max() ?? 0
 }
 
+// MARK: - Face alignment at cuts (pure math, no video)
+
+do {
+    let frame = CGSize(width: 1080, height: 1920)
+    let face = FaceCutAligner.Face(center: CGPoint(x: 540, y: 800), height: 400)
+    check("align: same face is left alone",
+          FaceCutAligner.correction(moving: face, onto: face, renderSize: frame) == nil, "no correction")
+
+    let shifted = FaceCutAligner.Face(center: CGPoint(x: 580, y: 800), height: 400)
+    let toLeft = FaceCutAligner.correction(moving: shifted, onto: face, renderSize: frame)
+    let moved = toLeft.map { shifted.center.applying($0) }
+    check("align: a shifted face lands on the target",
+          moved.map { abs($0.x - face.center.x) < 0.5 && abs($0.y - face.center.y) < 0.5 } ?? false,
+          "face centre \(moved.map { String(format: "%.1f, %.1f", $0.x, $0.y) } ?? "–") (target 540, 800)")
+
+    let far = FaceCutAligner.Face(center: CGPoint(x: 940, y: 1300), height: 300)
+    let corners = FaceCutAligner.correction(moving: far, onto: face, renderSize: frame).map {
+        [CGPoint.zero.applying($0), CGPoint(x: frame.width, y: frame.height).applying($0)]
+    }
+    let covers = corners.map { $0[0].x <= 0.5 && $0[0].y <= 0.5 && $0[1].x >= frame.width - 0.5 && $0[1].y >= frame.height - 0.5 } ?? false
+    let zoom = corners.map { ($0[1].x - $0[0].x) / frame.width } ?? 0
+    check("align: a far-off face never shows the frame edge", covers && zoom <= FaceCutAligner.maximumZoom + 1e-6,
+          String(format: "zoom %.3f (limit %.2f), frame still covered", zoom, FaceCutAligner.maximumZoom))
+
+    let closer = FaceCutAligner.Face(center: CGPoint(x: 540, y: 800), height: 600)
+    let noShrink = FaceCutAligner.correction(moving: closer, onto: face, renderSize: frame)
+    check("align: a bigger face is never zoomed out", noShrink == nil, "no correction (zooming out would show the edges)")
+}
+
 // MARK: - Run
 
 let semaphore = DispatchSemaphore(value: 0)

@@ -38,6 +38,11 @@ nonisolated struct CompingCompositionBuilder {
     /// Linear pieces per crossfade ramp: AVAudioMix only ramps linearly, so the equal-power
     /// (sine/cosine) curve is approximated.
     static let fadeSteps = 8
+    /// After a cut lined up on the face (`FaceCutAligner`), how long the incoming clip takes to ease
+    /// back to its own framing; slow enough to read as a gentle camera move.
+    static let alignmentSettle: TimeInterval = 0.8
+
+    var aligner = FaceCutAligner()
 
     /// The video and audio track of one recording pass's raw file.
     private struct Source {
@@ -136,8 +141,12 @@ nonisolated struct CompingCompositionBuilder {
 
         let audioMix = AVMutableAudioMix()
         audioMix.inputParameters = vocalParameters + [instrumentalParameters]
+        let rendered = CGRect(origin: .zero, size: naturalSize).applying(transform)
+        let renderSize = CGSize(width: abs(rendered.width), height: abs(rendered.height))
+        let corrections = await aligner.corrections(plan: plan, renderSize: renderSize)
         let videoComposition = dissolves(plan, tracks: videoTracks, duration: composition.duration,
-                                         transform: transform, naturalSize: naturalSize, frameRate: frameRate)
+                                         transform: transform, renderSize: renderSize, frameRate: frameRate,
+                                         corrections: corrections)
         // Keep the recording's own colour space (camera files are tagged, e.g. BT.709 or HLG), so the
         // dissolve doesn't convert every frame on export.
         if let extensions = formats.first.flatMap({ CMFormatDescriptionGetExtensions($0) as? [String: Any] }) {
@@ -149,14 +158,26 @@ nonisolated struct CompingCompositionBuilder {
     }
 
     /// One take at a time, and a dissolve (outgoing take fading out over the incoming one) centred on
-    /// every boundary. The raw transform keeps the portrait orientation and mirroring.
+    /// every boundary. The raw transform keeps the portrait orientation and mirroring. A take with a
+    /// face correction starts lined up with the take before it, holds that over the dissolve, and
+    /// eases back to its own framing.
     private func dissolves(_ plan: CompingCompositionPlan, tracks: [AVMutableCompositionTrack], duration: CMTime,
-                           transform: CGAffineTransform, naturalSize: CGSize, frameRate: Float) -> AVMutableVideoComposition {
+                           transform: CGAffineTransform, renderSize: CGSize, frameRate: Float,
+                           corrections: [Int: CGAffineTransform]) -> AVMutableVideoComposition {
         let halfFade = plan.crossfadeDuration.seconds / 2
         let boundaries = plan.validTakes.dropLast().map { plan.segments[$0.segmentIndex].audioEndTime }
-        func layer(_ track: AVMutableCompositionTrack) -> AVMutableVideoCompositionLayerInstruction {
-            let instruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
-            instruction.setTransform(transform, at: .zero)
+        func layer(_ position: Int) -> AVMutableVideoCompositionLayerInstruction {
+            let instruction = AVMutableVideoCompositionLayerInstruction(assetTrack: tracks[position % 2])
+            guard let correction = corrections[position] else {
+                instruction.setTransform(transform, at: .zero)
+                return instruction
+            }
+            let segment = plan.segments[plan.validTakes[position].segmentIndex]
+            let aligned = transform.concatenating(correction)
+            let settle = min(Self.alignmentSettle, segment.audioDuration / 2)
+            instruction.setTransform(aligned, at: .zero)
+            instruction.setTransformRamp(fromStart: aligned, toEnd: transform,
+                                         timeRange: CMTimeRange(start: time(segment.audioStartTime + halfFade), duration: time(settle)))
             return instruction
         }
         var instructions: [AVMutableVideoCompositionInstruction] = []
@@ -170,18 +191,17 @@ nonisolated struct CompingCompositionBuilder {
         var start = CMTime.zero
         for (position, boundary) in boundaries.enumerated() {
             let fadeStart = time(boundary - halfFade), fadeEnd = time(boundary + halfFade)
-            add(CMTimeRange(start: start, end: fadeStart), [layer(tracks[position % 2])])
-            let outgoing = layer(tracks[position % 2])
+            add(CMTimeRange(start: start, end: fadeStart), [layer(position)])
+            let outgoing = layer(position)
             outgoing.setOpacityRamp(fromStartOpacity: 1, toEndOpacity: 0, timeRange: CMTimeRange(start: fadeStart, end: fadeEnd))
-            add(CMTimeRange(start: fadeStart, end: fadeEnd), [outgoing, layer(tracks[(position + 1) % 2])])
+            add(CMTimeRange(start: fadeStart, end: fadeEnd), [outgoing, layer(position + 1)])
             start = fadeEnd
         }
-        add(CMTimeRange(start: start, end: duration), [layer(tracks[boundaries.count % 2])])
+        add(CMTimeRange(start: start, end: duration), [layer(boundaries.count)])
 
         let video = AVMutableVideoComposition()
         video.instructions = instructions
-        let rendered = CGRect(origin: .zero, size: naturalSize).applying(transform)
-        video.renderSize = CGSize(width: abs(rendered.width), height: abs(rendered.height))
+        video.renderSize = renderSize
         video.frameDuration = CMTime(value: 1, timescale: CMTimeScale(frameRate > 0 ? frameRate.rounded() : 30))
         return video
     }
