@@ -30,6 +30,8 @@ struct PianoRollView: View {
     /// Space above the first and below the last line.
     static let topInset: CGFloat = 13
     static let bottomInset: CGFloat = 14
+    /// The playhead keeps its width at every size, as in the design.
+    static let playheadWidth: CGFloat = 4
     /// C D E F G A B: the rows drawn and named, as in the design.
     static let naturalPitchClasses: [Int] = [0, 2, 4, 5, 7, 9, 11]
 
@@ -205,7 +207,7 @@ struct PianoRollView: View {
         var playhead = Path()
         playhead.move(to: CGPoint(x: playheadX, y: rowsTop))
         playhead.addLine(to: CGPoint(x: playheadX, y: rowsTop + rowsHeight))
-        context.stroke(playhead, with: .color(Palette.playhead), lineWidth: 3)
+        context.stroke(playhead, with: .color(Palette.playhead), lineWidth: Self.playheadWidth)
         if let last = trail.last, let midi = last.midi, current - last.songTime < maxJoin {
             let radius = dotSize / 2
             let dot = CGRect(x: x(last.songTime) - radius, y: y(Double(midi)) - radius, width: dotSize, height: dotSize)
