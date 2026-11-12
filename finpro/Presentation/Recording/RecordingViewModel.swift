@@ -298,7 +298,8 @@ final class RecordingViewModel {
     /// current one when none is finished). Capture keeps running; the deleted take stays in the
     /// raw video but is marked as removed in the take log, so it never reaches the cover.
     func deleteLastSegment() {
-        guard status == .recording else { return }
+        // Not once the last segment is done: the session is already finishing.
+        guard status == .recording, loop.canPause || isPaused else { return }
         let target = max(0, loop.segmentIndex - 1)
         if loop.segmentIndex > 0,
            let removed = takeLog.allAttempts().last(where: { $0.segmentIndex == target }), removed.status != .failed {
