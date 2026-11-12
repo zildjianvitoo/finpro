@@ -45,6 +45,8 @@ struct RecordingView: View {
     private let timerCornerRadius: CGFloat = 10
     private let timerHeight: CGFloat = 26
     private let disabledOpacity = 0.4
+    /// See-through enough to show the camera under it, visible enough to line up with.
+    private let alignmentGuideOpacity = 0.3
     /// Countdown: the screen dims, the number sits in a white circle (design).
     private let countdownDimOpacity = 0.4
     private let countdownCircleSize: CGFloat = 150
@@ -146,8 +148,23 @@ struct RecordingView: View {
         }
     }
 
+    /// Retake / continue: the neighbouring clip, see-through over the camera, so the singer can
+    /// line up with it before the first note. Gone once singing starts.
+    @ViewBuilder
+    private var alignmentGuide: some View {
+        if viewModel.showsAlignmentGuide, let image = viewModel.alignmentImage {
+            Image(decorative: image, scale: 1)
+                .resizable()
+                .scaledToFill()
+                .opacity(alignmentGuideOpacity)
+                .allowsHitTesting(false)
+                .transition(.opacity)
+        }
+    }
+
     private func cameraLayer(_ layout: VideoLayout) -> some View {
         cameraSurface
+            .overlay { alignmentGuide }
             .frame(width: layout.size.width, height: layout.videoHeight)
             .clipped()
             .padding(.top, layout.top)

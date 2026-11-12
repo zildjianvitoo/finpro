@@ -16,9 +16,17 @@ struct RecordingPass: Equatable {
         case continueFrom(segment: Int)
     }
 
+    /// A frame of the clip next to the one being recorded, shown over the camera to line up with.
+    struct AlignmentFrame: Equatable {
+        let videoURL: URL
+        /// File time inside `videoURL`.
+        let time: TimeInterval
+    }
+
     let kind: Kind
     /// Raw videos of the passes before this one, in pass order.
     let earlierRawVideoURLs: [URL]
+    var alignmentFrame: AlignmentFrame?
 
     static let session = RecordingPass(kind: .session, earlierRawVideoURLs: [])
 

@@ -7,6 +7,7 @@
 //  goes through one place and is checked against the contracts.
 //
 
+import CoreMedia
 import Foundation
 import Observation
 
@@ -168,20 +169,37 @@ final class AppFlow {
         container.takeLog.clear()
         SessionFiles.cleanUp()
         try? SessionFiles.prepareDirectory()
+        // A new cover: its first recording locks the camera look again.
+        (container.capture as? any CameraLookLocking)?.resetCameraLook()
         record(.session)
     }
 
     /// Final result screen: sing one clip again; its new take replaces the old one in the cover.
     func retakeClip(segment: Int) {
         guard let compingPlan else { return }
-        record(RecordingPass(kind: .retake(segment: segment), earlierRawVideoURLs: compingPlan.rawVideoURLs))
+        // Line up with the end of the clip before it; for the first clip, the start of the one after.
+        let frame = segment > 0 ? alignmentFrame(compingPlan, takeAt: segment - 1, atEnd: true)
+            : alignmentFrame(compingPlan, takeAt: segment + 1, atEnd: false)
+        record(RecordingPass(kind: .retake(segment: segment), earlierRawVideoURLs: compingPlan.rawVideoURLs,
+                             alignmentFrame: frame))
     }
 
     /// Final result screen: the session ended early; sing on from the first segment not in the cover.
     func continueRecording() {
         guard let compingPlan, compingPlan.isPartial else { return }
         record(RecordingPass(kind: .continueFrom(segment: compingPlan.validTakes.count),
-                             earlierRawVideoURLs: compingPlan.rawVideoURLs))
+                             earlierRawVideoURLs: compingPlan.rawVideoURLs,
+                             alignmentFrame: alignmentFrame(compingPlan, takeAt: compingPlan.validTakes.count - 1, atEnd: true)))
+    }
+
+    /// The frame where a take of the cover meets its neighbour (its handles excluded).
+    private func alignmentFrame(_ plan: CompingCompositionPlan, takeAt position: Int, atEnd: Bool) -> RecordingPass.AlignmentFrame? {
+        guard plan.validTakes.indices.contains(position) else { return nil }
+        let take = plan.validTakes[position]
+        guard plan.rawVideoURLs.indices.contains(take.recordingPass) else { return nil }
+        let handle = plan.crossfadeDuration.seconds
+        let time = atEnd ? take.videoTimeRange.end.seconds - handle : take.videoTimeRange.start.seconds + handle
+        return RecordingPass.AlignmentFrame(videoURL: plan.rawVideoURLs[take.recordingPass], time: time)
     }
 
     /// Opens the recording screen for a pass. The take log and earlier raw videos are kept.

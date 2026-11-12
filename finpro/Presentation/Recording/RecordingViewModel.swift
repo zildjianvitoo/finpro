@@ -80,6 +80,8 @@ final class RecordingViewModel {
     private(set) var microphoneName: String?
     /// The camera is configured, so its preview can be shown (also while recording starts).
     private(set) var isCameraReady = false
+    /// Retake / continue: the neighbouring clip's frame to line up with (see `RecordingPass.alignmentFrame`).
+    private(set) var alignmentImage: CGImage?
 
     @ObservationIgnored private let capture: any CaptureRepository
     @ObservationIgnored private let playback: any ReferencePlaybackRepository
@@ -90,6 +92,7 @@ final class RecordingViewModel {
     @ObservationIgnored private let onFinish: (CompingCompositionPlan) -> Void
     @ObservationIgnored private let onDiscard: () -> Void
     @ObservationIgnored private let allowsSpeaker: Bool
+    @ObservationIgnored private let frames: any ClipThumbnailProviding
 
     /// Capture-clock time at which song time 0 is heard. Set on every playback start.
     @ObservationIgnored private var anchor: CMTime?
@@ -115,10 +118,12 @@ final class RecordingViewModel {
          allowsSpeaker: Bool = false,
          lyrics: [LyricLine] = [],
          pass: RecordingPass = .session,
+         frames: any ClipThumbnailProviding = AVClipThumbnailProvider(),
          onFinish: @escaping (CompingCompositionPlan) -> Void,
          onDiscard: @escaping () -> Void) {
         self.song = song
         self.pass = pass
+        self.frames = frames
         self.lyrics = lyrics
         self.capture = capture
         self.playback = playback
@@ -190,6 +195,15 @@ final class RecordingViewModel {
     }
 
     var isPaused: Bool { loop.phase == .paused }
+
+    /// The alignment frame shows until the first note of this pass is played.
+    var showsAlignmentGuide: Bool {
+        guard alignmentImage != nil, singingFrom == nil else { return false }
+        switch status {
+        case .starting, .ready, .recording: return true
+        default: return false
+        }
+    }
     /// This pass sang something that goes into the cover: a finished segment of the session, or a
     /// take of this retake or continue that was not deleted.
     var hasNewTakes: Bool {
@@ -227,6 +241,7 @@ final class RecordingViewModel {
         do {
             try await capture.prepare()
             isCameraReady = true
+            await loadAlignmentImage()
             microphoneName = (capture as? any MicrophoneInputProviding)?.microphoneName
             if karaoke.isAvailable {
                 try karaoke.load(song: song)
@@ -244,6 +259,11 @@ final class RecordingViewModel {
                 status = .failed(.recordingFailed(details: error.localizedDescription))
             }
         }
+    }
+
+    private func loadAlignmentImage() async {
+        guard alignmentImage == nil, let frame = pass.alignmentFrame else { return }
+        alignmentImage = await frames.thumbnails(for: frame.videoURL, at: [frame.time]).first ?? nil
     }
 
     /// Starts the camera recording and the loop, after the user confirmed the tips.
