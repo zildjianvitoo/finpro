@@ -34,6 +34,10 @@ final class AppFlow {
     /// Stems of the chosen song before transposition (Ready screen, original key).
     var separatedStems: SeparatedStems? { keyChoices?.stems }
     private(set) var compingPlan: CompingCompositionPlan?
+    /// Lyrics of the chosen part on the prepared song's timeline, for the recording screen.
+    private(set) var recordingLyrics: [LyricLine] = []
+    /// "Artist - Title" of the imported song, for the final result screens (nil for the demo).
+    private(set) var songName: String?
 
     init(container: AppContainer) {
         self.container = container
@@ -43,10 +47,42 @@ final class AppFlow {
         } else {
             step = container.vocalRange.load() == nil ? .vocalRange : .home
         }
+        #if DEBUG
+        // `-startScreen` launch argument (DebugOptions): only steps that need no earlier data.
+        switch DebugOptions.launchScreen {
+        case "onboarding": step = .onboarding
+        case "vocalRange": step = .vocalRange
+        case "home": step = .home
+        case "importSong": step = .importSong
+        case "recording": step = .importSong // the demo song is prepared below, then recording starts
+        case "export":
+            // The fixture plan on the fakes container: the final result screens without recording.
+            compingPlan = DomainFixtures.compingPlan()
+            songName = "LANY - Stuck"
+            step = .export
+        default: break
+        }
+        #endif
         // Leftovers from a session that ended in a crash.
         SessionFiles.cleanUp()
         container.modelPrewarmer?.start()
+        #if DEBUG
+        if DebugOptions.launchScreen == "recording" {
+            Task { await openRecordingWithDemoSong() }
+        }
+        #endif
     }
+
+    #if DEBUG
+    /// `-startScreen recording`: prepares the demo song, picks its first key and starts recording,
+    /// so the recording screen can be checked without tapping through the flow.
+    private func openRecordingWithDemoSong() async {
+        await loadDemoSong()
+        guard let song = keyChoices?.options.first?.song else { return }
+        songPrepared(song)
+        startRecording()
+    }
+    #endif
 
     /// User completed or skipped the onboarding walkthrough.
     func onboardingFinished() {
@@ -89,7 +125,9 @@ final class AppFlow {
         step = .chooseKey
     }
 
-    func keysPrepared(_ choices: PrepareSongUseCase.Choices) {
+    func keysPrepared(_ choices: PrepareSongUseCase.Choices, lyrics: [LyricLine] = [], songName: String? = nil) {
+        recordingLyrics = lyrics
+        self.songName = songName
         choices.options.forEach { Contract.assertValid($0.song.validate()) }
         keyChoices = choices
         preparedSong = nil
@@ -120,6 +158,8 @@ final class AppFlow {
     /// Ready screen: user tapped Record. A new session starts, so files from the last one go (ZV-16).
     func startRecording() {
         guard let preparedSong else { return }
+        // A key preview from the previous screens must not play over the recording.
+        container.audioPreview.stop()
         #if DEBUG
         container.simulatedSinger?.prepare(song: preparedSong)
         #endif
@@ -142,8 +182,16 @@ final class AppFlow {
         step = .ready
     }
 
+    /// Final result screen: record the same song again.
+    func retakeCover() {
+        compingPlan = nil
+        startRecording()
+    }
+
     func startOver() {
+        songName = nil
         keyChoices = nil
+        recordingLyrics = []
         preparationError = nil
         preparedSong = nil
         compingPlan = nil

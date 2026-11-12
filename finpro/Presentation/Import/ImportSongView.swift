@@ -12,6 +12,9 @@ import UniformTypeIdentifiers
 struct ImportSongView: View {
     @State private var viewModel: ImportSongViewModel
     @State private var picking = false
+    #if DEBUG
+    @State private var openedLaunchFile = false
+    #endif
     let onBack: () -> Void
     let onUseDemo: () -> Void
 
@@ -58,6 +61,14 @@ struct ImportSongView: View {
         .background(Color.onboardingBackground.ignoresSafeArea())
         .fileImporter(isPresented: $picking, allowedContentTypes: Self.types) { viewModel.picked($0) }
         .onDisappear { viewModel.cancelPreparation() }
+        #if DEBUG
+        .onAppear {
+            // `-importFile` launch argument (DebugOptions): open a file without the picker, once.
+            guard !openedLaunchFile, let url = DebugOptions.launchImportFile else { return }
+            openedLaunchFile = true
+            viewModel.picked(.success(url))
+        }
+        #endif
     }
 
     // MARK: - Shared frame
@@ -244,13 +255,13 @@ struct ImportSongView: View {
                             viewModel.toggleSelectionPreview()
                         } label: {
                             Label("\(lengthText(viewModel.selectionLength)) selected",
-                                  systemImage: viewModel.isPlayingSelection ? "stop.fill" : "play.fill")
+                                  systemImage: isPreviewing ? "stop.fill" : "play.fill")
                                 .font(.caption2.weight(.semibold))
                                 .frame(minHeight: 44)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(viewModel.isPlayingSelection ? "Stop preview" : "Play selected part")
+                        .accessibilityLabel(isPreviewing ? "Stop preview" : "Play selected part")
                         .accessibilityValue("\(lengthText(viewModel.selectionLength)) selected")
                         Spacer()
                         Text(time(viewModel.selectionStart + viewModel.selectionLength))
@@ -406,6 +417,9 @@ struct ImportSongView: View {
         case .done: "Done"
         }
     }
+
+    /// From `playbackTime`, which views observe (the preview task itself is not observed).
+    private var isPreviewing: Bool { viewModel.playbackTime != nil }
 
     // MARK: - Formatting
 
@@ -585,38 +599,61 @@ private struct LyricsPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// Lines shown at once, as in the design.
+    private static let visibleLineCount = 6
+    /// Position of the highlighted line within the visible lines (the third).
+    private static let highlightedPosition = 2
+
+    /// The line to highlight: the one being sung during the preview, else the first line of
+    /// the chosen part.
+    private func highlightedID(in song: SongLyrics) -> Int? {
+        viewModel.activeLineID ?? viewModel.firstSelectedLineID ?? song.lines.first?.id
+    }
+
+    /// Six lines with the highlighted one third, shifted at the start and end of the song.
+    private func visibleLines(_ song: SongLyrics) -> ArraySlice<LyricLine> {
+        let count = min(Self.visibleLineCount, song.lines.count)
+        let highlighted = song.lines.firstIndex { $0.id == highlightedID(in: song) } ?? 0
+        let start = min(max(0, highlighted - Self.highlightedPosition), song.lines.count - count)
+        return song.lines[start..<(start + count)]
+    }
+
     private func lines(_ song: SongLyrics) -> some View {
-        VStack(spacing: 8) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 14) {
-                        ForEach(song.lines) { line in
-                            lineText(line).id(line.id)
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
+        let highlighted = highlightedID(in: song)
+        return VStack(spacing: 0) {
+            Spacer(minLength: 0)
+            VStack(spacing: 9) {
+                ForEach(visibleLines(song)) { line in
+                    lineText(line, isHighlighted: line.id == highlighted)
                 }
-                .scrollIndicators(.hidden)
-                .onAppear { scroll(proxy, to: viewModel.firstSelectedLineID, anchor: .center) }
-                .onChange(of: viewModel.firstSelectedLineID) { _, id in scroll(proxy, to: id, anchor: .center) }
-                .onChange(of: viewModel.activeLineID) { _, id in scroll(proxy, to: id, anchor: .center) }
             }
-            Text("Lyrics: \(song.matchedTitle) – \(song.matchedArtist), from LRCLIB. Timing may be slightly off.")
+            .frame(maxWidth: .infinity)
+            .animation(.easeInOut(duration: 0.25), value: highlighted)
+            Spacer(minLength: 16)
+            Text(source(of: song))
                 .font(.caption2)
                 .foregroundStyle(Color.plumInkSecondary)
                 .multilineTextAlignment(.center)
         }
     }
 
-    private func lineText(_ line: LyricLine) -> some View {
-        let selected = viewModel.isInSelection(line)
-        let active = viewModel.activeLineID == line.id
-        return Text(line.text)
-            .font(.title3.weight(active ? .bold : .semibold))
-            .foregroundStyle(active ? Color.plumInk : selected ? Color.plumInkSecondary : Color(.tertiaryLabel))
+    private func source(of song: SongLyrics) -> String {
+        #if DEBUG
+        if song.matchedTitle == DummyLyricsProvider.placeholderTitle {
+            return "Placeholder lyrics (debug build). No synced lyrics were found for this song."
+        }
+        #endif
+        return "Lyrics: \(song.matchedTitle) – \(song.matchedArtist), from LRCLIB. Timing may be slightly off."
+    }
+
+    private func lineText(_ line: LyricLine, isHighlighted: Bool) -> some View {
+        Text(line.text)
+            .font(.title2.weight(isHighlighted ? .bold : .semibold))
+            .foregroundStyle(isHighlighted ? Color.plumInk : Color(.tertiaryLabel))
             .multilineTextAlignment(.center)
-            .animation(.easeOut(duration: 0.15), value: active)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
     }
 
     private func search(_ error: UserFacingError) -> some View {
@@ -643,10 +680,5 @@ private struct LyricsPanel: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 24)
         }
-    }
-
-    private func scroll(_ proxy: ScrollViewProxy, to id: Int?, anchor: UnitPoint) {
-        guard let id else { return }
-        withAnimation { proxy.scrollTo(id, anchor: anchor) }
     }
 }

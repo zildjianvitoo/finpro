@@ -277,8 +277,14 @@ struct VocalRangeTestView: View {
                 ? "Hold at the lowest note you can make comfortably, without vocal fry or strain."
                 : "Hold at the highest note that stays clear and comfortable. Falsetto is okay.",
             onBack: {
-                if !isLowest { viewModel.restart() }
-                stage = .hummingGuide
+                if isLowest {
+                    viewModel.stopListening()
+                    stage = .hummingGuide
+                } else {
+                    // Back to the lowest note, which is measured again.
+                    viewModel.previous()
+                    viewModel.listen()
+                }
             },
             content: {
                 Spacer(minLength: 24)
@@ -289,8 +295,13 @@ struct VocalRangeTestView: View {
                     meterBar(isLowest: isLowest)
                         .padding(.top, 36)
 
-                    noteLabel
-                        .padding(.top, 12)
+                    if case .failed(let error) = viewModel.status {
+                        captureError(error)
+                            .padding(.top, 12)
+                    } else {
+                        noteLabel
+                            .padding(.top, 12)
+                    }
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.top, noteRingDrop)
@@ -343,19 +354,29 @@ struct VocalRangeTestView: View {
         }
     }
 
+    /// Why the note was not captured, in the wording from UserFacingError.
+    private func captureError(_ error: UserFacingError) -> some View {
+        VStack(spacing: 4) {
+            Label(error.title, systemImage: error.systemImage)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.plumInk)
+            Text(error.message)
+                .font(.caption)
+                .foregroundStyle(Color.plumInkSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Continue only once a note is captured: the result needs both notes, and a range made
+    /// up when they are missing would show a wrong voice type and could not be saved.
     @ViewBuilder
     private func actions(isLowest: Bool) -> some View {
         switch viewModel.status {
-        case .idle, .listening, .captured:
+        case .captured:
             Button(isLowest ? "Continue" : "Check Result") {
                 viewModel.next()
-                if isLowest {
-                    viewModel.listen()
-                } else if case .finished(let range) = viewModel.status {
-                    stage = .result(range)
-                } else {
-                    stage = .result(VocalRange(lowestMIDI: 45, highestMIDI: 76))
-                }
+                viewModel.listen()
             }
 
         case .finished(let range):
@@ -364,7 +385,12 @@ struct VocalRangeTestView: View {
             }
 
         case .failed:
-            Button("Retry") { viewModel.listen() }
+            Button("Try again") { viewModel.listen() }
+
+        case .idle, .listening:
+            Button(isLowest ? "Continue" : "Check Result") {}
+                .disabled(true)
+                .accessibilityHint("Hold your note until the bar fills")
         }
     }
 

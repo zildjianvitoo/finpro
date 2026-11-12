@@ -58,7 +58,7 @@ struct RootView: View {
                 }
             case .ready:
                 if let song = flow.preparedSong {
-                    ReadyView(song: song, originalKeyStems: flow.separatedStems, previewer: flow.container.audioPreview,
+                    ReadyView(song: song, lyrics: flow.recordingLyrics,
                               routeMonitor: flow.container.audioRoute,
                               allowsSpeaker: DebugOptions.allowsSpeakerRecording,
                               onRecord: flow.startRecording, onChooseAnother: flow.startOver,
@@ -72,7 +72,8 @@ struct RootView: View {
                 }
             case .export:
                 if let plan = flow.compingPlan {
-                    ExportPreviewView(viewModel: makeCompingViewModel(plan: plan), onStartOver: flow.startOver)
+                    ExportPreviewView(viewModel: makeCompingViewModel(plan: plan), onRetake: flow.retakeCover,
+                                      onStartOver: flow.startOver)
                 }
             }
         }
@@ -80,9 +81,8 @@ struct RootView: View {
         .animation(.default, value: flow.step)
         #if DEBUG
         .overlay(alignment: .topTrailing) {
-            // Hidden where the screen's own top bar uses that corner
-            // (recording: End Session, vocal range: help, onboarding: Skip).
-            if flow.step != .recording && flow.step != .vocalRange && flow.step != .onboarding {
+            // Debug builds only, and only on Home: the designed screens have no button there.
+            if flow.step == .home {
                 Button("Debug Settings", systemImage: "slider.horizontal.3") {
                     showsDebugSettings = true
                 }
@@ -129,7 +129,7 @@ struct RootView: View {
                                         transposition: container.audioTransposition,
                                         configuration: container.configuration),
             vocalRange: { container.vocalRange.load() },
-            onPrepared: flow.keysPrepared)
+            onPrepared: { flow.keysPrepared($0, lyrics: $1, songName: $2) })
     }
 
     private func makeRecordingViewModel(song: PreparedSong) -> RecordingViewModel {
@@ -143,6 +143,7 @@ struct RootView: View {
             planner: AutoCompingVideoUseCase(takeLog: container.takeLog, videoComposition: container.videoComposition),
             configuration: container.configuration,
             allowsSpeaker: DebugOptions.allowsSpeakerRecording,
+            lyrics: flow.recordingLyrics,
             onFinish: flow.sessionEnded,
             onDiscard: flow.sessionDiscarded)
     }
@@ -151,6 +152,7 @@ struct RootView: View {
         let container = flow.container
         return CompingViewModel(
             plan: plan,
+            songName: flow.songName,
             useCase: AutoCompingVideoUseCase(takeLog: container.takeLog, videoComposition: container.videoComposition),
             videoLibrary: container.videoLibrary)
     }

@@ -16,3 +16,6 @@ local-songs/
 
 # Claude Code agent worktrees
 .claude/worktrees/
+
+# Local Sketch MCP config (port is per machine, see docs/DESIGN-SOURCE.md)
+.mcp.json

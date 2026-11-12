@@ -5,6 +5,7 @@
 //  Runs the export and the Save to Photos action for ExportPreviewView. Owner: Zildjian Vito (ZV-13).
 //
 
+import CoreGraphics
 import Foundation
 import Observation
 
@@ -25,17 +26,63 @@ final class CompingViewModel {
         case failed(String)
     }
 
+    /// One passed take of the cover, with the part of the song it covers.
+    struct Clip: Identifiable, Equatable {
+        /// The segment index.
+        let id: Int
+        let start: TimeInterval
+        let end: TimeInterval
+    }
+
     let plan: CompingCompositionPlan
+    /// "Artist - Title" of the imported song, when known.
+    let songName: String?
     private(set) var exportState: ExportState = .idle
     private(set) var saveState: SaveState = .idle
+    /// A frame of each clip, by segment index; filled once the cover is exported.
+    private(set) var thumbnails: [Int: CGImage] = [:]
+    private(set) var selectedClipID: Int?
 
     private let useCase: AutoCompingVideoUseCase
     private let videoLibrary: any VideoLibrarySaving
+    private let thumbnailProvider: any ClipThumbnailProviding
 
-    init(plan: CompingCompositionPlan, useCase: AutoCompingVideoUseCase, videoLibrary: any VideoLibrarySaving) {
+    init(plan: CompingCompositionPlan, songName: String? = nil, useCase: AutoCompingVideoUseCase,
+         videoLibrary: any VideoLibrarySaving,
+         thumbnailProvider: any ClipThumbnailProviding = AVClipThumbnailProvider()) {
         self.plan = plan
+        self.songName = songName
         self.useCase = useCase
         self.videoLibrary = videoLibrary
+        self.thumbnailProvider = thumbnailProvider
+        selectedClipID = plan.validTakes.first?.segmentIndex
+    }
+
+    var title: String { songName ?? "Your cover" }
+
+    var clips: [Clip] {
+        plan.validTakes.compactMap { take in
+            plan.segments.first { $0.index == take.segmentIndex }
+                .map { Clip(id: $0.index, start: $0.audioStartTime, end: $0.audioEndTime) }
+        }
+    }
+
+    /// "2:18 • 5 clips"
+    var subtitle: String {
+        let count = clips.count
+        return "\(Self.format(plan.endTime)) • \(count) \(count == 1 ? "clip" : "clips")"
+    }
+
+    func timeRange(of clip: Clip) -> String {
+        "\(Self.format(clip.start))–\(Self.format(clip.end))"
+    }
+
+    func selectClip(_ id: Int) {
+        selectedClipID = id
+    }
+
+    private static func format(_ seconds: TimeInterval) -> String {
+        Duration.seconds(seconds).formatted(.time(pattern: .minuteSecond))
     }
 
     var summary: String {
@@ -65,8 +112,18 @@ final class CompingViewModel {
                 }
             }
             exportState = .finished(url)
+            await loadThumbnails(from: url)
         } catch {
             exportState = .failed(String(describing: error))
+        }
+    }
+
+    /// A frame from the middle of each clip.
+    private func loadThumbnails(from url: URL) async {
+        let clips = clips
+        let frames = await thumbnailProvider.thumbnails(for: url, at: clips.map { ($0.start + $0.end) / 2 })
+        for (clip, frame) in zip(clips, frames) {
+            if let frame { thumbnails[clip.id] = frame }
         }
     }
 

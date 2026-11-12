@@ -2,77 +2,92 @@
 //  ReadyView.swift
 //  finpro
 //
-//  Ready screen (PRD §5.2 step 3): segment count, chosen transposition, earphone reminder.
+//  "Get Ready to Record" (PRD §5.2 step 3): choose what the recording screen shows (lyrics,
+//  pitch guide and their opacity), see a preview of both, and start once earphones are in.
 //
 
 import SwiftUI
 
 struct ReadyView: View {
     let song: PreparedSong
-    /// The separated stems before transposition, to compare with the rehearsal key.
-    var originalKeyStems: SeparatedStems? = nil
-    let previewer: any AudioPreviewing
+    /// Lyrics of the chosen part, for the preview line (empty when none were found).
+    var lyrics: [LyricLine] = []
     let routeMonitor: any AudioRouteMonitor
     /// Debug speaker test (DebugOptions) lets Record through without earphones.
     var allowsSpeaker = false
     let onRecord: () -> Void
     let onChooseAnother: () -> Void
     var onChangeKey: (() -> Void)? = nil
-    @State private var playing: Track?
+
+    @AppStorage(RecordingDisplaySettings.showsLyricsKey) private var showsLyrics = true
+    @AppStorage(RecordingDisplaySettings.lyricsOpacityKey) private var lyricsOpacity = RecordingDisplaySettings.defaultLyricsOpacity
+    @AppStorage(RecordingDisplaySettings.showsPitchGuideKey) private var showsPitchGuide = true
+    @AppStorage(RecordingDisplaySettings.pitchGuideOpacityKey) private var pitchGuideOpacity = RecordingDisplaySettings.defaultPitchGuideOpacity
     @State private var route: AudioOutputRoute?
 
-    enum Track { case instrumental, original, originalKeyInstrumental, originalKeyMix }
+    /// Inset of the buttons from the screen edge.
+    private let buttonInset: CGFloat = 24
+    /// Inset of the title and cards per the design.
+    private let contentInset: CGFloat = 28
+    private let topBarHeight: CGFloat = 48
+    private let previewPillHeight: CGFloat = 36
 
     var body: some View {
-        VStack(spacing: 20) {
-            Spacer()
-            Image(systemName: "checkmark.seal.fill")
-                .font(.system(size: 56))
-                .foregroundStyle(.green)
-            Text("Ready to Record")
-                .font(.largeTitle.bold())
-            VStack(spacing: 8) {
-                LabeledContent("Segments", value: "\(song.segments.count)")
-                LabeledContent("Length", value: Duration.seconds(song.duration).formatted(.time(pattern: .minuteSecond)))
-                LabeledContent("Key", value: keyText)
-            }
-            .padding()
-            .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 12))
-            previewButtons
-            if let onChangeKey {
-                Button("Compare Keys Again") {
-                    previewer.stop()
-                    onChangeKey()
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                LiquidGlassGroup {
+                    Button(action: onChangeKey ?? onChooseAnother) {
+                        Image(systemName: "chevron.left")
+                            .fontWeight(.semibold)
+                            .foregroundStyle(.primary)
+                    }
+                    .glassCircleButtonStyle()
+                    .accessibilityLabel("Back")
                 }
+                Spacer()
             }
-            if song.separationMethod == .centerChannelCancellation || song.separationMethod == .coreML {
-                Text(song.separationMethod == .coreML
-                     ? "Background music was separated on your iPhone. Faint original vocals may remain."
-                     : "Background music uses basic vocal removal. Some original vocals may still be audible.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+            .frame(minHeight: topBarHeight)
+            .padding(.horizontal, buttonInset)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Get Ready to Record")
+                            .font(.title2.bold())
+                            .foregroundStyle(Color.plumInk)
+                            .accessibilityAddTraits(.isHeader)
+                        Text("Set up your recording and choose what appears on screen.")
+                            .font(.footnote)
+                            .foregroundStyle(Color.plumInkSecondary)
+                    }
+                    .padding(.top, 12)
+
+                    RecordingDisplaySettingsCard()
+                        .padding(.top, 16)
+
+                    previewCard
+                        .padding(.top, 12)
+                }
+                .padding(.horizontal, contentInset)
+                .padding(.bottom, 16)
             }
-            Label(canRecord ? "Use earphones so the song doesn't leak into the microphone."
-                            : "Plug in earphones to record.",
-                  systemImage: "headphones")
-                .font(.footnote)
-                .foregroundStyle(canRecord ? Color.primary : Color.orange)
-            Spacer()
-            Button("Record") {
-                previewer.stop()
-                onRecord()
+            .scrollBounceBehavior(.basedOnSize)
+
+            VStack(spacing: 8) {
+                if !canRecord {
+                    Label("Plug in earphones to record.", systemImage: "headphones")
+                        .font(.footnote)
+                        .foregroundStyle(Color.plumInk)
+                }
+                Button("Start Recording", action: onRecord)
+                    .buttonStyle(.primaryDeep)
+                    .disabled(!canRecord)
             }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(!canRecord)
-            Button("Choose Another Song") {
-                previewer.stop()
-                onChooseAnother()
-            }
+            .padding(.horizontal, buttonInset)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
         }
-        .padding()
-        .onDisappear { previewer.stop() }
+        .background(Color.onboardingBackground.ignoresSafeArea())
         .task {
             route = routeMonitor.currentRoute
             for await change in routeMonitor.routeChanges() { route = change }
@@ -84,58 +99,63 @@ struct ReadyView: View {
         allowsSpeaker || (route ?? routeMonitor.currentRoute).allowsRecording
     }
 
-    /// Listen to the background music alone (what ends up in the cover) or the original, in the
-    /// rehearsal key and, when the song was transposed, in the original key.
-    @ViewBuilder
-    private var previewButtons: some View {
-        if let stems = originalKeyStems, song.transposition.semitoneShift != 0 {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Rehearsal key").font(.caption).foregroundStyle(.secondary)
-                rehearsalKeyButtons
-                Text("Original key").font(.caption).foregroundStyle(.secondary)
-                HStack(spacing: 12) {
-                    previewButton("Background", systemImage: "music.note", track: .originalKeyInstrumental, url: stems.instrumentalURL)
-                    previewButton("Original", systemImage: "music.mic", track: .originalKeyMix, url: stems.mixURL)
-                }
+    // MARK: - Preview
+
+    private var previewCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Camera Preview")
+                .font(.caption.weight(.medium))
+                .foregroundStyle(Color.plumInk)
+
+            if showsLyrics {
+                previewLabel("Lyrics Preview")
+                Text(previewLine)
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(Color.plumInk)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, minHeight: previewPillHeight)
+                    .padding(.horizontal, 12)
+                    .background(Capsule().fill(Color.surfaceLavender.opacity(lyricsOpacity)))
             }
-        } else {
-            rehearsalKeyButtons
-        }
-    }
 
-    private var rehearsalKeyButtons: some View {
-        HStack(spacing: 12) {
-            previewButton("Background", systemImage: "music.note", track: .instrumental, url: song.instrumentalURL)
-            previewButton("Original", systemImage: "music.mic", track: .original, url: song.earphoneMixURL)
-        }
-    }
-
-    private func previewButton(_ title: String, systemImage: String, track: Track, url: URL) -> some View {
-        Button {
-            if playing == track {
-                previewer.stop()
-                playing = nil
-            } else if (try? previewer.play(url)) != nil {
-                playing = track
+            if showsPitchGuide {
+                previewLabel("Pitch Guide Preview")
+                Image(systemName: "waveform")
+                    .font(.footnote)
+                    .foregroundStyle(Color.plumInk)
+                    .frame(maxWidth: .infinity, minHeight: previewPillHeight)
+                    .background(Capsule().fill(Color.surfaceLavender.opacity(pitchGuideOpacity)))
+                    .accessibilityLabel("Pitch guide")
             }
-        } label: {
-            Label(playing == track ? "Stop" : title, systemImage: playing == track ? "stop.fill" : systemImage)
-                .frame(maxWidth: .infinity)
+
+            if !showsLyrics && !showsPitchGuide {
+                Text("Only the camera will be on screen.")
+                    .font(.caption2)
+                    .foregroundStyle(Color.plumInkSecondary)
+            }
         }
-        .buttonStyle(.bordered)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.surfaceElevated)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.chipBorder.opacity(0.3), lineWidth: 1)
+        )
+        .animation(.easeInOut(duration: 0.2), value: showsLyrics)
+        .animation(.easeInOut(duration: 0.2), value: showsPitchGuide)
     }
 
-    /// "−3 semitones · 1 octave down" style summary of the transposition.
-    private var keyText: String {
-        let plan = song.transposition
-        guard plan.totalSemitones != 0 else { return "Original key" }
-        var parts: [String] = []
-        if plan.semitoneShift != 0 {
-            parts.append("\(plan.semitoneShift > 0 ? "+" : "−")\(abs(plan.semitoneShift)) semitones")
-        }
-        if plan.octaveShift != 0 {
-            parts.append("\(abs(plan.octaveShift)) octave \(plan.octaveShift > 0 ? "up" : "down")")
-        }
-        return parts.joined(separator: " · ")
+    private func previewLabel(_ text: String) -> some View {
+        Text(text)
+            .font(.caption2)
+            .foregroundStyle(Color.plumInkSecondary)
+    }
+
+    /// The first line of the chosen part, or a placeholder when the song has no lyrics.
+    private var previewLine: String {
+        lyrics.first?.text ?? "Your lyrics will appear here"
     }
 }

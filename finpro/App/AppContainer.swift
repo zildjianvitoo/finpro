@@ -20,8 +20,13 @@ final class AppContainer {
     let audioInspector: any AudioFileInspecting = AudioFileInspector()
     /// Plays the trim selection and prepared tracks on the Ready screen.
     let audioPreview: any AudioPreviewing = AudioPreviewPlayer()
-    /// Synced lyrics for the trim screen.
+    /// Synced lyrics for the trim screen. Debug builds fall back to placeholder lyrics when
+    /// none are found, so the trim screen can be tried with any file.
+    #if DEBUG
+    let lyrics: any LyricsProviding = DummyLyricsProvider(base: LRCLibLyricsProvider())
+    #else
     let lyrics: any LyricsProviding = LRCLibLyricsProvider()
+    #endif
     /// Microphone pitch for the vocal range test.
     let livePitch: any LivePitchSource
 

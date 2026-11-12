@@ -15,6 +15,8 @@ import Observation
 final class RecordingViewModel {
     enum Status: Equatable {
         case starting
+        /// Camera and song are ready; recording starts when the user confirms the tips.
+        case ready
         case recording
         /// Finalizing the raw video file.
         case finishing
@@ -69,6 +71,8 @@ final class RecordingViewModel {
     }
 
     let song: PreparedSong
+    /// Synced lyrics on the song timeline (empty when none were found).
+    let lyrics: [LyricLine]
     private(set) var status: Status = .starting
     private(set) var loop: LoopStateController
     private(set) var lastResult: SegmentResult?
@@ -77,6 +81,8 @@ final class RecordingViewModel {
     /// Debug readout: pitch samples in the last second, how many were voiced, and the last note.
     private(set) var pitchStats = PitchStats()
     private(set) var microphoneName: String?
+    /// The camera is configured, so its preview can be shown (also while recording starts).
+    private(set) var isCameraReady = false
 
     @ObservationIgnored private let capture: any CaptureRepository
     @ObservationIgnored private let playback: any ReferencePlaybackRepository
@@ -110,9 +116,11 @@ final class RecordingViewModel {
          planner: AutoCompingVideoUseCase,
          configuration: AppConfiguration,
          allowsSpeaker: Bool = false,
+         lyrics: [LyricLine] = [],
          onFinish: @escaping (CompingCompositionPlan) -> Void,
          onDiscard: @escaping () -> Void) {
         self.song = song
+        self.lyrics = lyrics
         self.capture = capture
         self.playback = playback
         self.routeMonitor = routeMonitor
@@ -152,15 +160,25 @@ final class RecordingViewModel {
     /// countdown it holds on the failed segment so its missed notes stay visible.
     func displaySongTime() -> TimeInterval? {
         switch loop.phase {
-        case .showingResult, .countdown:
+        case .showingResult, .countdown, .paused:
             loop.currentSegment.map { $0.audioStartTime + Self.heldSegmentLead }
         default:
             currentSongTime()
         }
     }
 
+    var isPaused: Bool { loop.phase == .paused }
+    var canPause: Bool { status == .recording && (loop.canPause || isPaused) }
+
+    /// Time since recording started, on the capture clock (display only; cuts never use it).
+    func elapsedRecordingTime() -> TimeInterval {
+        guard status == .recording || status == .finishing else { return 0 }
+        return max(0, capture.currentCaptureTime().seconds - sessionStart)
+    }
+
     // MARK: - Session
 
+    /// Prepares the camera and the song, then waits in `.ready` for `beginRecording()`.
     func start() async {
         guard status == .starting || isBlocked else { return }
         status = .starting
@@ -175,6 +193,7 @@ final class RecordingViewModel {
         }
         do {
             try await capture.prepare()
+            isCameraReady = true
             microphoneName = (capture as? any MicrophoneInputProviding)?.microphoneName
             if karaoke.isAvailable {
                 try karaoke.load(song: song)
@@ -182,6 +201,28 @@ final class RecordingViewModel {
             } else {
                 try playback.load(earphoneMixURL: song.earphoneMixURL)
             }
+            guard status == .starting else { return }
+            status = .ready
+        } catch {
+            guard status == .starting else { return }
+            if let inputError = error as? any UserFacingConvertible {
+                status = .blocked(inputError.userFacingError)
+            } else {
+                status = .failed(.recordingFailed(details: error.localizedDescription))
+            }
+        }
+    }
+
+    /// Starts the camera recording and the loop, after the user confirmed the tips.
+    func beginRecording() async {
+        guard status == .ready else { return }
+        status = .starting
+        route = routeMonitor.currentRoute
+        guard route.allowsRecording || allowsSpeaker else {
+            status = .blocked(.speakerOutput)
+            return
+        }
+        do {
             observe()
             try await capture.startRecording()
             isCapturing = true
@@ -218,6 +259,22 @@ final class RecordingViewModel {
     private enum RecordingError: LocalizedError {
         case noVideoFrames
         var errorDescription: String? { "The camera didn't deliver any video. Close other camera apps and try again." }
+    }
+
+    /// Pauses the song and the scoring; the camera keeps running, but nothing recorded while
+    /// paused is used, because only logged takes reach the cover.
+    func pause() {
+        guard status == .recording, loop.canPause else { return }
+        perform(loop.pause())
+        anchor = nil
+        evaluations = []
+        trail = []
+    }
+
+    /// Resumes with a countdown and restarts the current segment.
+    func resume() {
+        guard status == .recording, isPaused else { return }
+        perform(loop.resume(now: capture.currentCaptureTime().seconds))
     }
 
     /// End Session → "Export N of M", or the session limit / last segment.
