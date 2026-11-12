@@ -105,7 +105,12 @@ nonisolated enum TakeLogContract {
             if !range.isValid || range.start.seconds < 0 || range.duration.seconds <= 0 {
                 fail("segment \(take.segmentIndex) has an invalid videoTimeRange")
             }
-            if position > 0, range.start < takes[position - 1].videoTimeRange.start {
+            if take.recordingPass < 0 {
+                fail("segment \(take.segmentIndex) has a negative recordingPass")
+            }
+            // Within one pass the takes follow each other in its raw file; a later pass starts a new file.
+            if position > 0, take.recordingPass == takes[position - 1].recordingPass,
+               range.start < takes[position - 1].videoTimeRange.start {
                 fail("segment \(take.segmentIndex) starts before the previous take in the raw file")
             }
             if take.segmentIndex < segments.count {
@@ -133,6 +138,10 @@ extension CompingCompositionPlan {
                 violations.append(ContractViolation(contract: "CompingCompositionPlan",
                                                     message: "endTime \(endTime)s, expected end of segment \(lastIndex) = \(expectedEnd)s"))
             }
+        }
+        for take in validTakes where !rawVideoURLs.indices.contains(take.recordingPass) {
+            violations.append(ContractViolation(contract: "CompingCompositionPlan",
+                                                message: "segment \(take.segmentIndex) comes from pass \(take.recordingPass), but there are \(rawVideoURLs.count) raw videos"))
         }
         return violations
     }

@@ -63,7 +63,7 @@ nonisolated enum DomainFixtures {
     static func compingPlan(configuration: AppConfiguration = .default) -> CompingCompositionPlan {
         let takes = passedTakes(crossfade: configuration.crossfade)
         return CompingCompositionPlan(
-            rawVideoURL: placeholderDirectory.appendingPathComponent("RawMasterVideo.mov"),
+            rawVideoURLs: [placeholderDirectory.appendingPathComponent("RawMasterVideo.mov")],
             instrumentalURL: preparedSong.instrumentalURL,
             segments: segments,
             validTakes: takes,

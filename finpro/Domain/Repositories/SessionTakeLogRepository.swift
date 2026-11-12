@@ -13,5 +13,8 @@ nonisolated protocol SessionTakeLogRepository: AnyObject {
     func allAttempts() -> [TakeAttemptLog]
     /// The take that goes into the cover for segments 0...N-1 (status `.passed` or `.completed`), ordered by segment index.
     func passedTakesPrefix() -> [TakeAttemptLog]
+    /// Forgets every attempt of a recording pass (a retake or continue the user discarded), so
+    /// the takes of earlier passes count again.
+    func discardAttempts(inPass recordingPass: Int)
     func clear()
 }

@@ -30,6 +30,10 @@ nonisolated final class FakeSessionTakeLogRepository: SessionTakeLogRepository, 
         return prefix
     }
 
+    func discardAttempts(inPass recordingPass: Int) {
+        attempts.withLock { $0.removeAll { $0.recordingPass == recordingPass } }
+    }
+
     func clear() {
         attempts.withLock { $0.removeAll() }
     }

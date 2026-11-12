@@ -280,7 +280,7 @@ final class RecordingViewModel {
     /// End Session → "Export N of M", or the session limit / last segment.
     func finish() async {
         guard let url = await stopCapture() else { return }
-        if let plan = planner.makePlan(rawVideoURL: url, song: song, configuration: configuration) {
+        if let plan = planner.makePlan(rawVideoURLs: [url], song: song, configuration: configuration) {
             onFinish(plan)
         } else {
             status = .interrupted(.nothingToExport)
@@ -305,7 +305,7 @@ final class RecordingViewModel {
     /// Export what passed before the interruption.
     func exportAfterInterruption() {
         guard let rawVideoURL,
-              let plan = planner.makePlan(rawVideoURL: rawVideoURL, song: song, configuration: configuration) else { return }
+              let plan = planner.makePlan(rawVideoURLs: [rawVideoURL], song: song, configuration: configuration) else { return }
         onFinish(plan)
     }
 

@@ -6,6 +6,7 @@
 //  Runs on the Mac, no simulator or test target needed.
 //
 
+import CoreMedia
 import Foundation
 
 var failures = 0
@@ -61,6 +62,26 @@ expectViolation("takes not a prefix", TakeLogContract.validatePassedTakes(Array(
 takes[0] = TakeAttemptLog(segmentIndex: 0, attemptNumber: 1, videoTimeRange: takes[0].videoTimeRange,
                           accuracyScore: 0.5, missedNoteIDs: [], status: .failed)
 expectViolation("failed take handed over", TakeLogContract.validatePassedTakes(takes, segments: DomainFixtures.segments, crossfade: crossfade))
+
+// Takes from several recording passes (retake / continue).
+let fixturePlan = DomainFixtures.compingPlan()
+let extraPass = DomainFixtures.placeholderDirectory.appendingPathComponent("RawMasterVideo-1.mov")
+func planWith(_ takes: [TakeAttemptLog], rawVideoURLs: [URL]) -> CompingCompositionPlan {
+    CompingCompositionPlan(rawVideoURLs: rawVideoURLs, instrumentalURL: fixturePlan.instrumentalURL, segments: fixturePlan.segments,
+                           validTakes: takes, endTime: fixturePlan.endTime, crossfadeDuration: fixturePlan.crossfadeDuration,
+                           instrumentalFadeOut: fixturePlan.instrumentalFadeOut, vocalGain: fixturePlan.vocalGain,
+                           instrumentalGain: fixturePlan.instrumentalGain)
+}
+let fixtureTakes = DomainFixtures.passedTakes()
+// The retake of segment 0 sits at 2 s in its own file, before segment 1's position in the first file.
+let retakeOfFirst = TakeAttemptLog(segmentIndex: 0, attemptNumber: 3, recordingPass: 1,
+                                   videoTimeRange: CMTimeRange(start: CMTime(seconds: 2, preferredTimescale: 600),
+                                                               duration: fixtureTakes[0].videoTimeRange.duration),
+                                   accuracyScore: 0.9, missedNoteIDs: [], status: .completed)
+let mixedPasses = [retakeOfFirst, fixtureTakes[1]]
+expectValid("takes from two passes, out of order across files",
+            planWith(mixedPasses, rawVideoURLs: fixturePlan.rawVideoURLs + [extraPass]).validate())
+expectViolation("take from a pass without a raw video", planWith(mixedPasses, rawVideoURLs: fixturePlan.rawVideoURLs).validate())
 
 print(failures == 0 ? "\nAll contract checks passed." : "\n\(failures) contract check(s) failed.")
 exit(failures == 0 ? 0 : 1)
