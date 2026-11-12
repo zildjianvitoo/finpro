@@ -25,7 +25,8 @@ struct RecordingView: View {
 
     /// Measurements of the design (iPhone 17 Pro, 402 × 874 pt).
     private let backButtonSize: CGFloat = 44
-    private let topBarInset: CGFloat = 1
+    /// The design puts the back button 1 pt under the status bar; a little more air reads better.
+    private let topBarInset: CGFloat = 9
     private let lyricsCardGap: CGFloat = 8
     private let lyricsCardInset: CGFloat = 33
     private let pitchGuideMaxWidth: CGFloat = 316
