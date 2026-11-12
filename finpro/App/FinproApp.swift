@@ -19,7 +19,15 @@ struct FinproApp: App {
 
     var body: some Scene {
         WindowGroup {
+            #if DEBUG
+            if DebugOptions.launchScreen == "designSystem" {
+                DesignSystemGalleryView()
+            } else {
+                RootView(flow: flow)
+            }
+            #else
             RootView(flow: flow)
+            #endif
         }
     }
 }
