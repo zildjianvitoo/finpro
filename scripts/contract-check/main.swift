@@ -52,6 +52,11 @@ expectViolation("empty segments", song(segments: []).validate())
 // Passed-take invariants.
 let crossfade = AppConfiguration.default.crossfade
 var takes = DomainFixtures.passedTakes()
+let lowScoreTakes = takes.map {
+    TakeAttemptLog(segmentIndex: $0.segmentIndex, attemptNumber: 1, videoTimeRange: $0.videoTimeRange,
+                   accuracyScore: 0.2, missedNoteIDs: [], status: .completed)
+}
+expectValid("completed takes are accepted whatever their score", TakeLogContract.validatePassedTakes(lowScoreTakes, segments: DomainFixtures.segments, crossfade: crossfade))
 expectViolation("takes not a prefix", TakeLogContract.validatePassedTakes(Array(takes.reversed()), segments: DomainFixtures.segments, crossfade: crossfade))
 takes[0] = TakeAttemptLog(segmentIndex: 0, attemptNumber: 1, videoTimeRange: takes[0].videoTimeRange,
                           accuracyScore: 0.5, missedNoteIDs: [], status: .failed)
