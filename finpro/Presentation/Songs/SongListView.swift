@@ -19,7 +19,7 @@ struct SongListView: View {
         VStack(spacing: 0) {
             HStack {
                 Button(action: onBack) { Image(systemName: "chevron.left") }
-                    .buttonStyle(.appIcon(.tinted)).accessibilityLabel("Back")
+                    .buttonStyle(.appIcon(.glass)).accessibilityLabel("Back")
                 Spacer()
                 Button(viewModel.selecting ? "Cancel" : "Select", action: viewModel.toggleSelectionMode)
                     .buttonStyle(AppChipButtonStyle(selected: viewModel.selecting))
@@ -28,9 +28,9 @@ struct SongListView: View {
                     .buttonStyle(.appIcon(.primary)).accessibilityLabel("Add a song")
             }
             .padding(.horizontal, 16)
-            Text("Song List").font(.appTitle1).foregroundStyle(Color.primaryDark)
+            Text("Song List").font(.appTitle1.weight(.bold)).foregroundStyle(Color.primaryDark)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 24).padding(.top, 12).padding(.bottom, 8)
+                .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 8)
             if viewModel.songs.isEmpty {
                 ContentUnavailableView(viewModel.query.isEmpty ? "No songs yet" : "No matching songs",
                                        systemImage: "music.note.list",
@@ -41,7 +41,7 @@ struct SongListView: View {
                         row(song)
                             .listRowSeparator(.hidden)
                             .listRowBackground(Color.clear)
-                            .listRowInsets(EdgeInsets(top: 3, leading: 24, bottom: 3, trailing: 24))
+                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 Button("Delete", role: .destructive) { viewModel.delete([song.id]) }
                             }
@@ -61,7 +61,7 @@ struct SongListView: View {
                     .buttonStyle(.appIcon(.tinted)).disabled(viewModel.selectedIDs.isEmpty)
                     .accessibilityLabel("Delete selected songs")
                 }
-                .padding(.horizontal, 24).padding(.bottom, 12)
+                .padding(.horizontal, 16).padding(.bottom, 12)
             } else {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
@@ -73,7 +73,7 @@ struct SongListView: View {
                 }
                 .font(.appSubheadline).foregroundStyle(Color.secondaryText)
                 .padding(12).background(.white.opacity(0.8), in: Capsule())
-                .padding(.horizontal, 24).padding(.bottom, 12)
+                .padding(.horizontal, 16).padding(.bottom, 12)
             }
         }
         .background(Color.screenBackground.ignoresSafeArea())
@@ -108,7 +108,7 @@ struct SongListView: View {
                             TextField("Song name", text: $name).font(.appSubheadline)
                                 .focused($nameFocused).submitLabel(.done)
                                 .onSubmit { finishRename(); nameFocused = false }
-                        } else { Text(song.title).font(.appSubheadline).lineLimit(1)
+                        } else { Text(song.title).font(.appBody.weight(.semibold)).lineLimit(1)
                             .layoutPriority(1) }
                         if expanded {
                             Button { beginRename(song) } label: { Image(systemName: "pencil.line") }
@@ -122,7 +122,7 @@ struct SongListView: View {
                         Spacer()
                         Text(Duration.seconds(song.duration), format: .time(pattern: .minuteSecond))
                     }
-                    .font(.appCaption2).foregroundStyle(Color.secondaryText)
+                    .font(.appSubheadline).foregroundStyle(Color.secondaryText)
                 }
             }
             .contentShape(Rectangle())
@@ -133,14 +133,17 @@ struct SongListView: View {
             if expanded {
                 ProgressView(value: viewModel.playingID == song.id ? viewModel.playbackTime / max(1, song.duration) : 0)
                     .tint(Color.primaryBrand)
+                    .scaleEffect(x: 1, y: 2.5, anchor: .center)
+                    .padding(.vertical, AppSpacing.small)
                 HStack {
                     Spacer()
                     Button { viewModel.togglePlayback(song) } label: {
                         Image(systemName: viewModel.playingID == song.id ? "pause.fill" : "play.fill")
+                            .font(.appTitle2)
                     }
                     .accessibilityLabel(viewModel.playingID == song.id ? "Pause song" : "Play song")
                     Spacer()
-                    Button { viewModel.stop(); onOpen(song) } label: { Image(systemName: "waveform") }
+                    Button { viewModel.stop(); onOpen(song) } label: { Image(systemName: "waveform").font(.appTitle2) }
                         .accessibilityLabel("Choose song section")
                 }
             }

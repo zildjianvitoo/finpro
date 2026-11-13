@@ -10,14 +10,12 @@ import QuickLook
 struct HomeView: View {
     @State var viewModel: HomeViewModel
     @State private var showsCovers = false
-    @State private var filter = "All"
     @State private var previewURL: URL?
-    @State private var galleryPreviewURL: URL?
     private let createTip = CreateCoverTip()
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
                     Text("Covers").font(.appLargeTitle).foregroundStyle(Color.primaryBrand)
                         .lineLimit(1).minimumScaleFactor(0.7)
@@ -42,7 +40,8 @@ struct HomeView: View {
                         .popoverTip(viewModel.songLibrary.songs.isEmpty ? createTip : nil, arrowEdge: .top)
                         .tipViewStyle(CreateCoverTipStyle())
                 }
-                VStack(alignment: .leading, spacing: 16) {
+                .padding(.horizontal, 16)
+                VStack(alignment: .leading, spacing: 12) {
                     sectionButton("Songs", action: viewModel.songsTapped)
                     if viewModel.songLibrary.songs.isEmpty {
                         Text("Tap + to add a song and\nstart creating your cover.")
@@ -51,102 +50,86 @@ struct HomeView: View {
                             .frame(maxWidth: .infinity, minHeight: 116)
                     } else {
                         ScrollView(.horizontal) {
-                            HStack(alignment: .top, spacing: 10) {
+                            HStack(alignment: .top, spacing: 8) {
                                 ForEach(viewModel.songLibrary.songs.prefix(8)) { song in
                                     Button { viewModel.openSong(song) } label: {
-                                        VStack(alignment: .leading, spacing: 6) {
-                                            Image(systemName: "play.fill").font(.appTitle2)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Image(systemName: "play.fill").font(.appTitle1)
                                                 .foregroundStyle(Color.tertiaryText)
-                                                .frame(width: 82, height: 82)
-                                                .background(Color.secondaryButton, in: RoundedRectangle(cornerRadius: 10))
-                                            Text(song.title).font(.appCaption).lineLimit(1)
+                                                .frame(width: 86, height: 86)
+                                                .background(Color.secondaryButton, in: RoundedRectangle(cornerRadius: 8))
+                                                .padding(.bottom, 4)
+                                            Text(song.title).font(.appSubheadline.weight(.semibold)).lineLimit(1)
                                             Text(Duration.seconds(song.duration), format: .time(pattern: .minuteSecond))
                                                 .font(.appCaption2).foregroundStyle(Color.secondaryText)
                                         }
-                                        .foregroundStyle(Color.primaryBrand).frame(width: 82, alignment: .leading)
+                                        .foregroundStyle(Color.primaryBrand).frame(width: 86, alignment: .leading)
                                     }
                                     .buttonStyle(.plain)
                                 }
                             }
+                            .padding(.horizontal, 16)
                         }
+                        .padding(.horizontal, -16)
                         .scrollIndicators(.hidden)
                     }
                 }
-                VStack(alignment: .leading, spacing: 18) {
+                .padding(16)
+                .background(sectionPanel)
+                VStack(alignment: .leading, spacing: 12) {
                     sectionButton("Your covers") { showsCovers = true }
                     if viewModel.recentCovers.isEmpty {
-                        VStack(spacing: 20) {
-                            Image(systemName: "mic.fill").font(.system(size: 40))
-                                .foregroundStyle(.white).frame(width: 88, height: 88)
-                                .background(Color.primary200.opacity(0.7), in: Circle())
-                            Text("Your cover projects will appear here.")
-                                .font(.appSubheadline).foregroundStyle(Color.secondaryText)
-                        }
-                        .frame(maxWidth: .infinity).padding(.top, 4)
-                    } else { coverGrid(columns: 3, covers: viewModel.recentCovers) }
+                        Text("Your cover projects will appear here.")
+                            .font(.appSubheadline).foregroundStyle(Color.secondaryText)
+                            .frame(maxWidth: .infinity).padding(.top, 24)
+                    } else { CoverGridView(covers: viewModel.recentCovers, onTap: open) }
                 }
+                .padding(16)
+                .frame(maxWidth: .infinity, minHeight: 600, alignment: .top)
+                .background(sectionPanel)
+                .padding(.top, -12)
                 if let error = viewModel.songLibrary.error ?? viewModel.coverLibrary?.error {
                     Text(error.title).font(.appCaption).foregroundStyle(Color.primaryBrand)
+                        .padding(.horizontal, 16)
                 }
             }
-            .padding(.horizontal, 16).padding(.top, 16).padding(.bottom, 24)
+            .padding(.top, 16)
         }
         .background(Color.screenBackground.ignoresSafeArea())
         .quickLookPreview($previewURL)
-        .sheet(isPresented: $showsCovers) {
-            NavigationStack {
-                ScrollView {
-                    Picker("Filter", selection: $filter) {
-                        ForEach(["All", "Finished", "Draft"], id: \.self) { Text($0) }
-                    }
-                    .pickerStyle(.segmented).padding(.bottom, 16)
-                    coverGrid(columns: 2, covers: viewModel.recentCovers.filter {
-                        filter == "All" || ($0.status == .finished ? filter == "Finished" : filter == "Draft")
-                    }, onOpen: { galleryPreviewURL = $0 })
-                }
-                .padding(16).background(Color.screenBackground)
-                .navigationTitle("Your covers").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showsCovers = false } } }
+        .overlay {
+            if showsCovers {
+                CoverListView(viewModel: viewModel, onBack: { showsCovers = false }, onOpen: open)
+                    .transition(.move(edge: .trailing))
             }
-            .quickLookPreview($galleryPreviewURL)
+        }
+        .animation(.easeInOut(duration: 0.3), value: showsCovers)
+    }
+
+    private func open(_ cover: HomeViewModel.RecentCoverItem) {
+        if viewModel.openCover(cover) {
+            showsCovers = false
+        } else {
+            previewURL = cover.videoURL
         }
     }
+
+    /// Lime panel behind a home section, fading into the screen background (design "Rectangle 3").
+    private var sectionPanel: some View {
+        UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28)
+            .fill(LinearGradient(stops: [.init(color: .secBrand, location: 0),
+                                         .init(color: .screenBackground, location: 0.62)],
+                                 startPoint: .top, endPoint: .bottom))
+    }
+
     private func sectionButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Text(title).font(.appHeadline)
-                Image(systemName: "chevron.right").font(.appCaption)
+                Text(title).font(.appTitle3.weight(.bold))
+                Image(systemName: "chevron.right").font(.appSubheadline.weight(.semibold))
             }
             .foregroundStyle(Color.primaryBrand)
         }
         .buttonStyle(.plain)
-    }
-    private func coverGrid(columns: Int, covers: [HomeViewModel.RecentCoverItem], onOpen: ((URL?) -> Void)? = nil) -> some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: columns), spacing: 20) {
-            ForEach(covers) { cover in
-                Button {
-                    if viewModel.openCover(cover) {
-                        showsCovers = false
-                    } else if let onOpen { onOpen(cover.videoURL) } else { previewURL = cover.videoURL }
-                } label: {
-                VStack(alignment: .leading, spacing: 6) {
-                    CoverThumbnailView(viewModel: CoverThumbnailViewModel(url: cover.videoURL, duration: cover.duration))
-                        .aspectRatio(0.56, contentMode: .fit)
-                        .clipShape(RoundedRectangle(cornerRadius: AppRadius.small))
-                        .overlay(alignment: .bottomLeading) {
-                            if cover.status == .draft {
-                                Text("Draft").font(.appCaption2).foregroundStyle(.white)
-                                    .padding(4).background(Color.primaryBrand, in: Capsule()).padding(6)
-                            }
-                        }
-                    Text(cover.title).font(.appCaption).lineLimit(1)
-                    Text(Duration.seconds(cover.duration), format: .time(pattern: .minuteSecond))
-                        .font(.appCaption2).foregroundStyle(Color.secondaryText)
-                }
-                .foregroundStyle(Color.primaryBrand)
-                }
-                .buttonStyle(.plain).disabled(cover.videoURL == nil)
-            }
-        }
     }
 }

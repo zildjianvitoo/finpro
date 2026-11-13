@@ -20,12 +20,12 @@ struct VocalRangeResultView: View {
             VStack(spacing: 16) {
                 HStack {
                     Button(action: onBack) { Image(systemName: "chevron.left") }
-                        .buttonStyle(.appIcon(.tinted)).accessibilityLabel("Back to highest note")
+                        .buttonStyle(.appIcon(.glass)).accessibilityLabel("Back to highest note")
                     Spacer()
                 }
-                Text("Your vocal range").font(.appTitle1)
+                Text("Your vocal range").font(.appTitle1.weight(.bold))
                 Text("(\(note(range.lowestMIDI))-\(note(range.highestMIDI)))")
-                    .font(.system(size: 48, weight: .semibold))
+                    .font(.appDisplay(size: 52)).foregroundStyle(Color.primaryBrand)
                     .minimumScaleFactor(0.6).lineLimit(1)
                 Spacer(minLength: 36)
             }
@@ -45,7 +45,7 @@ struct VocalRangeResultView: View {
                     ForEach(Array(stride(from: low, through: high, by: 12)), id: \.self) { midi in
                         let y = CGFloat(high - midi) / span * chartHeight
                         Rectangle().fill(Color.primary100).frame(height: 1).offset(y: y)
-                        Text(PitchMath.noteName(midi: midi)).font(.appCaption2)
+                        Text(PitchMath.noteName(midi: midi)).font(.appCaption2.weight(.semibold))
                             .foregroundStyle(Color.secondaryText).offset(x: 60, y: y - 14)
                     }
                     let top = CGFloat(high - Int(range.highestMIDI.rounded())) / span * chartHeight
@@ -55,7 +55,7 @@ struct VocalRangeResultView: View {
                         Spacer(minLength: 8)
                         Text(note(range.lowestMIDI))
                     }
-                    .font(.appCaption2).foregroundStyle(Color.primaryDark)
+                    .font(.appCaption.weight(.bold)).foregroundStyle(Color.primaryBrand)
                     .padding(.vertical, 8).frame(width: 40, height: max(48, height))
                     .background(Color.secBrand, in: Capsule())
                     .offset(x: proxy.size.width * 0.6, y: top)

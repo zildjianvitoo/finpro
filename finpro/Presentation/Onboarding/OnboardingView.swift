@@ -10,7 +10,7 @@ struct OnboardingView: View {
     @State private var currentStep = -2
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private let titles = ["Stay on pitch,\nas you sing.", "Retake less.\nCreate more.", "Get ready to find\nyour range."]
+    private let titles = ["Stay on pitch,\nas you sing.", "Retake less.\nCreate more.", "Find a key that fits\nyour voice."]
     private let subtitles = [
         "Follow visual pitch and timing cues while recording your cover.",
         "Redo a phrase and keep your best take in one seamless cover.",
@@ -70,13 +70,13 @@ struct OnboardingView: View {
                 Button { withAnimation { currentStep -= 1 } } label: {
                     Image(systemName: "chevron.left")
                 }
-                .buttonStyle(.appIcon(.tinted))
+                .buttonStyle(.appIcon(.glass))
                 .accessibilityLabel("Back")
                 Spacer()
                 if currentStep < 2 {
                     Button("Skip", action: onFinish)
-                        .font(.appSubheadline).foregroundStyle(Color.primaryBrand)
-                        .padding(12).background(.white.opacity(0.8), in: Capsule())
+                        .font(.appSubheadline).foregroundStyle(Color.primary)
+                        .glassCapsuleButtonStyle()
                 }
             }
             .padding(.horizontal, 16)

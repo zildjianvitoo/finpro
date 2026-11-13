@@ -19,7 +19,7 @@ struct VocalRangeIntroView: View {
                 HStack {
                     if let onBack {
                         Button(action: onBack) { Image(systemName: "chevron.left") }
-                            .buttonStyle(.appIcon(.tinted)).accessibilityLabel("Back")
+                            .buttonStyle(.appIcon(.glass)).accessibilityLabel("Back")
                     }
                     Spacer(minLength: 0)
                 }

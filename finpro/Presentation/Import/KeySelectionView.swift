@@ -18,13 +18,13 @@ struct KeySelectionView: View {
         VStack(spacing: 0) {
             HStack {
                 Button { viewModel.stop(); onChooseAnother() } label: { Image(systemName: "chevron.left") }
-                    .buttonStyle(.appIcon(.tinted)).accessibilityLabel("Back to song section")
+                    .buttonStyle(.appIcon(.glass)).accessibilityLabel("Back to song section")
                 Spacer()
             }
             .padding(.horizontal, 16)
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    Text("Find your key").font(.appLargeTitle).foregroundStyle(Color.primaryBrand)
+                    Text("Find Your Key").font(.appLargeTitle).foregroundStyle(Color.primaryBrand)
                     Text("Listen to each version and choose what feels comfortable to sing.")
                         .font(.appBody).foregroundStyle(Color.secondaryText)
                     if viewModel.choices.options.isEmpty {

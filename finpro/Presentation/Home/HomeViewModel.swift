@@ -87,6 +87,11 @@ final class HomeViewModel {
         onRetestVocalRangeAction()
     }
 
+    /// Removes covers from the app (their draft working files are cleaned up at the next launch).
+    func deleteCovers(_ ids: Set<UUID>) {
+        for id in ids { coverLibrary?.delete(id) }
+    }
+
     func songsTapped() { onSongs() }
     func openSong(_ song: SavedSong) { onOpenSong(song) }
 }

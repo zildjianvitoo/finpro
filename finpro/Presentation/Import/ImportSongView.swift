@@ -92,6 +92,8 @@ struct ImportSongView: View {
             Text("Select an audio file containing full vocals and instrumental. We'll use the vocals as your pitch reference.")
                 .font(.appSubheadline).foregroundStyle(Color.primaryBrand)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, 32)
             Text("Supported formats: MP3, M4A, WAV")
                 .font(.appCaption).foregroundStyle(Color.tertiaryText)
             Spacer(minLength: 0)

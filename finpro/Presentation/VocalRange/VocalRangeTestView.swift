@@ -66,10 +66,10 @@ struct VocalRangeTestView: View {
     }
     private var subtitle: String {
         switch stage {
-        case .warmup: "Read the sentences below in your everyday voice"
-        case .hummingGuide: "Start from a low tone and slowly guide up"
-        case .lowest: "Say “Do” as low as you can and hold it."
-        default: "Say “Do” as high as you can and hold it."
+        case .warmup: "Read the sentences below in your everyday speaking voice."
+        case .hummingGuide: "Start from a low tone and slowly glide up."
+        case .lowest: "Sing “Do” as low as comfortably possible and hold it."
+        default: "Sing “Do” as high as feels comfortable and hold it."
         }
     }
 
@@ -106,7 +106,7 @@ struct VocalRangeTestView: View {
     private func header(height: CGFloat) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             Button(action: back) { Image(systemName: "chevron.left") }
-                .buttonStyle(.appIcon(.tinted)).accessibilityLabel("Back")
+                .buttonStyle(.appIcon(.glass)).accessibilityLabel("Back")
                 .padding(.horizontal, AppSpacing.regular)
             VStack(alignment: .leading, spacing: AppSpacing.small) {
                 Text(title).font(.appLargeTitle).foregroundStyle(foreground)
@@ -122,7 +122,7 @@ struct VocalRangeTestView: View {
         .frame(maxWidth: .infinity, alignment: .leading).frame(height: height)
         .background {
             if isWarmup || isHumming {
-                SpeechBubbleShape().fill(isWarmup ? Color.primaryBrand : Color.secBrand)
+                SpeechBubbleShape().fill(isWarmup ? Color.primary400 : Color.secBrand)
                     .ignoresSafeArea(edges: .top)
             }
         }
@@ -136,16 +136,16 @@ struct VocalRangeTestView: View {
                     .accessibilityLabel(viewModel.instructions)
                     .padding(.top, AppSpacing.large)
             } else if isHumming {
-                Text("Hummmmmm").font(.appHeadline).foregroundStyle(Color.primaryBrand)
-                    .frame(maxWidth: .infinity).padding(.vertical, AppSpacing.large)
-                    .background(Color.secondaryButton, in: RoundedRectangle(cornerRadius: AppRadius.medium))
+                Text("“Hummmmmm…”").font(.appTitle2.weight(.bold)).foregroundStyle(Color.secBrand)
+                    .frame(maxWidth: .infinity, minHeight: 80)
+                    .background(Color.primary400, in: RoundedRectangle(cornerRadius: AppRadius.medium))
                     .padding(.top, AppSpacing.section)
                 Text("Tip: Keep your voice steady. Stop before your voice feels strained or turns into vocal fry.")
                     .font(.appCaption).foregroundStyle(Color.secondaryText)
             } else {
-                VocalPitchRuler(midi: displayMIDI, referenceMIDI: viewModel.baselineMIDI ?? 57)
+                VocalPitchBar(midi: displayMIDI, referenceMIDI: viewModel.baselineMIDI ?? 57)
                     .id(viewModel.prompt)
-                    .padding(.top, AppSpacing.regular)
+                    .padding(.top, AppSpacing.spacious * 2)
             }
             if case .failed(let error) = viewModel.status { ErrorStateView(error: error) }
         }
