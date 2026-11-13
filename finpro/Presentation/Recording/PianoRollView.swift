@@ -4,7 +4,8 @@
 //
 //  Pitch guide of the recording screen (PRD §5.5): target notes scroll past a playhead at 25%,
 //  ~4 s visible, the vertical range centred on the current segment, a dot where the user's
-//  voice is now, notes turning green (sung within tolerance) or red, and the lyric word under each note.
+//  voice is now, grey notes whose passed part turns green (sung within tolerance) or red as it
+//  is sung, and the lyric word under each note.
 //  UI only — never part of the recording.
 //
 
@@ -117,13 +118,16 @@ struct PianoRollView: View {
 
     // MARK: - Colors
 
-    /// The frosted panel of the design: a blurred dark material under a light tint at 20%, plum lines, light
-    /// notes and labels, a dark playhead and a lime dot where the voice is.
+    /// The frosted panel of the design: a blurred dark material under a light tint at 20%, plum lines, grey
+    /// notes, light labels, a dark playhead and a lime dot where the voice is.
     private enum Palette {
         static let panel = Color.secondaryButton.opacity(0.2)
         static let line = Color.tertiaryText.opacity(0.6)
         static let label = Color.secondaryButton
-        static let note = Color.secondaryButton
+        /// A note not passed yet; it turns green or red once the playhead is past it.
+        static let note = Color.gray
+        /// Notes of the segments before the one being sung.
+        static let previousNote = Color.gray.opacity(0.45)
         static let playhead = Color.primary800
         static let dot = Color.secBrand
         static let word = Color.secondaryButton
@@ -134,6 +138,25 @@ struct PianoRollView: View {
     private var dotSize: CGFloat { Self.scaled(scale, low: 8, mid: 12, high: 22) }
 
     // MARK: - Drawing
+
+    /// Colours the part of a note the playhead has passed, as it is sung (design review): each
+    /// stretch green where the voice was within tolerance, red where it was not. The rest stays grey.
+    private func fillSung(_ note: Note, shape: Path, upTo current: TimeInterval,
+                          in context: inout GraphicsContext, x: (TimeInterval) -> CGFloat) {
+        let end = min(note.end, current)
+        let samples = trail.filter { $0.songTime >= note.start && $0.songTime < end }
+        guard !samples.isEmpty else { return }
+        var clipped = context
+        clipped.clip(to: shape)
+        for (index, sample) in samples.enumerated() {
+            // A sample colours from where the previous stretch ended up to the next sample.
+            let from = index == 0 ? note.start : sample.songTime
+            let to = index + 1 < samples.count ? samples[index + 1].songTime : end
+            guard to > from else { continue }
+            let stretch = CGRect(x: x(from), y: shape.boundingRect.minY, width: x(to) - x(from), height: shape.boundingRect.height)
+            clipped.fill(Path(stretch), with: .color(sample.isHit ? .pitchHit : .noteMiss))
+        }
+    }
 
     private func draw(in context: inout GraphicsContext, size: CGSize, now: TimeInterval?) {
         let rowsTop = Self.topInset
@@ -181,13 +204,9 @@ struct PianoRollView: View {
             let rect = CGRect(x: x(note.start), y: y(Double(note.midi)) - height / 2,
                               width: max(height, x(note.end) - x(note.start) - 2), height: height)
             let isPrevious = dimmedBefore.map { note.end <= $0 + 1e-6 } ?? false
-            let isHit = trail.contains { $0.isHit && $0.songTime >= note.start && $0.songTime < note.end }
-            // A note that went by without a correct sample is a miss, shown red as it scrolls away.
-            let isMissed = !isPrevious && !isHit && note.end <= current
-            let color: Color = isMissed ? .noteMiss : isPrevious ? .gray.opacity(0.45)
-                : isHit ? .pitchHit
-                : Palette.note.opacity(note.start <= current && current < note.end ? 1 : 0.85)
-            context.fill(Path(roundedRect: rect, cornerRadius: height / 2), with: .color(color))
+            let shape = Path(roundedRect: rect, cornerRadius: height / 2)
+            context.fill(shape, with: .color(isPrevious ? Palette.previousNote : Palette.note))
+            if !isPrevious { fillSung(note, shape: shape, upTo: current, in: &context, x: x) }
             if let word = wordLabels[note.id] {
                 context.draw(Text(word).font(.system(size: 8, weight: .medium)).foregroundStyle(Palette.word),
                              at: CGPoint(x: rect.minX + 2, y: rect.maxY + 2), anchor: .topLeading)
@@ -195,7 +214,7 @@ struct PianoRollView: View {
         }
 
         // The voice is shown only as a dot at the playhead, no trail line (design review); the
-        // notes it sang still turn green or red. A dot older than this means the voice stopped.
+        // notes it sang turn green or red. A dot older than this means the voice stopped.
         let maxJoin = 0.12
 
         // Playhead, with a dot where the voice is now.
