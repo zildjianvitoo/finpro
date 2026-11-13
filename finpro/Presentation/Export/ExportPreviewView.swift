@@ -22,6 +22,7 @@ struct ExportPreviewView: View {
     @State private var player: CoverPlayerController?
     @State private var page = Page.preview
     @State private var confirmsLeave = false
+    @State private var showsDraftsSoon = false
     /// Shown progress of the save to Photos, which reports none: it runs ahead to `saveRunUp`
     /// while saving and completes when the save does.
     @State private var exportProgress: Double = 0
@@ -98,7 +99,12 @@ struct ExportPreviewView: View {
         .onChange(of: viewModel.saveState) { _, state in saveStateChanged(state) }
         .onDisappear { player?.pause() }
         .alert("Video Exported", isPresented: $showsExported) {
-            Button("OK") { page = .preview }
+            // The confirm role draws a filled button in the tint (our dark purple) on iOS 26.
+            if #available(iOS 26, *) {
+                Button("OK", role: .confirm) { page = .preview }
+            } else {
+                Button("OK") { page = .preview }
+            }
         } message: {
             Text("This video was saved to your camera roll.")
         }
@@ -115,6 +121,7 @@ struct ExportPreviewView: View {
         } message: {
             Text(saveErrorMessage)
         }
+        .tint(Color.primary800)
     }
 
     // MARK: - 7.0 Merging
@@ -180,12 +187,19 @@ struct ExportPreviewView: View {
 
             clipsSheet
         }
-        .confirmationDialog("Leave this cover?", isPresented: $confirmsLeave, titleVisibility: .visible) {
-            Button("Record Again", action: onRetake)
-            Button("Start Over", role: .destructive, action: onStartOver)
-            Button("Cancel", role: .cancel) {}
+        .confirmationDialog("Leave recording?", isPresented: $confirmsLeave, titleVisibility: .visible) {
+            // Sing on from the first segment not in the cover; a complete cover records again.
+            Button("Keep Recording", action: viewModel.canContinueRecording ? onContinue : onRetake)
+            Button("Save to Draft") { showsDraftsSoon = true }
+            // Only closes the dialog (design review). Not `.cancel`: iOS 26 hides that button here.
+            Button("Discard", role: .destructive) {}
         } message: {
-            Text("It hasn't been exported yet.")
+            Text("You have an unfinished take. What would you like to do with it?")
+        }
+        .alert("Drafts Are Coming Soon", isPresented: $showsDraftsSoon) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Saving a cover to finish later isn't available yet.")
         }
     }
 
