@@ -44,6 +44,9 @@ final class CompingViewModel {
     /// A frame of each clip, by segment index; filled once the cover is exported.
     private(set) var thumbnails: [Int: CGImage] = [:]
     private(set) var selectedClipID: Int?
+    /// True when the user tapped the selected clip (it then shows Retake); false when the
+    /// selection only follows the playing video.
+    private(set) var isClipChosen = false
 
     private let useCase: AutoCompingVideoUseCase
     private let videoLibrary: any VideoLibrarySaving
@@ -96,6 +99,20 @@ final class CompingViewModel {
 
     func selectClip(_ id: Int) {
         selectedClipID = id
+        isClipChosen = true
+    }
+
+    /// The video is at `time` on the cover timeline: select the clip playing there (the last one
+    /// that started, so a gap between clips keeps the previous clip).
+    private static let clipStartSlack: TimeInterval = 1.0 / 30
+
+    func followPlayback(at time: TimeInterval) {
+        let sorted = clips.sorted { $0.start < $1.start }
+        // One video frame of slack: a seek to a clip's start can land just before it.
+        guard let clip = sorted.last(where: { $0.start <= time + Self.clipStartSlack }) ?? sorted.first,
+              clip.id != selectedClipID else { return }
+        selectedClipID = clip.id
+        isClipChosen = false
     }
 
     private static func format(_ seconds: TimeInterval) -> String {

@@ -103,6 +103,10 @@ struct ExportPreviewView: View {
             player = url.flatMap { viewModel.hasPlayableFile ? CoverPlayerController(url: $0) : nil }
         }
         .onChange(of: viewModel.saveState) { _, state in saveStateChanged(state) }
+        // The purple outline follows the clip that is playing.
+        .onChange(of: player?.currentTime) { _, time in
+            if let time { viewModel.followPlayback(at: time) }
+        }
         .onDisappear { player?.pause() }
         .alert("Video Exported", isPresented: $showsExported) {
             // The confirm role draws a filled button in the tint (our dark purple) on iOS 26.
@@ -313,18 +317,25 @@ struct ExportPreviewView: View {
                 .padding(.horizontal, sheetTitleInset)
                 .accessibilityAddTraits(.isHeader)
 
-            ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: clipSpacing) {
-                    ForEach(viewModel.clips) { clip in
-                        clipItem(clip)
+            ScrollViewReader { scroller in
+                ScrollView(.horizontal) {
+                    HStack(alignment: .top, spacing: clipSpacing) {
+                        ForEach(viewModel.clips) { clip in
+                            clipItem(clip).id(clip.id)
+                        }
+                        if viewModel.canContinueRecording && !isMerging {
+                            continueTile
+                        }
                     }
-                    if viewModel.canContinueRecording && !isMerging {
-                        continueTile
-                    }
+                    .padding(.horizontal, clipsInset)
                 }
-                .padding(.horizontal, clipsInset)
+                .scrollIndicators(.hidden)
+                // Keep the playing clip in view.
+                .onChange(of: viewModel.selectedClipID) { _, id in
+                    guard let id else { return }
+                    withAnimation { scroller.scrollTo(id, anchor: .center) }
+                }
             }
-            .scrollIndicators(.hidden)
         }
         .padding(.top, 8)
         .padding(.bottom, 8)
@@ -339,10 +350,12 @@ struct ExportPreviewView: View {
 
     private func clipItem(_ clip: CompingViewModel.Clip) -> some View {
         let isSelected = !isMerging && viewModel.selectedClipID == clip.id
+        // Retake shows only on a clip the user tapped, not on one the playing video reached.
+        let showsRetake = isSelected && viewModel.isClipChosen
         return VStack(spacing: 8) {
             Button {
-                // The first tap selects a clip; tapping the selected one (showing Retake) retakes it.
-                if isSelected {
+                // The first tap selects a clip and plays from it; tapping it again (showing Retake) retakes it.
+                if showsRetake {
                     player?.pause()
                     onRetakeClip(clip.id)
                 } else {
@@ -353,7 +366,7 @@ struct ExportPreviewView: View {
                 clipFrame(of: clip)
                     .frame(width: clipWidth, height: clipHeight)
                     .overlay {
-                        if isSelected {
+                        if showsRetake {
                             VStack(spacing: 0) {
                                 Image(systemName: "arrow.trianglehead.counterclockwise")
                                     .font(.title3.weight(.semibold))
