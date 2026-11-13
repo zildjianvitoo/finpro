@@ -120,11 +120,17 @@ final class ImportSongViewModel {
     }
 
     var selectionAudio: ImportedAudio? { audio ?? preparingAudio }
+    /// Seconds of song across the waveform's width. The scale stays fixed while the user scrolls,
+    /// and the longest selection still fits with room around it.
+    var waveformVisibleSeconds: TimeInterval {
+        min(Self.maximumLength * 1.5, max(Self.maximumLength, selectionAudio?.duration ?? 0))
+    }
+
+    /// The part of the song in view: the selection sits in the middle (the waveform scrolls under it).
     var waveformInterval: ClosedRange<TimeInterval> {
-        guard let audio = selectionAudio else { return 0...1 }
-        let span = min(audio.duration, max(Self.maximumLength, selectionLength * 2.5))
-        let start = min(max(0, selectionStart + selectionLength / 2 - span / 2), max(0, audio.duration - span))
-        return start...(start + span)
+        guard selectionAudio != nil else { return 0...1 }
+        let start = selectionStart + selectionLength / 2 - waveformVisibleSeconds / 2
+        return start...(start + waveformVisibleSeconds)
     }
     var isPreparing: Bool {
         if case .preparing = status { return true }
