@@ -116,6 +116,10 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
         let started = ContinuousClock.now
         func elapsed() -> String { (ContinuousClock.now - started).formatted(.units(allowed: [.seconds, .milliseconds])) }
         Self.log.notice("prepare: start (configured before: \(self.prepared))")
+        // Normally done since app launch; on a quick first run this waits here, under "Getting
+        // ready…", instead of blocking the capture queue during the recording.
+        await VideoEncoderWarmUp.wait()
+        Self.log.notice("prepare: video encoder ready after \(elapsed(), privacy: .public)")
         let microphoneUID = try HeadsetMicrophoneSession.activate(mode: .videoRecording, sampleRate: Self.audioSampleRate)
         Self.log.notice("prepare: audio session active after \(elapsed(), privacy: .public)")
         try await worker.prepare()
@@ -343,7 +347,7 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
     /// portrait, but some devices still deliver landscape (sensor) frames; those are stored as
     /// they are with a 90° portrait transform, instead of being squeezed into 1080×1920.
     /// Mirroring was already applied by the connection, so the result is a mirrored selfie.
-    private static func makeVideoInput(width: Int, height: Int) -> AVAssetWriterInput {
+    static func makeVideoInput(width: Int, height: Int) -> AVAssetWriterInput {
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.hevc, AVVideoWidthKey: width, AVVideoHeightKey: height,
         ])
