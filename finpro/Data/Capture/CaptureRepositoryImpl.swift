@@ -50,6 +50,8 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
     private var prepared = false
     private var microphoneObserver: NSObjectProtocol?
     private var sessionObservers: [NSObjectProtocol] = []
+    /// When startRecording armed the writer; for the first-frame timing log.
+    private var recordingStartedAt: ContinuousClock.Instant?
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Capture")
     private var selectedMicrophoneUID: String?
     private var microphoneChanged = false
@@ -111,16 +113,24 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
     }
 
     func prepare() async throws {
+        let started = ContinuousClock.now
+        func elapsed() -> String { (ContinuousClock.now - started).formatted(.units(allowed: [.seconds, .milliseconds])) }
+        Self.log.notice("prepare: start (configured before: \(self.prepared))")
         let microphoneUID = try HeadsetMicrophoneSession.activate(mode: .videoRecording, sampleRate: Self.audioSampleRate)
+        Self.log.notice("prepare: audio session active after \(elapsed(), privacy: .public)")
         try await worker.prepare()
+        Self.log.notice("prepare: pitch model ready after \(elapsed(), privacy: .public)")
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async {
                 do {
+                    Self.log.notice("prepare: on capture queue after \(elapsed(), privacy: .public)")
                     if !self.prepared {
                         try self.configure()
                         self.prepared = true
+                        Self.log.notice("prepare: configured after \(elapsed(), privacy: .public)")
                     }
                     if !self.session.isRunning { self.session.startRunning() }
+                    Self.log.notice("prepare: session running \(self.session.isRunning), interrupted \(self.session.isInterrupted) after \(elapsed(), privacy: .public)")
                     try HeadsetMicrophoneSession.verify(microphoneUID)
                     self.selectedMicrophoneUID = microphoneUID
                     // After commitConfiguration and startRunning: inside the configuration block the
@@ -224,6 +234,8 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
                     self.lock.unlock()
                     self.lockCameraLook()
                     self.recording = true
+                    self.recordingStartedAt = .now
+                    Self.log.notice("startRecording: running \(self.session.isRunning), waiting for the first frame")
                     continuation.resume()
                 } catch { continuation.resume(throwing: error) }
             }
@@ -291,9 +303,12 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
             guard writer.canAdd(video) else { failure = error("Video encoder unavailable."); return }
             writer.add(video)
             videoInput = video
+            let writerStart = ContinuousClock.now
             guard writer.startWriting() else { failure = writer.error ?? error("Cannot start video writer."); return }
             writer.startSession(atSourceTime: pts)
             lock.lock(); firstPTS = pts; lock.unlock()
+            let sinceArmed = recordingStartedAt.map { (ContinuousClock.now - $0).formatted(.units(allowed: [.seconds, .milliseconds])) } ?? "?"
+            Self.log.notice("first frame written \(sinceArmed, privacy: .public) after startRecording (writer start took \((ContinuousClock.now - writerStart).formatted(.units(allowed: [.seconds, .milliseconds])), privacy: .public))")
         }
         guard writer.status == .writing else { failure = writer.error ?? error("Recording was interrupted."); return }
         lock.lock(); let first = firstPTS; lock.unlock()

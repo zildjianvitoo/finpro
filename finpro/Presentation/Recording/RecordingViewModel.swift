@@ -9,6 +9,7 @@
 
 import CoreMedia
 import Foundation
+import os
 import Observation
 
 @Observable
@@ -48,6 +49,7 @@ final class RecordingViewModel {
     private static let tickInterval: Duration = .milliseconds(20)
     /// How long to wait for the first video frame before giving up.
     private static let firstFrameTimeout: TimeInterval = 3
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Capture")
     /// While held, the segment start sits this far behind the playhead (the roll's past window).
     private static let heldSegmentLead: TimeInterval = 1
     /// Enough trail for the piano roll's past window.
@@ -284,6 +286,7 @@ final class RecordingViewModel {
             do {
                 try await waitForFirstFrame()
             } catch RecordingError.noVideoFrames {
+                Self.log.error("no video frame within \(Self.firstFrameTimeout) s; preparing the camera again")
                 // A cold camera (first run after install) can stop before its first frame; a
                 // second prepare() starts it again, as leaving and reopening the screen did.
                 isCapturing = false
