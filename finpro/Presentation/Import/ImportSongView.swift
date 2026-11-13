@@ -9,6 +9,8 @@ import UniformTypeIdentifiers
 /// Presented as a sheet above Covers or Song list.
 struct ImportSongView: View {
     @State private var viewModel: ImportSongViewModel
+    /// The sheet's current size, kept while the song is prepared.
+    @State private var detent: PresentationDetent = .height(AppLayout.importSheetHeight)
     @State private var picking = false
     #if DEBUG
     /// `-importFile` opens once per app launch, not every time this sheet opens again.
@@ -57,7 +59,12 @@ struct ImportSongView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .presentationBackground(.ultraThinMaterial)
         .interactiveDismissDisabled(viewModel.isPreparing)
-        .presentationDetents(viewModel.isPreparing ? [.large] : [.height(sheetHeight), .large])
+        // While the song is prepared the sheet stays at the height it has (only resizing is locked).
+        .presentationDetents(viewModel.isPreparing ? [detent] : [.height(sheetHeight), .large], selection: $detent)
+        .onAppear { detent = .height(sheetHeight) }
+        .onChange(of: sheetHeight) { _, height in
+            if detent != .large { detent = .height(height) }
+        }
         .presentationDragIndicator(viewModel.isPreparing ? .hidden : .visible)
         .presentationCornerRadius(AppRadius.sheet)
         .fileImporter(isPresented: $picking, allowedContentTypes: [.mp3, .mpeg4Audio, .wav, .audio, .movie]) {
