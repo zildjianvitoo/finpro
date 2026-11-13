@@ -234,8 +234,10 @@ struct VocalRangeTestView: View {
     }
 }
 
+#if DEBUG
 #Preview {
     VocalRangeTestView(viewModel: VocalRangeViewModel(
         source: FakeLivePitchSource(notes: [57, 57, 48, 67]),
         repository: FakeVocalRangeRepository(), configuration: .default, onSaved: {}))
 }
+#endif
