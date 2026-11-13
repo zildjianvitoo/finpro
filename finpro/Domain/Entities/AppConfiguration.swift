@@ -38,9 +38,5 @@ nonisolated struct AppConfiguration: Sendable, Equatable, Codable {
     var vocalGain: Float = 1.0
     var instrumentalGain: Float = 0.8
 
-    // Feature flags
-    /// Track B went "go" after the 2026-11-01 spike (see docs/test-reports/coreml-spike-2026-11-01.md).
-    var useCoreMLSeparation = true
-
     static let `default` = AppConfiguration()
 }

@@ -45,8 +45,8 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
   * **Guide extraction: Spotify Basic Pitch (CoreML)** run on the **vocal stem**, followed by monophonic reduction (§5.3). Bundled as an `.mlpackage`, no SPM dependency. Verify the model license and the CoreML export before committing.
   * **Stem separation — two-track strategy:**
     * **Track A — Guaranteed demo:** a bundled, royalty-free demo song whose stems (`mix`, `vocal`, `instrumental`) were separated **offline on a Mac** (e.g. Demucs) plus a verified guide file. Guarantees the end-to-end demo sounds good. Copyrighted songs must NOT be bundled in the repo/app.
-    * **Track B — On-device separation (decided 2026-11-03): htdemucs (Demucs v4, Meta, MIT) converted to CoreML** for user-imported songs. Only the network is in the model (`HTDemucs.mlpackage`, 58 MB: float16 with float32 normalisation, cross-transformer weights in int8); the demucs STFT/iSTFT and the 7.8 s chunking (25 % overlap) run in Swift with vDSP. Runs on the GPU (`.cpuAndGPU`; the Neural Engine and `.all` are slower or inaccurate for this model). Vocal stem = htdemucs `vocals`; instrumental = drums + bass + other. Measured: melody leakage into the instrumental 0.7 % (Open-Unmix, the first spike's model, 4.9 %); iPhone 17: 30 s in ~4 s, peak memory ~1 GB. If the model can't be used, imported songs use the **center-channel cancellation fallback** (L−R for instrumental, mid channel for vocal guide) with a disclaimer. Details: `docs/test-reports/htdemucs-coreml-spike-2026-11-03.md`.
-  * **Order decided 2026-11-01:** user import comes first (center-channel fallback + CREPE guide on the device), then the Track B spike; the Track A demo is a later safety net.
+    * **Track B — On-device separation (decided 2026-11-03): htdemucs (Demucs v4, Meta, MIT) converted to CoreML** for user-imported songs. Only the network is in the model (`HTDemucs.mlpackage`, 58 MB: float16 with float32 normalisation, cross-transformer weights in int8); the demucs STFT/iSTFT and the 7.8 s chunking (25 % overlap) run in Swift with vDSP. Runs on the GPU (`.cpuAndGPU`; the Neural Engine and `.all` are slower or inaccurate for this model). Vocal stem = htdemucs `vocals`; instrumental = drums + bass + other. Measured: melody leakage into the instrumental 0.7 % (Open-Unmix, the first spike's model, 4.9 %); iPhone 17: 30 s in ~4 s, peak memory ~1 GB. There is no fallback separation: if the model can't be used, preparation fails with an error *(center-channel fallback removed 2026-11-13)*. Details: `docs/test-reports/htdemucs-coreml-spike-2026-11-03.md`.
+  * **Order decided 2026-11-01:** user import comes first (center-channel fallback + CREPE guide on the device), then the Track B spike; the Track A demo is a later safety net. *(The center-channel fallback was removed on 2026-11-13; htdemucs is the only on-device separation.)*
   * **Developer fallback:** a synthesized demo (sine melody as "vocal", simple chord pad as "instrumental", mix = sum) so the pipeline is testable before the Track A asset exists.
 * **Phase 2+:** better ML pitch models, AudioKit, etc. — see `docs/roadmap-akurasi.md`. All swaps happen behind the repository protocols in §6.3.
 
@@ -82,11 +82,9 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
   * No ASR model: the on-device Whisper spike (`docs/test-reports/lyrics-whisper-spike-2026-11-03.md`) needed a 550 MB model to reach 27 % WER on Indonesian.
 * Disclaimer (processing screen + small badge on the recording screen):
   > **Experimental (Phase 1):** The pitch guide is extracted from the original song and may be inaccurate, especially in busy sections.
-* When the center-channel fallback is used, additionally:
-  > Background music uses basic vocal removal. Some original vocals may still be audible.
 
 ### 5.3 Guide Extraction & Segmentation
-* **Extraction input:** the vocal stem (bundled or htdemucs) or the mid channel (fallback).
+* **Extraction input:** the vocal stem (bundled or htdemucs).
 * **Primary — Basic Pitch:** resample to the model's input rate, run inference, take note events (pitch, onset, offset, confidence). Basic Pitch is polyphonic, so apply **monophonic reduction**: at each moment keep only the highest-confidence note, drop notes < 120 ms or below a confidence threshold, merge consecutive same-pitch notes separated by < 50 ms.
 * **Fallback — CREPE:** run `CrepePitchDetector` over the vocal stem every 50 ms → frames below the confidence threshold are unvoiced → stable regions ≥ 120 ms (< ±50 cents variation) become notes. Used when Basic Pitch fails to load or produces no notes.
 * Notes are stored in the **original key**; transposition is applied at display/evaluation time.
@@ -194,12 +192,12 @@ public struct SongSegment: Identifiable, Sendable, Equatable {
 }
 
 public enum StemSeparationMethod: String, Sendable {
-    case bundled, coreML, centerChannelCancellation, synthesized
+    case bundled, coreML, synthesized
 }
 
 public struct SeparatedStems: Sendable {
     public let mixURL: URL           // Trimmed full mix (earphone guide)
-    public let vocalGuideURL: URL    // Vocal stem or mid channel, used for extraction
+    public let vocalGuideURL: URL    // Vocal stem, used for extraction
     public let instrumentalURL: URL  // No original vocals, used in final mix
     public let method: StemSeparationMethod
 }
@@ -341,7 +339,7 @@ public protocol VideoCompositionRepository: Sendable {
 * **`AutoCompingVideoUseCase`** — builds `CompingCompositionPlan` from `passedTakesPrefix()` and calls `VideoCompositionRepository`.
 
 ### 6.5 Data & Infrastructure Layer
-1. **Stem separation:** `BundledStemsRepository` (Track A demo), `SynthesizedDemoRepository` (developer fallback), `CenterChannelStemRepository` (L−R / mid fallback), `HTDemucsStemSeparationRepository` (htdemucs CoreML + `DemucsSpectrogram`, behind `useCoreMLSeparation`); `SelectingStemSeparationRepository` picks htdemucs and falls back to center-channel.
+1. **Stem separation:** `BundledStemsRepository` (Track A demo), `SynthesizedDemoRepository` (developer fallback), `HTDemucsStemSeparationRepository` (htdemucs CoreML + `DemucsSpectrogram`), used directly for imported songs (no fallback).
 2. **Guide extraction:** `BasicPitchAnalysisRepository` (CoreML + monophonic reduction) and `CrepeAnalysisRepository` (`AVAssetReader` → PCM float → `CrepePitchDetector`), both conforming to `AudioAnalysisRepository` (§5.3). Fallback chosen in `PrepareSongUseCase`.
 3. **`AudioTranspositionRepositoryImpl`** — `AVAudioEngine` offline manual rendering + `AVAudioUnitTimePitch`.
    * **Model prewarm (v3.3):** `ModelPrewarmer` loads CREPE and htdemucs (plus one silent htdemucs window to set up the GPU) on a utility task at app start, so the vocal range test, Preparation and recording don't wait for model loading.
@@ -402,7 +400,6 @@ public protocol VideoCompositionRepository: Sendable {
 | `vocalGain` / `instrumentalGain` | 1.0 / 0.8 |
 | `manualLatencyCalibration` | 0 ms |
 | `maxSessionDuration` | 15 min |
-| `useCoreMLSeparation` | true *(htdemucs on the device; center-channel is the automatic fallback)* |
 
 ---
 
@@ -413,7 +410,7 @@ public protocol VideoCompositionRepository: Sendable {
 | DRM-protected or unreadable file | "This file can't be used. Try an MP3, M4A or WAV file." |
 | Trimmed clip < 15 s | Trimmer prevents it |
 | No vocal notes detected | "We couldn't find a vocal melody in this section. Try another part of the song." |
-| Separation fails / too slow | Fall back to center-channel method + disclaimer |
+| Separation fails / too slow | Show the separation error (`separationFailed`); no fallback method since 2026-11-13 |
 | Output is speaker | Record disabled, "Plug in earphones to record" |
 | Low storage | Record disabled, required space shown |
 | Export fails | Error with Retry; raw file kept until a new session starts |
