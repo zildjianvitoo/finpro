@@ -350,6 +350,11 @@ Task {
             let shown = size.applying(transform)
             return CGSize(width: abs(shown.width), height: abs(shown.height))
         }
+        // The rotated raw must show its picture, not black: its frame lands in the render area.
+        let rotatedFrames = try await centerColors(AVURLAsset(url: rotatedURL))
+        let rotatedBrightness = rotatedFrames.map { $0.rgb.reduce(0, +) }.max() ?? 0
+        check("landscape raw is visible", rotatedBrightness > 60,
+              "brightest centre pixel sum \(rotatedBrightness) over \(rotatedFrames.count) frames (0 = black)")
         let portraitShown = try await displaySize(fullURL), rotatedShown = try await displaySize(rotatedURL)
         let ratio = { (size: CGSize) in size.height / size.width }
         check("portrait output", abs(ratio(portraitShown) - 16.0 / 9) < 0.02 && abs(ratio(rotatedShown) - 16.0 / 9) < 0.02,

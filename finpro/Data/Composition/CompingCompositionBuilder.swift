@@ -88,8 +88,9 @@ nonisolated struct CompingCompositionBuilder {
               let instrumentalTrack = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
             throw CompingError.missingTrack("composition track")
         }
-        let (transform, naturalSize, frameRate, formats) = try await rawVideo.load(.preferredTransform, .naturalSize,
-                                                                                  .nominalFrameRate, .formatDescriptions)
+        let (rawTransform, naturalSize, frameRate, formats) = try await rawVideo.load(.preferredTransform, .naturalSize,
+                                                                                     .nominalFrameRate, .formatDescriptions)
+        let transform = Self.anchored(rawTransform, naturalSize: naturalSize)
         let videoTracks = [videoA, videoB]
         let vocalTracks = [vocalA, vocalB]
         let vocalParameters = vocalTracks.map { track in
@@ -204,6 +205,14 @@ nonisolated struct CompingCompositionBuilder {
         video.renderSize = renderSize
         video.frameDuration = CMTime(value: 1, timescale: CMTimeScale(frameRate > 0 ? frameRate.rounded() : 30))
         return video
+    }
+
+    /// The raw transform moved so the oriented frame starts at (0, 0). Players do this on their own,
+    /// a video composition doesn't: a 90° rotation without its translation (as written for cameras
+    /// that deliver landscape frames) would draw every frame outside the render area, all black.
+    static func anchored(_ transform: CGAffineTransform, naturalSize: CGSize) -> CGAffineTransform {
+        let placed = CGRect(origin: .zero, size: naturalSize).applying(transform)
+        return transform.concatenating(CGAffineTransform(translationX: -placed.minX, y: -placed.minY))
     }
 
     /// Equal-power fade (sine in / cosine out), as `fadeSteps` linear ramps.
