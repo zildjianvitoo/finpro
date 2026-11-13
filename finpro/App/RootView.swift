@@ -155,9 +155,7 @@ struct RootView: View {
             useCase: AutoCompingVideoUseCase(takeLog: container.takeLog, videoComposition: container.videoComposition),
             videoLibrary: container.videoLibrary,
             passThreshold: container.configuration.passThreshold,
-            onExported: { url in
-                container.coverLibrary.save(url, title: flow.songName, duration: plan.endTime, isDraft: plan.isPartial)
-            })
+            onExported: { flow.coverExported($0, plan: plan) })
     }
 }
 

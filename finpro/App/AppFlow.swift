@@ -44,6 +44,9 @@ final class AppFlow {
     private(set) var recordingLyrics: [LyricLine] = []
     /// "Artist - Title" of the imported song, for the final result screens (nil for the demo).
     private(set) var songName: String?
+    /// The Home library entry of the cover being made, so a re-export after a retake or
+    /// continue replaces it instead of adding a second one. Cleared when a new cover starts.
+    private var savedCoverID: UUID?
 
     init(container: AppContainer) {
         self.container = container
@@ -192,6 +195,7 @@ final class AppFlow {
         container.takeLog.clear()
         SessionFiles.cleanUp()
         try? SessionFiles.prepareDirectory()
+        savedCoverID = nil
         // A new cover: its first recording locks the camera look again.
         (container.capture as? any CameraLookLocking)?.resetCameraLook()
         record(.session)
@@ -237,6 +241,12 @@ final class AppFlow {
         step = .recording
     }
 
+    /// Final result screen: the cover was exported; keep one Home library entry per cover.
+    func coverExported(_ url: URL, plan: CompingCompositionPlan) {
+        savedCoverID = container.coverLibrary.save(url, title: songName, duration: plan.endTime,
+                                                   isDraft: plan.isPartial, replacing: savedCoverID) ?? savedCoverID
+    }
+
     /// Recording screen (Takin) ended the session with at least one passed segment.
     func sessionEnded(with plan: CompingCompositionPlan) {
         Contract.assertValid(plan.validate())
@@ -268,6 +278,7 @@ final class AppFlow {
         preparationError = nil
         preparedSong = nil
         compingPlan = nil
+        savedCoverID = nil
         container.takeLog.clear()
         step = .home
     }
