@@ -15,6 +15,9 @@ final class CoverPlayerController {
     private(set) var isPlaying = false
     private(set) var currentTime: TimeInterval = 0
     private(set) var duration: TimeInterval = 0
+    /// The user is dragging the seek bar: the picture follows the finger and playback waits.
+    private(set) var isScrubbing = false
+    @ObservationIgnored private var resumesAfterScrubbing = false
 
     @ObservationIgnored private var timeObserver: Any?
     @ObservationIgnored private var endObserver: NSObjectProtocol?
@@ -56,13 +59,37 @@ final class CoverPlayerController {
         isPlaying = false
     }
 
+    func beginScrubbing() {
+        guard !isScrubbing else { return }
+        isScrubbing = true
+        resumesAfterScrubbing = isPlaying
+        player.pause()
+    }
+
+    /// Moves to a share of the cover (0...1) while dragging. Frames near the spot are fine here, so
+    /// the picture keeps up with the finger.
+    func scrub(to fraction: Double) {
+        guard duration > 0 else { return }
+        currentTime = min(max(fraction, 0), 1) * duration
+        let tolerance = CMTime(value: 1, timescale: 30)
+        player.seek(to: CMTime(seconds: currentTime, preferredTimescale: 600), toleranceBefore: tolerance, toleranceAfter: tolerance)
+    }
+
+    /// Lands on the exact frame and plays on if it was playing before the drag.
+    func endScrubbing() {
+        guard isScrubbing else { return }
+        isScrubbing = false
+        seek(to: currentTime)
+        if resumesAfterScrubbing { play() }
+    }
+
     func seek(to time: TimeInterval) {
-        currentTime = time
-        player.seek(to: CMTime(seconds: time, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        currentTime = duration > 0 ? min(max(time, 0), duration) : max(time, 0)
+        player.seek(to: CMTime(seconds: currentTime, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
     }
 
     private func update(time: CMTime) {
-        guard time.isNumeric else { return }
+        guard time.isNumeric, !isScrubbing else { return }
         currentTime = time.seconds
     }
 

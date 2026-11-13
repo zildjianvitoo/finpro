@@ -51,6 +51,11 @@ struct ExportPreviewView: View {
     private let seekBarInset: CGFloat = 15
     private let seekBarBottom: CGFloat = 20
     private let timelineHeight: CGFloat = 2
+    private let scrubbingLineHeight: CGFloat = 4
+    private let scrubKnobSize: CGFloat = 12
+    /// Finger-sized touch area around the 2 pt line.
+    private let scrubTouchHeight: CGFloat = 32
+    private let accessibilitySeekStep: TimeInterval = 5
     private let sheetCornerRadius: CGFloat = 12
     private let sheetTitleInset: CGFloat = 28
     private let clipsInset: CGFloat = 32
@@ -235,18 +240,53 @@ struct ExportPreviewView: View {
             }
             .foregroundStyle(.white)
 
-            GeometryReader { proxy in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color(white: 0.67))
-                    Capsule().fill(.white)
-                        .frame(width: proxy.size.width * player.progress)
-                }
-            }
-            .frame(height: timelineHeight)
-            .accessibilityHidden(true)
+            timeline(player)
         }
         .padding(.horizontal, seekBarInset)
         .padding(.bottom, seekBarBottom)
+    }
+
+    /// The seek bar: drag (or tap) anywhere on it to move through the cover, like a video player.
+    /// The touch area is taller than the line; the line thickens and shows a knob while dragging.
+    private func timeline(_ player: CoverPlayerController) -> some View {
+        GeometryReader { proxy in
+            let width = max(proxy.size.width, 1)
+            let progressWidth = width * player.progress
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color(white: 0.67))
+                Capsule().fill(.white)
+                    .frame(width: progressWidth)
+            }
+            .frame(height: player.isScrubbing ? scrubbingLineHeight : timelineHeight)
+            .overlay(alignment: .leading) {
+                if player.isScrubbing {
+                    Circle().fill(.white)
+                        .frame(width: scrubKnobSize, height: scrubKnobSize)
+                        .offset(x: progressWidth - scrubKnobSize / 2)
+                }
+            }
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        player.beginScrubbing()
+                        player.scrub(to: value.location.x / width)
+                    }
+                    .onEnded { _ in player.endScrubbing() }
+            )
+        }
+        .frame(height: scrubTouchHeight)
+        .padding(.vertical, -(scrubTouchHeight - timelineHeight) / 2)
+        .animation(.easeOut(duration: 0.15), value: player.isScrubbing)
+        .accessibilityElement()
+        .accessibilityLabel("Playback position")
+        .accessibilityValue("\(CompingViewModel.clock(player.currentTime)) of \(CompingViewModel.clock(player.duration))")
+        .accessibilityAdjustableAction { direction in
+            guard player.duration > 0 else { return }
+            let step = accessibilitySeekStep / player.duration
+            player.seek(to: (player.progress + (direction == .increment ? step : -step)) * player.duration)
+        }
     }
 
     private var clipsSheet: some View {
