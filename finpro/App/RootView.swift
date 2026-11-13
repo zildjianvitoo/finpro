@@ -111,7 +111,7 @@ struct RootView: View {
         HomeView(viewModel: HomeViewModel(
             vocalRangeRepository: flow.container.vocalRange,
             songLibrary: flow.container.songLibrary, coverLibrary: flow.container.coverLibrary,
-            onSongs: flow.openSongList, onOpenSong: flow.openSong,
+            onSongs: flow.openSongList, onOpenSong: flow.openSong, onOpenDraft: flow.openDraft,
             onCreateCover: flow.createNewCover,
             onRetestVocalRange: flow.retestVocalRange))
     }
@@ -164,7 +164,8 @@ struct RootView: View {
             useCase: AutoCompingVideoUseCase(takeLog: container.takeLog, videoComposition: container.videoComposition),
             videoLibrary: container.videoLibrary,
             passThreshold: container.configuration.passThreshold,
-            onExported: { flow.coverExported($0, plan: plan) })
+            onExported: { flow.coverExported($0, plan: plan) },
+            onSavedToPhotos: flow.coverSavedToPhotos)
     }
 }
 

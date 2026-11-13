@@ -28,6 +28,8 @@ final class HomeViewModel {
     let coverLibrary: CoverLibrary?
     private let onSongs: () -> Void
     private let onOpenSong: (SavedSong) -> Void
+    /// Opens a draft cover on the result screen; false when it can't be opened (then it plays).
+    private let onOpenDraft: (UUID) -> Bool
     private let vocalRangeRepository: VocalRangeRepository
     private let onStartCreateCover: () -> Void
     private let onRetestVocalRangeAction: () -> Void
@@ -57,6 +59,7 @@ final class HomeViewModel {
         songLibrary: SongLibrary = SongLibrary(), coverLibrary: CoverLibrary? = nil,
         onSongs: @escaping () -> Void = {},
         onOpenSong: @escaping (SavedSong) -> Void = { _ in },
+        onOpenDraft: @escaping (UUID) -> Bool = { _ in false },
         onCreateCover: @escaping () -> Void,
         onRetestVocalRange: @escaping () -> Void
     ) {
@@ -64,10 +67,16 @@ final class HomeViewModel {
         self.coverLibrary = coverLibrary
         self.onSongs = onSongs
         self.onOpenSong = onOpenSong
+        self.onOpenDraft = onOpenDraft
         self.vocalRangeRepository = vocalRangeRepository
         self.previewCovers = recentCovers
         self.onStartCreateCover = onCreateCover
         self.onRetestVocalRangeAction = onRetestVocalRange
+    }
+
+    /// True when the cover opened on the result screen (a draft); false when it should just play.
+    func openCover(_ cover: RecentCoverItem) -> Bool {
+        cover.status == .draft && onOpenDraft(cover.id)
     }
 
     func createCoverTapped() {

@@ -11,6 +11,8 @@ import Foundation
 final class AppContainer {
     let songLibrary = SongLibrary()
     let coverLibrary = CoverLibrary()
+    /// Working files of draft covers, so a draft opens on the result screen again.
+    let coverDrafts = CoverDraftStore()
     var configuration: AppConfiguration
 
     // Ikzaz

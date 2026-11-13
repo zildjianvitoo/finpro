@@ -125,7 +125,9 @@ struct HomeView: View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: columns), spacing: 20) {
             ForEach(covers) { cover in
                 Button {
-                    if let onOpen { onOpen(cover.videoURL) } else { previewURL = cover.videoURL }
+                    if viewModel.openCover(cover) {
+                        showsCovers = false
+                    } else if let onOpen { onOpen(cover.videoURL) } else { previewURL = cover.videoURL }
                 } label: {
                 VStack(alignment: .leading, spacing: 6) {
                     CoverThumbnailView(viewModel: CoverThumbnailViewModel(url: cover.videoURL, duration: cover.duration))

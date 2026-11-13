@@ -45,6 +45,8 @@ final class AppFlow {
     /// The Home library entry of the cover being made, so a re-export after a retake or
     /// continue replaces it instead of adding a second one. Cleared when a new cover starts.
     private var savedCoverID: UUID?
+    /// The last copy of the cover's working files to `CoverDraftStore`; later saves and deletes wait for it.
+    @ObservationIgnored private var draftSave: Task<Void, Never>?
 
     init(container: AppContainer) {
         self.container = container
@@ -73,6 +75,10 @@ final class AppFlow {
         #endif
         // Leftovers from a session that ended in a crash.
         SessionFiles.cleanUp()
+        // Only drafts can be opened again; finished or removed covers don't need their working files.
+        let draftIDs = Set(container.coverLibrary.covers.filter(\.isDraft).map(\.id))
+        let drafts = container.coverDrafts
+        draftSave = Task.detached(priority: .utility) { drafts.deleteAll(except: draftIDs) }
         container.modelPrewarmer?.start()
         #if DEBUG
         if DebugOptions.launchScreen == "recording" {
@@ -240,9 +246,45 @@ final class AppFlow {
     }
 
     /// Final result screen: the cover was exported; keep one Home library entry per cover.
+    /// Also keeps its working files (raw videos, song audio, takes), so it can be opened as a
+    /// draft later, even after the app was closed without choosing Save to Draft.
     func coverExported(_ url: URL, plan: CompingCompositionPlan) {
         savedCoverID = container.coverLibrary.save(url, title: songName, duration: plan.endTime,
                                                    isDraft: plan.isPartial, replacing: savedCoverID) ?? savedCoverID
+        guard let id = savedCoverID, let preparedSong else { return }
+        let draft = CoverDraft(song: preparedSong, plan: plan, attempts: container.takeLog.allAttempts(),
+                               lyrics: recordingLyrics, songName: songName)
+        let drafts = container.coverDrafts
+        let previous = draftSave
+        draftSave = Task {
+            await previous?.value
+            try? await drafts.save(draft, id: id)
+        }
+    }
+
+    /// Home: a draft cover was tapped. Opens it on the result screen with its takes, so it can be
+    /// retaken, continued or exported. False when its working files are gone (the caller plays it).
+    func openDraft(_ id: UUID) -> Bool {
+        guard let draft = container.coverDrafts.load(id: id), draft.plan.validate().isEmpty,
+              draft.song.validate().isEmpty else { return false }
+        container.audioPreview.stop()
+        container.takeLog.clear()
+        draft.attempts.forEach(container.takeLog.logAttempt)
+        keyChoices = nil
+        preparationError = nil
+        preparedSong = draft.song
+        recordingLyrics = draft.lyrics
+        songName = draft.songName
+        compingPlan = draft.plan
+        recordingPass = .session
+        savedCoverID = id
+        step = .export
+        return true
+    }
+
+    /// Final result screen: the cover was saved to Photos, so it counts as finished on Home.
+    func coverSavedToPhotos() {
+        if let savedCoverID { container.coverLibrary.markFinished(savedCoverID) }
     }
 
     /// Final result screen, leave dialog: keep the cover on Home as a draft, then go home.
@@ -251,9 +293,17 @@ final class AppFlow {
         startOver()
     }
 
-    /// Final result screen, leave dialog: remove the cover from Home, then go home.
+    /// Final result screen, leave dialog: remove the cover and its working files, then go home.
     func discardCover() {
-        if let savedCoverID { container.coverLibrary.delete(savedCoverID) }
+        if let id = savedCoverID {
+            container.coverLibrary.delete(id)
+            let drafts = container.coverDrafts
+            let previous = draftSave
+            draftSave = Task {
+                await previous?.value
+                drafts.delete(id: id)
+            }
+        }
         startOver()
     }
 

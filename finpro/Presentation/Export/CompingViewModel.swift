@@ -48,6 +48,8 @@ final class CompingViewModel {
     private let useCase: AutoCompingVideoUseCase
     private let videoLibrary: any VideoLibrarySaving
     private let onExported: (URL) -> Void
+    /// The cover was saved to Photos (the user's way of finishing it).
+    private let onSavedToPhotos: () -> Void
     private let thumbnailProvider: any ClipThumbnailProviding
     private let passThreshold: Float
 
@@ -55,7 +57,8 @@ final class CompingViewModel {
          videoLibrary: any VideoLibrarySaving,
          thumbnailProvider: any ClipThumbnailProviding = AVClipThumbnailProvider(),
          passThreshold: Float = AppConfiguration().passThreshold,
-         onExported: @escaping (URL) -> Void = { _ in }) {
+         onExported: @escaping (URL) -> Void = { _ in },
+         onSavedToPhotos: @escaping () -> Void = {}) {
         self.plan = plan
         self.songName = songName
         self.useCase = useCase
@@ -63,6 +66,7 @@ final class CompingViewModel {
         self.thumbnailProvider = thumbnailProvider
         self.passThreshold = passThreshold
         self.onExported = onExported
+        self.onSavedToPhotos = onSavedToPhotos
         selectedClipID = plan.validTakes.first?.segmentIndex
     }
 
@@ -153,6 +157,7 @@ final class CompingViewModel {
         do {
             try await videoLibrary.saveVideo(at: url)
             saveState = .saved
+            onSavedToPhotos()
         } catch VideoLibraryError.accessDenied {
             saveState = .denied
         } catch {
