@@ -15,6 +15,11 @@ nonisolated struct CoverLibraryStore: Sendable {
         guard FileManager.default.fileExists(atPath: manifest.path) else { return [] }
         return try JSONDecoder().decode([SavedCover].self, from: Data(contentsOf: manifest))
     }
+    /// Rewrites the manifest, e.g. after a cover was changed or removed.
+    func saveManifest(_ records: [SavedCover]) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try JSONEncoder().encode(records).write(to: directory.appendingPathComponent("covers.json"), options: .atomic)
+    }
     /// Deletes a cover's video file. Its record must already be gone from the manifest.
     func removeFile(of cover: SavedCover) {
         try? FileManager.default.removeItem(at: url(for: cover))

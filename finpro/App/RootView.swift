@@ -55,7 +55,8 @@ struct RootView: View {
                 if let plan = flow.compingPlan {
                     ExportPreviewView(viewModel: makeCompingViewModel(plan: plan), onRetake: flow.retakeCover,
                                       onStartOver: flow.startOver, onRetakeClip: flow.retakeClip(segment:),
-                                      onContinue: flow.continueRecording)
+                                      onContinue: flow.continueRecording,
+                                      onSaveDraft: flow.saveCoverAsDraft, onDiscard: flow.discardCover)
                 }
             }
         }

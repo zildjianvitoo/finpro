@@ -22,7 +22,6 @@ struct ExportPreviewView: View {
     @State private var player: CoverPlayerController?
     @State private var page = Page.preview
     @State private var confirmsLeave = false
-    @State private var showsDraftsSoon = false
     /// Shown progress of the save to Photos, which reports none: it runs ahead to `saveRunUp`
     /// while saving and completes when the save does.
     @State private var exportProgress: Double = 0
@@ -34,14 +33,21 @@ struct ExportPreviewView: View {
     let onRetakeClip: (Int) -> Void
     /// Sing on from the first segment not in the cover.
     let onContinue: () -> Void
+    /// Leave dialog: keep the cover on Home as a draft and go home.
+    let onSaveDraft: () -> Void
+    /// Leave dialog: remove the cover from Home and go home.
+    let onDiscard: () -> Void
 
     init(viewModel: CompingViewModel, onRetake: @escaping () -> Void, onStartOver: @escaping () -> Void,
-         onRetakeClip: @escaping (Int) -> Void = { _ in }, onContinue: @escaping () -> Void = {}) {
+         onRetakeClip: @escaping (Int) -> Void = { _ in }, onContinue: @escaping () -> Void = {},
+         onSaveDraft: @escaping () -> Void = {}, onDiscard: @escaping () -> Void = {}) {
         _viewModel = State(initialValue: viewModel)
         self.onRetake = onRetake
         self.onStartOver = onStartOver
         self.onRetakeClip = onRetakeClip
         self.onContinue = onContinue
+        self.onSaveDraft = onSaveDraft
+        self.onDiscard = onDiscard
     }
 
     private let screenInset: CGFloat = 17
@@ -190,16 +196,12 @@ struct ExportPreviewView: View {
         .confirmationDialog("Leave recording?", isPresented: $confirmsLeave, titleVisibility: .visible) {
             // Sing on from the first segment not in the cover; a complete cover records again.
             Button("Keep Recording", action: viewModel.canContinueRecording ? onContinue : onRetake)
-            Button("Save to Draft") { showsDraftsSoon = true }
-            // Only closes the dialog (design review). Not `.cancel`: iOS 26 hides that button here.
-            Button("Discard", role: .destructive) {}
+            // The cover is already on Home (saved after each export): keep it as a draft, or remove it.
+            Button("Save to Draft", action: onSaveDraft)
+            // Not `.cancel`: iOS 26 hides that button here.
+            Button("Discard", role: .destructive, action: onDiscard)
         } message: {
             Text("You have an unfinished take. What would you like to do with it?")
-        }
-        .alert("Drafts Are Coming Soon", isPresented: $showsDraftsSoon) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Saving a cover to finish later isn't available yet.")
         }
     }
 

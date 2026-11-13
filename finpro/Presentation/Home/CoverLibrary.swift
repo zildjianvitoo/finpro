@@ -41,4 +41,23 @@ final class CoverLibrary {
             return nil
         }
     }
+
+    /// Marks a saved cover as a draft (the user chose Save to Draft).
+    func markDraft(_ id: UUID) {
+        guard !loadFailed, let index = covers.firstIndex(where: { $0.id == id }), !covers[index].isDraft else { return }
+        let old = covers[index]
+        var records = covers
+        records[index] = SavedCover(id: old.id, title: old.title, date: old.date, duration: old.duration,
+                                    isDraft: true, filename: old.filename)
+        do { try store.saveManifest(records); covers = records; error = nil }
+        catch { self.error = .coverLibraryFailed }
+    }
+
+    /// Removes a saved cover and its video file (the user chose Discard).
+    func delete(_ id: UUID) {
+        guard !loadFailed, let cover = covers.first(where: { $0.id == id }) else { return }
+        let records = covers.filter { $0.id != id }
+        do { try store.saveManifest(records); covers = records; store.removeFile(of: cover); error = nil }
+        catch { self.error = .coverLibraryFailed }
+    }
 }

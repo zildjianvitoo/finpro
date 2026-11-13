@@ -247,6 +247,18 @@ final class AppFlow {
                                                    isDraft: plan.isPartial, replacing: savedCoverID) ?? savedCoverID
     }
 
+    /// Final result screen, leave dialog: keep the cover on Home as a draft, then go home.
+    func saveCoverAsDraft() {
+        if let savedCoverID { container.coverLibrary.markDraft(savedCoverID) }
+        startOver()
+    }
+
+    /// Final result screen, leave dialog: remove the cover from Home, then go home.
+    func discardCover() {
+        if let savedCoverID { container.coverLibrary.delete(savedCoverID) }
+        startOver()
+    }
+
     /// Recording screen (Takin) ended the session with at least one passed segment.
     func sessionEnded(with plan: CompingCompositionPlan) {
         Contract.assertValid(plan.validate())
