@@ -59,6 +59,15 @@ nonisolated enum LyricGuideNotesUseCaseChecks {
                                    lines: [.init(start: 0, end: 3, wordWeights: [1, 1, 1])])
         try check(leap.notes.map(\.midiNote) == [60, 60, 69], "A sixth leap is a real melody change.")
 
+        // An octave error that pulls its own short line up ("Or where to go": 76 among 69, 64, 61)
+        // is caught against the words around it, across the line boundary.
+        let pitches = [66, 68, 68, 69, 76, 64, 61, 61]
+        let neighbours = useCase.execute(
+            pitchNotes: pitches.enumerated().map { note($1, Double($0), Double($0 + 1)) },
+            lines: [.init(start: 0, end: 3, wordWeights: [1, 1, 1]), .init(start: 3, end: 8, wordWeights: [1, 1, 1, 1, 1])])
+        try check(neighbours.notes.map(\.midiNote) == [66, 68, 68, 69, 64, 64, 61, 61],
+                  "Octave error folded against its neighbours: \(neighbours.notes.map(\.midiNote)).")
+
         // The guide's notes are the words' notes, in order.
         try check(line.notes.map(\.id) == line.words.flatMap { $0.compactMap(\.note?.id) }, "Notes match the words.")
         return count
