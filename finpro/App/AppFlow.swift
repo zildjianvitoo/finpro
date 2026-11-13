@@ -16,9 +16,9 @@ final class AppFlow {
         case onboarding
         case vocalRange
         case home
+        case songList
         case importSong
         case chooseKey
-        case ready
         case recording
         case export
     }
@@ -27,6 +27,9 @@ final class AppFlow {
 
     let container: AppContainer
     private(set) var step: Step
+    private(set) var importOrigin: Step = .home
+    private(set) var selectedLibrarySongID: UUID?
+    var selectedLibrarySong: SavedSong? { container.songLibrary.songs.first { $0.id == selectedLibrarySongID } }
     private(set) var preparedSong: PreparedSong?
     private(set) var keyChoices: PrepareSongUseCase.Choices?
     private(set) var preparationError: UserFacingError?
@@ -53,6 +56,7 @@ final class AppFlow {
         case "onboarding": step = .onboarding
         case "vocalRange": step = .vocalRange
         case "home": step = .home
+        case "songList": step = .songList
         case "importSong": step = .importSong
         case "recording": step = .importSong // the demo song is prepared below, then recording starts
         case "export":
@@ -80,7 +84,6 @@ final class AppFlow {
         await loadDemoSong()
         guard let song = keyChoices?.options.first?.song else { return }
         songPrepared(song)
-        startRecording()
     }
     #endif
 
@@ -109,14 +112,34 @@ final class AppFlow {
 
     /// Home screen: user tapped Create New Cover.
     func createNewCover() {
+        importOrigin = step == .songList ? .songList : .home
+        selectedLibrarySongID = nil
         step = .importSong
     }
+
+    func openSongList() { step = .songList }
+    func openHome() { container.audioPreview.stop(); step = .home }
+    func openSong(_ song: SavedSong) {
+        container.audioPreview.stop()
+        importOrigin = step == .songList ? .songList : .home
+        selectedLibrarySongID = song.id
+        step = .importSong
+    }
+    func sourceSongSaved(_ id: UUID) { selectedLibrarySongID = id }
+    func closeImport() {
+        container.audioPreview.stop()
+        guard step == .importSong else { return }
+        step = importOrigin
+    }
+    func savedToSongList() { container.audioPreview.stop(); step = .songList }
+    func returnToSongSection() { container.audioPreview.stop(); step = .importSong }
+
 
     /// Import/prep screen (Ikzaz) finished preparing a song.
     func songPrepared(_ song: PreparedSong) {
         Contract.assertValid(song.validate())
         preparedSong = song
-        step = .ready
+        startRecording()
     }
 
     func changeKey() {
@@ -179,7 +202,7 @@ final class AppFlow {
     /// Recording screen (Takin) ended with nothing passed, or the user discarded the session.
     func sessionDiscarded() {
         container.takeLog.clear()
-        step = .ready
+        step = keyChoices == nil ? .home : .chooseKey
     }
 
     /// Final result screen: record the same song again.

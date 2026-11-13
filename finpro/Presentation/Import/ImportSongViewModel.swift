@@ -54,6 +54,8 @@ final class ImportSongViewModel {
     private static let chorusLeadIn: TimeInterval = 1
     private static let chorusTail: TimeInterval = 1
 
+    private(set) var savedSongID: UUID?
+    private(set) var actionError: UserFacingError?
     private(set) var status: Status = .idle
     var selectionStart: TimeInterval = 0 { didSet { selectionChanged() } }
     var selectionLength: TimeInterval = defaultLength { didSet { selectionChanged() } }
@@ -76,7 +78,15 @@ final class ImportSongViewModel {
     /// stems) and the lyrics of the chosen part on the prepared song's timeline.
     @ObservationIgnored private let onPrepared: (PrepareSongUseCase.Choices, [LyricLine], String?) -> Void
     @ObservationIgnored private var preparation: Task<Void, Never>?
+    @ObservationIgnored private var importTask: Task<Void, Never>?
+    @ObservationIgnored private let library: SongLibrary?
+    @ObservationIgnored private let initialSong: SavedSong?
+    @ObservationIgnored private let onSelectionSaved: (UUID) -> Void
+    @ObservationIgnored private let onSavedToList: () -> Void
+    @ObservationIgnored private var editingSelection = false
+    @ObservationIgnored private var restartingPreview: Task<Void, Never>?
     /// The song being prepared, to return to its trimmer when going back.
+    @ObservationIgnored private var preparingDisplayName: String?
     @ObservationIgnored private var preparingAudio: ImportedAudio?
     /// Key choices kept until the user continues from the "audio is ready" screen.
     @ObservationIgnored private var preparedChoices: PrepareSongUseCase.Choices?
@@ -89,6 +99,9 @@ final class ImportSongViewModel {
     init(inspector: any AudioFileInspecting, lyrics: any LyricsProviding, previewer: any AudioPreviewing,
          prepare: PrepareSongUseCase,
          vocalRange: @escaping () -> VocalRange?,
+         library: SongLibrary? = nil, initialSong: SavedSong? = nil,
+         onSavedToList: @escaping () -> Void = {},
+         onSelectionSaved: @escaping (UUID) -> Void = { _ in },
          onPrepared: @escaping (PrepareSongUseCase.Choices, [LyricLine], String?) -> Void) {
         self.inspector = inspector
         self.lyricsProvider = lyrics
@@ -96,10 +109,26 @@ final class ImportSongViewModel {
         self.prepare = prepare
         self.vocalRange = vocalRange
         self.onPrepared = onPrepared
+        self.library = library
+        self.initialSong = initialSong
+        self.onSavedToList = onSavedToList
+        self.onSelectionSaved = onSelectionSaved
     }
 
     var audio: ImportedAudio? {
         if case .trimming(let audio) = status { audio } else { nil }
+    }
+
+    var selectionAudio: ImportedAudio? { audio ?? preparingAudio }
+    var waveformInterval: ClosedRange<TimeInterval> {
+        guard let audio = selectionAudio else { return 0...1 }
+        let span = min(audio.duration, max(Self.maximumLength, selectionLength * 2.5))
+        let start = min(max(0, selectionStart + selectionLength / 2 - span / 2), max(0, audio.duration - span))
+        return start...(start + span)
+    }
+    var isPreparing: Bool {
+        if case .preparing = status { return true }
+        return status == .prepared
     }
 
     var maximumStart: TimeInterval {
@@ -110,33 +139,81 @@ final class ImportSongViewModel {
         min(Self.maximumLength, (audio?.duration ?? 0) - selectionStart)
     }
 
+    func openInitialSong() {
+        guard status == .idle, let initialSong, let library else { return }
+        savedSongID = initialSong.id
+        open(library.audio(for: initialSong), saved: initialSong)
+    }
+
     func picked(_ result: Result<URL, any Error>) {
         guard case .success(let url) = result else { return }
+        importTask?.cancel()
+        stopSelectionPreview()
+        lyricsLookup?.cancel()
+        generation = UUID()
+        let token = generation
         status = .loading
-        Task {
+        importTask = Task {
             do {
                 let audio = try await inspector.importFile(at: url)
-                guard audio.duration >= Self.minimumLength else {
-                    status = .failed(.songTooShort(minimumSeconds: Int(Self.minimumLength)))
-                    return
-                }
-                selectionStart = 0
-                selectionLength = min(Self.defaultLength, audio.duration)
-                status = .trimming(audio)
-                clampSelection()
-                lyricsTitle = audio.title
-                lyricsArtist = audio.artist ?? ""
-                userMovedSelection = false
-                searchLyrics()
+                guard !Task.isCancelled, generation == token else { return }
+                savedSongID = nil
+                open(audio)
             } catch {
+                guard !Task.isCancelled, generation == token else { return }
                 status = .failed(Self.userFacing(error))
             }
         }
     }
 
-    func prepareSelection() {
-        guard let audio, let range = vocalRange() else { return }
+    private func open(_ audio: ImportedAudio, saved: SavedSong? = nil) {
+        guard audio.duration >= Self.minimumLength else {
+            status = .failed(.songTooShort(minimumSeconds: Int(Self.minimumLength)))
+            return
+        }
+        status = .loading
+        selectionStart = saved?.selectionStart ?? 0
+        selectionLength = saved?.selectionLength ?? min(Self.defaultLength, audio.duration)
+        status = .trimming(audio)
+        clampSelection()
+        lyricsTitle = audio.title
+        lyricsArtist = audio.artist ?? ""
+        userMovedSelection = saved != nil
+        actionError = nil
+        if let cached = saved?.lyrics { lyrics = .found(cached) } else { searchLyrics() }
+        startSelectionPreview()
+    }
+
+    /// Keeps a durable copy even when the user goes directly to key selection.
+    @discardableResult
+    private func persistSelection() -> Bool {
+        guard let library, let audio else { return true }
+        let cached: SongLyrics?
+        if case .found(let song) = lyrics { cached = song } else { cached = nil }
+        do {
+            let song = try library.save(audio: audio, existingID: savedSongID,
+                                        start: selectionStart, length: selectionLength, lyrics: cached)
+            savedSongID = song.id
+            onSelectionSaved(song.id)
+            preparingDisplayName = song.title
+            actionError = nil
+            return true
+        } catch {
+            actionError = .songLibraryFailed
+            return false
+        }
+    }
+
+    func saveToSongList() {
+        guard audio != nil, persistSelection() else { return }
         stopSelectionPreview()
+        onSavedToList()
+    }
+
+    func prepareSelection() {
+        guard let audio, let range = vocalRange(), persistSelection() else { return }
+        stopSelectionPreview()
+        generation = UUID()
         let trim = selectionStart...(selectionStart + selectionLength)
         preparingAudio = audio
         preparedLyrics = lyricsOnPreparedTimeline(trim)
@@ -144,7 +221,7 @@ final class ImportSongViewModel {
         let token = generation
         preparation = Task { [prepare] in
             do {
-                let choices = try await prepare.executeChoices(audioURL: audio.url, trimRange: trim, vocalRange: range) { step in
+                let choices = try await prepare.executeChoices(audioURL: audio.url, trimRange: trim, vocalRange: range, recommendationLimit: 1) { step in
                     Task { @MainActor in
                         if self.generation == token, case .preparing = self.status { self.status = .preparing(step: step) }
                     }
@@ -171,7 +248,7 @@ final class ImportSongViewModel {
     /// From the "audio is ready" screen: hand the key choices to the next step.
     func continueWithPreparedSong() {
         guard let preparedChoices else { return }
-        onPrepared(preparedChoices, preparedLyrics, preparingAudio.map(Self.displayName))
+        onPrepared(preparedChoices, preparedLyrics, preparingDisplayName ?? preparingAudio.map(Self.displayName))
     }
 
     /// "Artist - Title", or just the title when the artist is unknown.
@@ -223,10 +300,15 @@ final class ImportSongViewModel {
 
     func reset() {
         cancelPreparation()
+        importTask?.cancel()
+        importTask = nil
+        restartingPreview?.cancel()
         generation = UUID()
         stopSelectionPreview()
         lyricsLookup?.cancel()
         lyrics = .idle
+        savedSongID = nil
+        actionError = nil
         status = .idle
     }
 
@@ -291,10 +373,12 @@ final class ImportSongViewModel {
     /// Selects the suggested chorus (automatically once lyrics arrive, or from "Back to Chorus").
     func useChorusSuggestion() {
         guard let suggestion = chorusSuggestion else { return }
+        let wasPlaying = isPlayingSelection
         applyingSuggestion = true
         selectionStart = suggestion.start
         selectionLength = suggestion.length
         applyingSuggestion = false
+        if wasPlaying { startSelectionPreview() }
     }
 
     /// Whether a lyric line's sung part is (partly) inside the chosen part.
@@ -316,31 +400,71 @@ final class ImportSongViewModel {
 
     // MARK: - Selection preview
 
-    var isPlayingSelection: Bool { playback != nil }
+    var isPlayingSelection: Bool { playbackTime != nil }
 
     /// Plays the chosen part of the original song; the lyrics follow it.
     func toggleSelectionPreview() {
-        if isPlayingSelection {
-            stopSelectionPreview()
-            return
-        }
-        guard let audio, (try? previewer.play(audio.url, from: selectionStart)) != nil else { return }
-        let end = selectionStart + selectionLength
+        if isPlayingSelection { stopSelectionPreview() } else { startSelectionPreview() }
+    }
+
+    func startSelectionPreview() {
+        stopSelectionPreview()
+        guard let audio else { return }
+        do { try previewer.play(audio.url, from: selectionStart) }
+        catch { actionError = .keyPreviewFailed; return }
+        actionError = nil
         playbackTime = selectionStart
         playback = Task { [previewer] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: Self.playbackRefresh)
-                guard let time = previewer.currentTime, time < end else { break }
-                playbackTime = time
+                guard !Task.isCancelled else { return }
+                guard let time = previewer.currentTime else { break }
+                if time >= selectionStart + selectionLength {
+                    do { try previewer.play(audio.url, from: selectionStart) }
+                    catch { actionError = .keyPreviewFailed; break }
+                    playbackTime = selectionStart
+                } else { playbackTime = time }
             }
             if !Task.isCancelled { stopSelectionPreview() }
         }
     }
 
+    func selectLyric(_ line: LyricLine, extending: Bool = false) {
+        beginSelectionEditing()
+        if extending {
+            selectionLength = line.end - selectionStart
+        } else {
+            selectionStart = min(line.start, maximumStart)
+        }
+        endSelectionEditing()
+    }
+
+    func beginSelectionEditing() {
+        guard !editingSelection else { return }
+        editingSelection = true
+        restartingPreview?.cancel()
+        stopSelectionPreview()
+    }
+
+    func endSelectionEditing() {
+        editingSelection = false
+        startSelectionPreview()
+    }
+
+    func suspend() {
+        stopSelectionPreview()
+        restartingPreview?.cancel()
+        lyricsLookup?.cancel()
+        importTask?.cancel()
+        generation = UUID()
+        cancelPreparation()
+    }
+
     func stopSelectionPreview() {
+        let ownsPlayback = playback != nil || playbackTime != nil
         playback?.cancel()
         playback = nil
-        previewer.stop()
+        if ownsPlayback { previewer.stop() }
         playbackTime = nil
     }
 

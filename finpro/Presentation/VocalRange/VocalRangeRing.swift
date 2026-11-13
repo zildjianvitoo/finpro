@@ -2,52 +2,44 @@
 //  VocalRangeRing.swift
 //  finpro
 //
-//  The listening ring: a soft lilac outer halo, a dark stroke ring and a plum inner disc
-//  with the chartreuse waveform or microphone icon.
-//
 
 import SwiftUI
 
 struct VocalRangeRing: View {
-    /// 0...1, how much of the required stable hold is done.
     var progress: Double
     var isListening: Bool
     var hearsVoice: Bool
     var label: String
-    /// Shows a microphone icon in the center disc for warm-up.
     var showsMicrophoneIcon = false
-
-    private static let haloDiameter: CGFloat = 196
-    private static let strokeDiameter: CGFloat = 164
-    private static let discDiameter: CGFloat = 151
-    private static let waveformWidth: CGFloat = 100
-
-    @ScaledMetric(relativeTo: .largeTitle) private var micSize: CGFloat = 32
+    var levels: [Float] = []
+    var diameter: CGFloat = AppLayout.microphoneDiameter
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        ZStack {
-            Circle()
-                .fill(Color.ringHalo)
-                .frame(width: Self.haloDiameter, height: Self.haloDiameter)
-
-            Circle()
-                .fill(Color.ringStroke)
-                .frame(width: Self.strokeDiameter, height: Self.strokeDiameter)
-
-            Circle()
-                .fill(Color.ringDisc)
-                .frame(width: Self.discDiameter, height: Self.discDiameter)
-
-            if showsMicrophoneIcon {
-                Image(systemName: "mic")
-                    .font(.system(size: micSize, weight: .regular))
-                    .foregroundStyle(Color.micIconHighlight)
-            } else {
-                ListeningWaveform(isActive: isListening, hearsVoice: hearsVoice)
-                    .frame(width: Self.waveformWidth)
+        TimelineView(.animation(minimumInterval: 1.0 / 24, paused: (!isListening && !showsMicrophoneIcon) || reduceMotion)) { context in
+            let pulse = (isListening || showsMicrophoneIcon) && !reduceMotion
+                ? 1 + 0.035 * sin(context.date.timeIntervalSinceReferenceDate * 4) : 1
+            ZStack {
+                Circle().fill(Color.primary200.opacity(0.6))
+                    .scaleEffect(pulse)
+                Circle().fill(Color.primaryBrand).padding(16)
+                Circle().stroke(Color.primary800.opacity(0.5), lineWidth: 6).padding(18)
+                if !showsMicrophoneIcon {
+                    Circle().trim(from: 0, to: min(1, max(0, progress)))
+                        .stroke(Color.secBrand, style: StrokeStyle(lineWidth: 6, lineCap: .round))
+                        .rotationEffect(.degrees(-90)).padding(18)
+                        .animation(.linear(duration: 0.1), value: progress)
+                }
+                if showsMicrophoneIcon {
+                    Image(systemName: "mic.fill").font(.system(size: 36))
+                        .foregroundStyle(Color.secBrand)
+                } else {
+                    ListeningWaveform(isActive: isListening, hearsVoice: hearsVoice, barColor: .secBrand, levels: levels)
+                        .frame(width: 94)
+                }
             }
         }
-        .frame(width: Self.haloDiameter, height: Self.haloDiameter)
+        .frame(width: diameter, height: diameter)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(label)
         .accessibilityValue(Text(progress, format: .percent.precision(.fractionLength(0))))

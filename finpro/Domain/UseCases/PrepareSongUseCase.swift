@@ -53,16 +53,17 @@ nonisolated struct PrepareSongUseCase: Sendable {
 
     /// Separate and analyse once; render only the best fully fitting keys.
     func executeChoices(audioURL: URL, trimRange: ClosedRange<TimeInterval>, vocalRange: VocalRange,
+                        recommendationLimit: Int? = nil,
                         progress: @escaping @Sendable (String) -> Void = { _ in }) async throws -> Choices {
         let (stems, extracted) = try await extract(audioURL: audioURL, trimRange: trimRange, progress: progress)
         return try await makeChoices(stems: stems, notes: extracted,
                                      duration: trimRange.upperBound - trimRange.lowerBound,
-                                     vocalRange: vocalRange, progress: progress)
+                                     vocalRange: vocalRange, recommendationLimit: recommendationLimit, progress: progress)
     }
 
     /// Also used by the demo, whose original guide is already known.
     func makeChoices(stems: SeparatedStems, notes: [TargetMIDINote], duration: TimeInterval,
-                     vocalRange: VocalRange,
+                     vocalRange: VocalRange, recommendationLimit: Int? = nil,
                      progress: @escaping @Sendable (String) -> Void = { _ in }) async throws -> Choices {
         let slicer = SliceSegmentsUseCase(configuration: configuration)
         // Sanitise timestamps without simplifying away extremes or changing note durations.
@@ -71,7 +72,8 @@ nonisolated struct PrepareSongUseCase: Sendable {
             throw ContractViolation(contract: "Preparation", message: "No guide notes detected.")
         }
         let recommender = RecommendKeysUseCase(configuration: configuration)
-        let recommendations = try recommender.execute(notes: original, vocalRange: vocalRange)
+        let ranked = try recommender.execute(notes: original, vocalRange: vocalRange)
+        let recommendations = Array(ranked.prefix(max(0, recommendationLimit ?? ranked.count)))
         let excerpt = recommender.highestPhrase(notes: original, duration: duration)
         let segments = try slicer.execute(notes: SimplifyGuideUseCase(configuration: configuration).execute(original), duration: duration)
         var options: [Choices.Option] = []

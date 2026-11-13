@@ -11,7 +11,7 @@ import Foundation
 nonisolated enum DebugOptions {
     private static let speakerKey = "DebugOptions.allowsSpeakerRecording"
 
-    /// Launch argument `-startScreen <onboarding|vocalRange|home|importSong|recording|export|designSystem>`: opens the app on
+    /// Launch argument `-startScreen <onboarding|vocalRange|home|songList|importSong|recording|export|designSystem|debugSettings>`: opens the app on
     /// that step, so a screen can be checked without tapping through the flow:
     /// `xcrun simctl launch booted <bundle id> -startScreen importSong`.
     static var launchScreen: String? {

@@ -28,6 +28,13 @@ final class VocalRangeViewModel {
     private(set) var baselineMIDI: Float?
     private(set) var lowestMIDI: Float?
     private(set) var highestMIDI: Float?
+    private(set) var waveformLevels: [Float] = []
+    var readingDuration: TimeInterval {
+        max(configuration.speakingSampleDuration, Double(instructions.split(whereSeparator: \.isWhitespace).count) / configuration.readingWordsPerSecond)
+    }
+
+    private(set) var hasStartedListening = false
+    private(set) var hasPracticedHumming = false
     private(set) var microphoneName: String?
 
     @ObservationIgnored private let source: any LivePitchSource
@@ -56,11 +63,11 @@ final class VocalRangeViewModel {
     var instructions: String {
         switch prompt {
         case .speaking:
-            "The sky looks so beautiful this morning, with soft clouds floating across the blue sky. A gentle breeze comes through the trees, and the air feels cool and refreshing."
+            "The sky looks so beautiful this morning, with soft clouds floating across the blue sky.\nA gentle breeze comes through the trees, and the air feels cool and refreshing."
         case .lowest:
-            "Start near your speaking note and gently hum downward. Hold a comfortable low note for about 1 second."
+            "Start near your speaking note and gently hum downward. Hold a comfortable low note for 1 second."
         case .highest:
-            "Try a gentle ‘woo-hoo’, then hold a comfortable high note for about 1 second. Don't shout or strain."
+            "Try a gentle ‘woo-hoo’, then hold a comfortable high note for 1 second. Don't shout or strain."
         }
     }
 
@@ -73,8 +80,29 @@ final class VocalRangeViewModel {
         }
     }
 
-    func listen() {
+    /// All screens start idle. Only the microphone button calls this toggle.
+    func toggleMicrophone(practice: Bool = false) {
+        if status == .listening { resetCapture() }
+        else { startListening(practice: practice) }
+    }
+
+    func listen() { startListening(practice: false) }
+
+    /// Clears only the current input, keeping the measured range and speaking reference.
+    func resetCapture() {
         stopListening()
+        status = .idle
+        holdProgress = 0
+        liveMIDI = nil
+        hasStartedListening = false
+        waveformLevels = []
+    }
+
+    private func startListening(practice: Bool) {
+        stopListening()
+        hasStartedListening = true
+        waveformLevels = []
+        if practice { hasPracticedHumming = false }
         let token = generation
         status = .listening
         microphoneName = nil
@@ -86,23 +114,35 @@ final class VocalRangeViewModel {
                 let samples = try await source.start()
                 microphoneName = (source as? any MicrophoneInputProviding)?.microphoneName
                 var display = StabilizePitchDisplayUseCase(configuration: configuration)
-                var detector = DetectVocalRangeUseCase(configuration: configuration)
+                var detector = DetectVocalRangeUseCase(configuration: configuration, duration: configuration.vocalRangeHoldDuration)
                 var speech: [Float] = []
-                var start: TimeInterval?
+                var lastSpeechTime: TimeInterval?
+                var voicedDuration: TimeInterval = 0
+                var wasVoiced = false
                 for await sample in samples {
                     guard !Task.isCancelled, generation == token else { return }
-                    if prompt == .speaking {
+                    let amplitude = sample.rmsDecibels.isFinite
+                        ? min(1, max(0, (sample.rmsDecibels - configuration.noiseGateDBFS)
+                            / max(1, configuration.vocalWaveformCeilingDBFS - configuration.noiseGateDBFS))) : 0
+                    waveformLevels.append(amplitude)
+                    if waveformLevels.count > configuration.vocalWaveformFrameCount { waveformLevels.removeFirst() }
+                    if prompt == .speaking && !practice {
                         let time = sample.captureTime.seconds
                         guard time.isFinite else { continue }
-                        if start == nil { start = time }
-                        holdProgress = min(1, max(0, time - (start ?? time)) / configuration.speakingSampleDuration)
+                        let elapsed = lastSpeechTime.map { time - $0 } ?? 0
+                        lastSpeechTime = time
                         var spokenMIDI: Float?
                         if let frequency = sample.frequency, frequency.isFinite, frequency > 0,
                            sample.rmsDecibels >= configuration.noiseGateDBFS {
                             let midi = 69 + 12 * log2(frequency / 440)
                             spokenMIDI = midi
                             speech.append(midi)
+                            if wasVoiced, elapsed > 0, elapsed <= DetectVocalRangeUseCase.maxGap {
+                                voicedDuration += elapsed
+                            }
                         }
+                        wasVoiced = spokenMIDI != nil
+                        holdProgress = min(1, voicedDuration / readingDuration)
                         liveMIDI = display.execute(midi: spokenMIDI, time: time)
                         if holdProgress >= 1 {
                             guard Double(speech.count) * configuration.pitchHop >= configuration.minimumSpeakingVoicedDuration else {
@@ -117,8 +157,15 @@ final class VocalRangeViewModel {
                     } else {
                         let note = detector.ingest(sample)
                         liveMIDI = display.execute(midi: detector.latestMIDI, time: sample.captureTime.seconds)
-                        holdProgress = min(1, detector.stableDuration / DetectVocalRangeUseCase.requiredDuration)
-                        if let note { captured(note); break }
+                        holdProgress = min(1, detector.stableDuration / configuration.vocalRangeHoldDuration)
+                        if let note {
+                            if practice {
+                                hasPracticedHumming = true
+                                holdProgress = 1
+                                status = .idle
+                            } else { captured(note) }
+                            break
+                        }
                     }
                 }
                 guard generation == token, !Task.isCancelled else { return }
@@ -135,8 +182,11 @@ final class VocalRangeViewModel {
     }
 
     func next() {
+        guard case .captured = status else { return }
+        stopListening()
         if let next = Prompt(rawValue: prompt.rawValue + 1) {
             prompt = next
+            hasStartedListening = false
             status = .idle
             holdProgress = 0
             liveMIDI = nil
@@ -158,6 +208,7 @@ final class VocalRangeViewModel {
         case .highest: break
         }
         prompt = previous
+        hasStartedListening = false
         status = .idle
         holdProgress = 0
         liveMIDI = nil
@@ -172,10 +223,14 @@ final class VocalRangeViewModel {
     func restart() {
         stopListening()
         prompt = .speaking
+        hasStartedListening = false
+        hasPracticedHumming = false
         baselineMIDI = nil
         lowestMIDI = nil
         highestMIDI = nil
         microphoneName = nil
+        holdProgress = 0
+        liveMIDI = nil
         status = .idle
     }
 

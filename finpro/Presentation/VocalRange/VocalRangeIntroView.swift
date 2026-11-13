@@ -2,77 +2,77 @@
 //  VocalRangeIntroView.swift
 //  finpro
 //
-//  First screen of the vocal range test ("First, let's get to know your voice.").
-//
 
 import SwiftUI
 
 struct VocalRangeIntroView: View {
-    let onBack: (() -> Void)?
+    var onBack: (() -> Void)? = nil
     let onContinue: () -> Void
 
-    /// Inset of the buttons from the screen edge.
-    private let buttonInset: CGFloat = 24
-    /// Inset of the text, deeper than the buttons per the vocal range design.
-    private let contentInset: CGFloat = 52
-    /// Gap between the top bar and the title, placing it in the upper third per the design.
-    private let titleTopSpacing: CGFloat = 124
-    /// Keeps the title in place whether or not the back button is shown (large glass button height).
-    private let topBarHeight: CGFloat = 48
-
-    init(onBack: (() -> Void)? = nil, onContinue: @escaping () -> Void) {
-        self.onBack = onBack
-        self.onContinue = onContinue
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            topBar
-
-            VStack(alignment: .leading, spacing: 16) {
-                Text("First, let’s get to\nknow your voice.")
-                    .font(.largeTitle.bold())
-                    .foregroundStyle(Color.plumInk)
-
-                Text("Discover the full range of your voice.")
-                    .font(.footnote)
-                    .foregroundStyle(Color.plumInkSecondary)
-            }
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, contentInset)
-            .padding(.top, titleTopSpacing)
-
-            Spacer(minLength: 24)
-
-            Button("Start vocal test", action: onContinue)
-                .buttonStyle(.primaryDeep)
-                .padding(.horizontal, buttonInset)
-                .padding(.bottom, 8)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.onboardingBackground.ignoresSafeArea())
-    }
-
-    private var topBar: some View {
-        HStack {
-            if let onBack {
-                LiquidGlassGroup {
-                    Button(action: onBack) {
-                        Image(systemName: "chevron.left")
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.primary)
+        GeometryReader { proxy in
+            let titleSize = AppTypography.fittedVocalDisplaySize(width: proxy.size.width - AppSpacing.textInset * 2)
+            let lineAdvance = AppTypography.vocalDisplayLineAdvance(size: titleSize)
+            let shapeTop = proxy.size.height * 0.41
+            let shapeHeight = proxy.size.height - shapeTop + proxy.safeAreaInsets.bottom
+            VStack(alignment: .leading, spacing: 0) {
+                HStack {
+                    if let onBack {
+                        Button(action: onBack) { Image(systemName: "chevron.left") }
+                            .buttonStyle(.appIcon(.tinted)).accessibilityLabel("Back")
                     }
-                    .glassCircleButtonStyle()
-                    .accessibilityLabel("Back")
+                    Spacer(minLength: 0)
                 }
+                .frame(height: 44)
+                .padding(.horizontal, 16)
+
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("First,")
+                    Text("Meet")
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .padding(.top, min(AppSpacing.spacious + AppSpacing.regular, proxy.size.height * 0.075))
+                }
+                .font(.appDisplay(size: titleSize))
+                .foregroundStyle(Color.primaryBrand)
+                .padding(.horizontal, 44)
+                .padding(.top, 8)
+
+                Spacer(minLength: 16)
+
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("Your").foregroundStyle(Color.screenBackground)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(height: lineAdvance, alignment: .topLeading)
+                    Text("vocal").foregroundStyle(Color.secBrand)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(height: lineAdvance, alignment: .topLeading)
+                    Text("range").foregroundStyle(Color.secBrand)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(height: lineAdvance, alignment: .topLeading)
+                }
+                .font(.appDisplay(size: titleSize))
+                .padding(.horizontal, 52)
+                .accessibilityElement(children: .combine)
+
+                Spacer(minLength: 16)
+
+                Button("Start vocal test", action: onContinue)
+                    .buttonStyle(.appPrimary)
+                    .shadow(color: Color.primary100.opacity(0.2), radius: 3, y: 1)
+                    .padding(.horizontal, 24)
+                    .padding(.bottom, 12)
             }
-            Spacer()
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
+            .background(alignment: .topLeading) {
+                VocalIntroBackground().fill(Color.primary400)
+                    .frame(width: proxy.size.width, height: shapeHeight)
+                    .offset(y: shapeTop)
+                    .allowsHitTesting(false)
+            }
+
         }
-        .frame(minHeight: topBarHeight)
-        .padding(.horizontal, buttonInset)
+        .background(Color.screenBackground.ignoresSafeArea())
     }
 }
 
-#Preview {
-    VocalRangeIntroView(onBack: {}) {}
-}
+#Preview { VocalRangeIntroView(onBack: {}) {} }

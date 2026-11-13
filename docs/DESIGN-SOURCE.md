@@ -13,9 +13,16 @@ sizes, spacing) instead of guessing them from screenshots.
   - **Artifact** — scratch.
 - Device frame: 402 × 874 pt (iPhone 17). Units in Sketch are points, the same as SwiftUI.
 - Screenshots of frames, named by capture time, live in versioned folders under `docs/design/`.
-  **Active reference: none yet (waiting for the redesign; it goes in `docs/design/v2/`).** `docs/design/v1/` is the
-  archived first design: do not read it unless asked. Until `v2/` exists, use Sketch for the current design.
-  Screenshots can be older than the file; Sketch wins when it is reachable.
+  **Active reference: `docs/design/v2/`**, refreshed for the major QA revision on 2026-11-13.
+  Current files: `1.2 - Welcome Screen.png`, `1.3 - Value Prop: Pitch Guide.png`,
+  `2.0 - Vocal Test/Intro.png`, `2.4 - Vocal Test/Pitch - Lowest.png`, `2.6 - Vocal Test/Result.png`,
+  `3.0b - Home/Main - Default Copy 2.png` through `Copy 4.png`,
+  `3.5 - Choosing transpose with slider.png`, and `7.1 - Result/Preview Cover - Pause.jpg`.
+  The earlier combined onboarding/vocal-test files are no longer present. The onboarding rectangle is an
+  intentional illustration placeholder in the supplied design; functional audio, lyrics and video must use real data.
+  For this revision, these v2 files and the 17 annotated QA images take precedence for final visuals;
+  Sketch may be inspected narrowly for missing measurements. Do not read archived `v1/` unless asked.
+  See `qa/major-revision-qa-2026-11-13.md` for all QA items and validation status.
 
 ### Screens on Hi-Fid (frame names)
 
@@ -167,3 +174,14 @@ section above wins.
   semantic fonts (`.title`, `.headline`, `.footnote`, …) map directly and keep Dynamic Type.
 - Liquid Glass layer styles (Light and Dark) for the round buttons and sheets.
 - Known drift: the app's `OnboardingBackground` asset is `#FBF8FA`, Sketch's `bg` is `#FAF7F9`.
+
+## Components added for the major QA revision
+
+- `AppSpacing` centralizes shared insets/gaps; `AppLayout` holds component and sheet dimensions.
+- `AppRadius.sheet` and `.extraSmall` cover sheets and waveform selections.
+- `Font.appDisplay(size:)` uses SF Pro/system default for the vocal intro.
+- `.appSecondary` and `AppChipButtonStyle` reuse existing semantic color tokens.
+- `CurvedPitchDial` is shared by the live microphone meter and the key selector. The meter's green
+  position comes from stabilized live MIDI; the key dial changes the rendered transpose, with vocal mix preview.
+- `ListeningWaveform` now displays microphone RMS history, rather than a generated sine-wave animation.
+- Code changes are not proof of visual accuracy. Simulator validation is still pending where access is blocked.

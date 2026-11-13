@@ -45,16 +45,19 @@ final class CompingViewModel {
 
     private let useCase: AutoCompingVideoUseCase
     private let videoLibrary: any VideoLibrarySaving
+    private let onExported: (URL) -> Void
     private let thumbnailProvider: any ClipThumbnailProviding
 
     init(plan: CompingCompositionPlan, songName: String? = nil, useCase: AutoCompingVideoUseCase,
          videoLibrary: any VideoLibrarySaving,
-         thumbnailProvider: any ClipThumbnailProviding = AVClipThumbnailProvider()) {
+         thumbnailProvider: any ClipThumbnailProviding = AVClipThumbnailProvider(),
+         onExported: @escaping (URL) -> Void = { _ in }) {
         self.plan = plan
         self.songName = songName
         self.useCase = useCase
         self.videoLibrary = videoLibrary
         self.thumbnailProvider = thumbnailProvider
+        self.onExported = onExported
         selectedClipID = plan.validTakes.first?.segmentIndex
     }
 
@@ -111,6 +114,7 @@ final class CompingViewModel {
                     self.exportState = .exporting(progress: progress)
                 }
             }
+            if FileManager.default.fileExists(atPath: url.path) { onExported(url) }
             exportState = .finished(url)
             await loadThumbnails(from: url)
         } catch {

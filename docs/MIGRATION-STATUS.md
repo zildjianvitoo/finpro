@@ -26,6 +26,27 @@ Guide: `docs/MIGRATION-GUIDE.md` (copy) — the original lives at
   - [ ] Import / key selection / ready / recording / export: waiting for designs
 - [ ] 9. PoC tagged poc-final (by user)
 
+## Onboarding and vocal range v2 (2026-11-12, branch `takin`)
+
+- Implemented the v2 onboarding placeholders, intro, speech warm-up, humming practice, low/high note capture and measured range chart.
+- Sung notes require one stable second; the reading highlight advances on voiced sample time. Continue is gated on capture, and range saving still uses the existing repository.
+- Verified: contract checks, all domain checks, VocalKeyChecks (47 checks), and standalone `Tests/VocalRangeHoldChecks.swift`. Supplementary iOS UI typechecking passed on temporary copies with macro stand-ins; this does not replace an app build.
+- Model files restored from Git LFS (2026-11-13): integrity and CoreML code generation pass. Full app build and visual verification remain pending: the execution sandbox denies Xcode nested sandbox processes and CoreSimulator connections; native Xcode control is also unavailable. Physical microphone verification is still needed.
+
+## Vocal range correction (2026-11-13)
+
+- Constrained intro content to the screen width; oversized ellipses now render only in the background. Humming headers fill the width.
+- Microphone input starts only after tapping its circle, which changes from a mic icon to a waveform. Every new step starts idle. Tapping again stops input.
+- Low/high notes and humming practice require one stable second. Practice does not save a range limit.
+
+## Major QA revision (2026-11-13, branch `takin`)
+
+- Reworked onboarding CTA, SF Pro intro, shared design tokens, curved pitch/key dial, live green pitch mapping, RMS microphone waveform, shared mic anchor and passage-based reading progress.
+- Updated Home tooltip/debug access, Song List dates/inline rename/expanded-row behavior, waveform variants, modal loading behavior, key preview with vocals, direct recording flow, real cover thumbnails and portrait export preview.
+- Tests: vocal range logic, 47 key regression checks, 35 song-selection checks, contracts/domain, and supplementary all-source iOS/MainActor typechecking pass.
+- Full app build and Simulator screenshots are blocked by the execution sandbox and unavailable app-control connection. No screen is marked visually complete.
+- Full checklist and evidence: `docs/qa/major-revision-qa-2026-11-13.md`.
+
 ## Decisions log
 - 2026-11-06: Adopted mandatory simulator verification loop for UI slicing: build, install/launch booted simulator, auto-screenshot via `simctl`, multimodal inspection, and iterate until matching Figma.
 - 2026-11-04: new repo, logic same + new UI, single target, temporary name.

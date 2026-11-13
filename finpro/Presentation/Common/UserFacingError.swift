@@ -10,6 +10,9 @@ import Foundation
 
 nonisolated enum UserFacingError: Equatable, Sendable {
     case permissionDenied([MediaPermission])
+    case coverLibraryFailed
+    case separationFailed
+    case songLibraryFailed
     case unreadableFile
     case protectedFile
     case songTooShort(minimumSeconds: Int)
@@ -33,6 +36,9 @@ nonisolated enum UserFacingError: Equatable, Sendable {
         switch self {
         case .permissionDenied(let permissions):
             "\(Self.list(permissions)) access is off"
+        case .separationFailed: "We couldn't separate this song"
+        case .coverLibraryFailed: "Your cover couldn't be saved"
+        case .songLibraryFailed: "Your song list couldn't be updated"
         case .unreadableFile: "This file can't be used"
         case .protectedFile: "This song is protected"
         case .songTooShort: "This song is too short"
@@ -59,6 +65,12 @@ nonisolated enum UserFacingError: Equatable, Sendable {
         case .permissionDenied(let permissions):
             "Turn on \(Self.list(permissions).lowercased()) access in Settings. "
                 + permissions.map { "\($0.displayName) is needed \($0.reason)." }.joined(separator: " ")
+        case .separationFailed:
+            "Try again or choose another audio file."
+        case .coverLibraryFailed:
+            "Your existing covers are kept. Check available storage and try again."
+        case .songLibraryFailed:
+            "Your saved songs are kept. Check available storage and try again."
         case .unreadableFile:
             "Try an MP3, M4A or WAV file."
         case .protectedFile:
@@ -101,6 +113,9 @@ nonisolated enum UserFacingError: Equatable, Sendable {
     var systemImage: String {
         switch self {
         case .permissionDenied(let permissions): permissions.first?.systemImage ?? "lock.fill"
+        case .separationFailed: "waveform.badge.exclamationmark"
+        case .coverLibraryFailed: "externaldrive.badge.exclamationmark"
+        case .songLibraryFailed: "externaldrive.badge.exclamationmark"
         case .unreadableFile: "doc.questionmark"
         case .protectedFile: "lock.doc"
         case .songTooShort: "timer"
@@ -125,3 +140,6 @@ nonisolated enum UserFacingError: Equatable, Sendable {
         permissions.map(\.displayName).formatted(.list(type: .and))
     }
 }
+
+// Allows storage operations to propagate the same error shown by the UI.
+extension UserFacingError: Error {}

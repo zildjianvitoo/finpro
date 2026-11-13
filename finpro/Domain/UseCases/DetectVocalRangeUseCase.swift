@@ -23,6 +23,7 @@ nonisolated struct DetectVocalRangeUseCase: Sendable {
         let midi: Float
     }
 
+    let duration: TimeInterval
     let configuration: AppConfiguration
     private var frames: [Frame] = []
     private var lastVoicedTime: TimeInterval?
@@ -33,7 +34,8 @@ nonisolated struct DetectVocalRangeUseCase: Sendable {
     /// Set once a note has been held long enough.
     private(set) var result: Float?
 
-    init(configuration: AppConfiguration = .default) {
+    init(configuration: AppConfiguration = .default, duration: TimeInterval = Self.requiredDuration) {
+        self.duration = duration
         self.configuration = configuration
     }
 
@@ -64,7 +66,7 @@ nonisolated struct DetectVocalRangeUseCase: Sendable {
             frames.removeFirst()
         }
         stableDuration = (frames.last?.time ?? time) - (frames.first?.time ?? time)
-        if stableDuration >= Self.requiredDuration {
+        if stableDuration >= duration {
             result = Self.median(frames.map(\.midi))
         }
         return result

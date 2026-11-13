@@ -9,10 +9,13 @@
 import Foundation
 
 final class AppContainer {
+    let songLibrary = SongLibrary()
+    let coverLibrary = CoverLibrary()
     var configuration: AppConfiguration
 
     // Ikzaz
     let stemSeparation: any StemSeparationRepository
+    let demucsSeparation: any StemSeparationRepository
     let audioAnalysis: any AudioAnalysisRepository
     let audioTransposition: any AudioTranspositionRepository
     let vocalRange: any VocalRangeRepository
@@ -20,13 +23,8 @@ final class AppContainer {
     let audioInspector: any AudioFileInspecting = AudioFileInspector()
     /// Plays the trim selection and prepared tracks on the Ready screen.
     let audioPreview: any AudioPreviewing = AudioPreviewPlayer()
-    /// Synced lyrics for the trim screen. Debug builds fall back to placeholder lyrics when
-    /// none are found, so the trim screen can be tried with any file.
-    #if DEBUG
-    let lyrics: any LyricsProviding = DummyLyricsProvider(base: LRCLibLyricsProvider())
-    #else
+    /// Real synced lyrics in both Debug and Release; saved copies work offline.
     let lyrics: any LyricsProviding = LRCLibLyricsProvider()
-    #endif
     /// Microphone pitch for the vocal range test.
     let livePitch: any LivePitchSource
 
@@ -66,10 +64,12 @@ final class AppContainer {
          videoComposition: any VideoCompositionRepository,
          videoLibrary: any VideoLibrarySaving,
          permissions: any MediaPermissionProviding,
-         modelPrewarmer: ModelPrewarmer? = nil) {
+         modelPrewarmer: ModelPrewarmer? = nil,
+         demucsSeparation: (any StemSeparationRepository)? = nil) {
         self.configuration = configuration
         self.demo = demo
         self.stemSeparation = stemSeparation
+        self.demucsSeparation = demucsSeparation ?? stemSeparation
         self.audioAnalysis = audioAnalysis
         self.audioTransposition = audioTransposition
         self.vocalRange = vocalRange
@@ -97,7 +97,7 @@ final class AppContainer {
         let playback: any ReferencePlaybackRepository = FakeReferencePlaybackRepository(latency: 0.12) { singer.playbackStarted(from: $0, heard: $1) }
         let audioRoute: any AudioRouteMonitor = FakeAudioRouteMonitor()
         let videoComposition: any VideoCompositionRepository = FakeVideoCompositionRepository()
-        let livePitch: any LivePitchSource = FakeLivePitchSource(notes: [57, 48, 67])
+        let livePitch: any LivePitchSource = FakeLivePitchSource(notes: [57, 57, 48, 67])
         #else
         let cameraCapture = CaptureRepositoryImpl()
         let capture: any CaptureRepository = cameraCapture
@@ -132,7 +132,8 @@ final class AppContainer {
             videoComposition: videoComposition,
             videoLibrary: PhotoLibraryVideoSaver(),
             permissions: SystemMediaPermissions(),
-            modelPrewarmer: ModelPrewarmer(htDemucs: htDemucs)
+            modelPrewarmer: ModelPrewarmer(htDemucs: htDemucs),
+            demucsSeparation: coreMLSeparation
         )
         #if DEBUG && targetEnvironment(simulator)
         container.simulatedSinger = singer
@@ -150,7 +151,7 @@ final class AppContainer {
             audioAnalysis: FakeAudioAnalysisRepository(),
             audioTransposition: FakeAudioTranspositionRepository(),
             vocalRange: FakeVocalRangeRepository(initial: vocalRange),
-            livePitch: FakeLivePitchSource(notes: [57, 48, 67]),
+            livePitch: FakeLivePitchSource(notes: [57, 57, 48, 67]),
             capture: FakeCaptureRepository(),
             referencePlayback: FakeReferencePlaybackRepository(),
             audioRoute: FakeAudioRouteMonitor(),

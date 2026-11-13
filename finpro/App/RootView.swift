@@ -33,36 +33,17 @@ struct RootView: View {
                             onSaved: flow.vocalRangeSaved),
                         onDismiss: flow.dismissVocalRange)
                 }
-            case .home:
-                HomeView(viewModel: HomeViewModel(
-                    vocalRangeRepository: flow.container.vocalRange,
-                    onCreateCover: flow.createNewCover,
-                    onRetestVocalRange: flow.retestVocalRange))
-            case .importSong:
-                VStack {
-                    if let error = flow.preparationError { ErrorStateView(error: error) }
-                    if flow.loadingDemo {
-                        ProgressView("Preparing demo keys…")
-                    } else {
-                        ImportSongView(viewModel: makeImportViewModel(), onBack: flow.startOver) {
-                            Task { await flow.loadDemoSong() }
-                        }
-                    }
-                }
+            case .home, .songList, .importSong:
+                if flow.step == .songList || (flow.step == .importSong && flow.importOrigin == .songList) {
+                    songListScreen
+                } else { homeScreen }
             case .chooseKey:
                 if let choices = flow.keyChoices {
                     KeySelectionView(viewModel: KeySelectionViewModel(
                         choices: choices, previewer: flow.container.audioPreview,
-                        onChoose: flow.songPrepared), routeMonitor: flow.container.audioRoute,
-                        onChooseAnother: flow.startOver, onRetest: flow.retestVocalRange)
-                }
-            case .ready:
-                if let song = flow.preparedSong {
-                    ReadyView(song: song, lyrics: flow.recordingLyrics,
-                              routeMonitor: flow.container.audioRoute,
-                              allowsSpeaker: DebugOptions.allowsSpeakerRecording,
-                              onRecord: flow.startRecording, onChooseAnother: flow.startOver,
-                              onChangeKey: flow.changeKey)
+                        renderer: RenderSongKeyUseCase(transposition: flow.container.audioTransposition),
+                        automaticallySelectRecommended: true, onChoose: flow.songPrepared), routeMonitor: flow.container.audioRoute,
+                        onChooseAnother: flow.returnToSongSection, onRetest: flow.retestVocalRange)
                 }
             case .recording:
                 PermissionGate([.camera, .microphone], provider: flow.container.permissions) {
@@ -78,17 +59,16 @@ struct RootView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: Binding(get: { flow.step == .importSong }, set: { if !$0 { flow.closeImport() } })) {
+            ImportSongView(viewModel: makeImportViewModel(), onBack: flow.closeImport,
+                           isEditingSavedSong: flow.selectedLibrarySong != nil) {
+                Task { await flow.loadDemoSong() }
+            }
+        }
         .animation(.default, value: flow.step)
         #if DEBUG
-        .overlay(alignment: .topTrailing) {
-            // Debug builds only, and only on Home: the designed screens have no button there.
-            if flow.step == .home {
-                Button("Debug Settings", systemImage: "slider.horizontal.3") {
-                    showsDebugSettings = true
-                }
-                .labelStyle(.iconOnly)
-                .padding()
-            }
+        .onAppear {
+            if DebugOptions.launchScreen == "debugSettings" { showsDebugSettings = true }
         }
         .sheet(isPresented: $showsDebugSettings, onDismiss: {
             if opensSyncTest {
@@ -117,18 +97,35 @@ struct RootView: View {
         #endif
     }
 
+    private var homeScreen: some View {
+        HomeView(viewModel: HomeViewModel(
+            vocalRangeRepository: flow.container.vocalRange,
+            songLibrary: flow.container.songLibrary, coverLibrary: flow.container.coverLibrary,
+            onSongs: flow.openSongList, onOpenSong: flow.openSong,
+            onCreateCover: flow.createNewCover,
+            onRetestVocalRange: flow.retestVocalRange))
+    }
+
+    private var songListScreen: some View {
+        SongListView(viewModel: SongListViewModel(library: flow.container.songLibrary,
+                                                previewer: flow.container.audioPreview),
+                     onBack: flow.openHome, onAdd: flow.createNewCover, onOpen: flow.openSong)
+    }
+
     private func makeImportViewModel() -> ImportSongViewModel {
         let container = flow.container
         return ImportSongViewModel(
             inspector: container.audioInspector,
             lyrics: container.lyrics,
             previewer: container.audioPreview,
-            prepare: PrepareSongUseCase(separation: container.stemSeparation,
+            prepare: PrepareSongUseCase(separation: container.demucsSeparation,
                                         analysis: container.audioAnalysis,
                                         fallbackAnalysis: nil,
                                         transposition: container.audioTransposition,
                                         configuration: container.configuration),
             vocalRange: { container.vocalRange.load() },
+            library: container.songLibrary, initialSong: flow.selectedLibrarySong,
+            onSavedToList: flow.savedToSongList, onSelectionSaved: flow.sourceSongSaved,
             onPrepared: { flow.keysPrepared($0, lyrics: $1, songName: $2) })
     }
 
@@ -154,7 +151,10 @@ struct RootView: View {
             plan: plan,
             songName: flow.songName,
             useCase: AutoCompingVideoUseCase(takeLog: container.takeLog, videoComposition: container.videoComposition),
-            videoLibrary: container.videoLibrary)
+            videoLibrary: container.videoLibrary,
+            onExported: { url in
+                container.coverLibrary.save(url, title: flow.songName, duration: plan.endTime, isDraft: plan.isPartial)
+            })
     }
 }
 
