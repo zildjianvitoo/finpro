@@ -24,10 +24,13 @@ struct VocalRangeTestView: View {
                     stage = .warmup
                 }
             } else if stage == .result, case .finished(let range) = viewModel.status {
-                VocalRangeResultView(range: range, isFemale: false, onDone: viewModel.save) {
+                VocalRangeResultView(range: range, isFemale: false, onDone: viewModel.save, onRetake: {
                     viewModel.restart()
                     stage = .intro
-                }
+                }, onBack: {
+                    viewModel.redoHighest()
+                    stage = viewModel.lowestMIDI == nil ? .intro : .highest
+                })
             } else {
                 testStep
             }

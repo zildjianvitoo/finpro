@@ -218,6 +218,18 @@ final class VocalRangeViewModel {
         liveMIDI = nil
     }
 
+    /// Result screen, back: sing the highest note again; the lowest note and warm-up are kept.
+    func redoHighest() {
+        stopListening()
+        guard lowestMIDI != nil else { return restart() }
+        highestMIDI = nil
+        prompt = .highest
+        hasStartedListening = false
+        holdProgress = 0
+        liveMIDI = nil
+        status = .idle
+    }
+
     func save() {
         guard case .finished(let range) = status else { return }
         repository.save(range)

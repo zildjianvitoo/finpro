@@ -9,15 +9,18 @@ struct VocalRangeResultView: View {
     let range: VocalRange
     let isFemale: Bool
     let onDone: () -> Void
+    /// Redo Test: the whole test again, from the intro.
     let onRetake: () -> Void
+    /// Back to the highest-note step, to sing that note again.
+    let onBack: () -> Void
     private func note(_ midi: Float) -> String { PitchMath.noteName(midi: Int(midi.rounded())) }
 
     var body: some View {
         VStack(spacing: 0) {
             VStack(spacing: 16) {
                 HStack {
-                    Button(action: onRetake) { Image(systemName: "chevron.left") }
-                        .buttonStyle(.appIcon(.tinted)).accessibilityLabel("Redo test")
+                    Button(action: onBack) { Image(systemName: "chevron.left") }
+                        .buttonStyle(.appIcon(.tinted)).accessibilityLabel("Back to highest note")
                     Spacer()
                 }
                 Text("Your vocal range").font(.appTitle1)

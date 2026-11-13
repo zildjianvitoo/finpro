@@ -214,6 +214,16 @@ struct VocalRangeHoldChecks {
         complete.save()
         require(sequence.startCount == 4 && store.load() == VocalRange(lowestMIDI: 48, highestMIDI: 67),
                 "Four explicit taps measure speech, practice, low and high, then persist the actual range")
-        print("PASS: one-second hold, tap-to-start, waveform state, humming practice, silence, pitch changes, baseline, restart, warm-up reading pace")
+        complete.redoHighest()
+        require(complete.prompt == .highest && complete.status == .idle && complete.lowestMIDI == 48
+                && complete.highestMIDI == nil && complete.holdProgress == 0 && !complete.hasStartedListening,
+                "Back from the result reopens the highest note only, keeping the lowest note")
+        complete.toggleMicrophone()
+        for _ in 0..<10000 {
+            if case .listening = complete.status { await Task.yield() } else { break }
+        }
+        require(complete.status == .finished(VocalRange(lowestMIDI: 48, highestMIDI: 67)),
+                "Singing the highest note again finishes the test with the kept lowest note")
+        print("PASS: one-second hold, tap-to-start, waveform state, humming practice, silence, pitch changes, baseline, restart, warm-up reading pace, back to highest note")
     }
 }
