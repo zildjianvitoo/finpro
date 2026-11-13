@@ -11,6 +11,11 @@ import Foundation
 nonisolated enum DebugOptions {
     private static let speakerKey = "DebugOptions.allowsSpeakerRecording"
 
+    /// TEMPORARY, set back to `false` before the `integration` → `main` PR: Debug builds record
+    /// and test the vocal range without earphones (built-in mic and loudspeaker), as if
+    /// "Allow recording without earphones" were on, because Debug Settings has no entry on Home.
+    static let earphonesOptionalForNow = true
+
     /// Launch argument `-startScreen <onboarding|vocalRange|home|songList|importSong|recording|export|designSystem|debugSettings>`: opens the app on
     /// that step, so a screen can be checked without tapping through the flow:
     /// `xcrun simctl launch booted <bundle id> -startScreen importSong`.
@@ -34,11 +39,12 @@ nonisolated enum DebugOptions {
 
     /// Lets a session record with the built-in speaker (no earphones) and plays the song through
     /// the loudspeaker. For device testing only: the song leaks into the microphone, so scores and
-    /// the final mix are not representative (PRD §7.2 blocks this in the real app).
+    /// the final mix are not representative (PRD §7.2 blocks this in the real app). Also lets the
+    /// built-in microphone stand in for a headset microphone.
     static var allowsSpeakerRecording: Bool {
         get {
             #if DEBUG
-            UserDefaults.standard.bool(forKey: speakerKey)
+            earphonesOptionalForNow || UserDefaults.standard.bool(forKey: speakerKey)
             #else
             false
             #endif
