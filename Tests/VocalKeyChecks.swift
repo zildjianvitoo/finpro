@@ -94,9 +94,23 @@ struct VocalKeyChecks {
         let two = try recommender.execute(notes: [note(60), note(72)], vocalRange: VocalRange(lowestMIDI: 60, highestMIDI: 73))
         try check(two.count == 2, "do not manufacture three candidates")
         let impossible = try recommender.execute(notes: [note(60), note(80)], vocalRange: VocalRange(lowestMIDI: 60, highestMIDI: 72))
-        try check(impossible.isEmpty, "wide melody has no recommendation")
+        try check(impossible.count == 1 && !impossible[0].fitsRange && abs(impossible[0].outsideCost - 4) < 0.000001,
+                  "a melody wider than the range gets one compromise key, not none")
         let octaveOnly = try recommender.execute(notes: [note(80)], vocalRange: VocalRange(lowestMIDI: 60, highestMIDI: 64))
-        try check(octaveOnly.isEmpty, "do not recommend target-only octave shifts")
+        try check(octaveOnly.count == 1 && octaveOnly[0].plan == TranspositionPlan(octaveShift: 0, semitoneShift: -6)
+                  && !octaveOnly[0].fitsRange, "out of reach: the closest semitone shift, never a target-only octave shift")
+        let adLib = try recommender.execute(notes: [note(60, 0, 1), note(72, 1, 1), note(84, 2, 0.05)],
+                                            vocalRange: VocalRange(lowestMIDI: 60, highestMIDI: 72))
+        try check(adLib.first.map { $0.fitsRange && $0.plan == .none && $0.highestMIDI == 84 } == true,
+                  "a brief extreme (ad-lib, mistracked note) does not make the key unfit, but is still reported")
+        let compromise = try recommender.execute(notes: [note(60, 0, 9), note(84, 9, 1)],
+                                                 vocalRange: VocalRange(lowestMIDI: 60, highestMIDI: 72))
+        try check(compromise.count == 1 && compromise[0].plan == .none && !compromise[0].fitsRange,
+                  "the compromise keeps the long notes in range and lets the short one go outside")
+        let twoOctaves = (0...24).map { note(48 + $0, Double($0), 1) }
+        let wide = try recommender.execute(notes: twoOctaves, vocalRange: VocalRange(lowestMIDI: 50, highestMIDI: 68))
+        try check(wide.count == 1 && !wide[0].fitsRange && wide[0].lowestMIDI <= 50 && wide[0].highestMIDI >= 68,
+                  "a 2-octave part for a 1.5-octave voice still gets a key that spans the voice")
         let tied = try recommender.execute(notes: [note(64)], vocalRange: VocalRange(lowestMIDI: 48, highestMIDI: 80))
         try check(tied.map(\.plan.semitoneShift) == [0, -1, 1], "equal penalties prefer the smallest shift, then the lower key")
         let lowLong = try recommender.execute(notes: [note(60, 0, 9), note(72, 9, 1)], vocalRange: VocalRange(lowestMIDI: 60, highestMIDI: 76))
