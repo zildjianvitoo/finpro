@@ -19,3 +19,6 @@ local-songs/
 
 # Local Sketch MCP config (port is per machine, see docs/DESIGN-SOURCE.md)
 .mcp.json
+
+# Songs for local testing only (copyrighted, never committed)
+test-media/
