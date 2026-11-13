@@ -3,8 +3,8 @@
 //  finpro
 //
 //  Pitch guide of the recording screen (PRD §5.5): target notes scroll past a playhead at 25%,
-//  ~4 s visible, the vertical range centred on the current segment, and the user's pitch trail
-//  in green (within tolerance) or red, with the lyric word under each note.
+//  ~4 s visible, the vertical range centred on the current segment, a dot where the user's
+//  voice is now, notes turning green (sung within tolerance) or red, and the lyric word under each note.
 //  UI only — never part of the recording.
 //
 
@@ -194,15 +194,9 @@ struct PianoRollView: View {
             }
         }
 
-        // Pitch trail: consecutive voiced points are joined; unvoiced breaks the line.
+        // The voice is shown only as a dot at the playhead, no trail line (design review); the
+        // notes it sang still turn green or red. A dot older than this means the voice stopped.
         let maxJoin = 0.12
-        for (previous, point) in zip(trail, trail.dropFirst()) {
-            guard let a = previous.midi, let b = point.midi, point.songTime - previous.songTime <= maxJoin else { continue }
-            var segment = Path()
-            segment.move(to: CGPoint(x: x(previous.songTime), y: y(Double(a))))
-            segment.addLine(to: CGPoint(x: x(point.songTime), y: y(Double(b))))
-            context.stroke(segment, with: .color(point.isHit ? .pitchHit : .noteMiss), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-        }
 
         // Playhead, with a dot where the voice is now.
         var playhead = Path()
