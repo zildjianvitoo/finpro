@@ -8,6 +8,7 @@
 //
 
 import AVFoundation
+import os
 
 extension Notification.Name {
     /// Posted by CaptureRepositoryImpl when capture or writing fails; `object` is the repository.
@@ -48,6 +49,8 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
     private var cameraLook: CameraLook?
     private var prepared = false
     private var microphoneObserver: NSObjectProtocol?
+    private var sessionObservers: [NSObjectProtocol] = []
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Capture")
     private var selectedMicrophoneUID: String?
     private var microphoneChanged = false
 
@@ -66,10 +69,40 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
                 }
             }
         }
+        // The session can stop on its own right after it starts, e.g. when the song player then
+        // starts on the shared audio session. Nothing restarted it, so the preview froze and the
+        // first recording found no video frames; only a second prepare() started it again.
+        let center = NotificationCenter.default
+        sessionObservers.append(center.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: nil) { [weak self] note in
+            let error = note.userInfo?[AVCaptureSessionErrorKey] as? AVError
+            Self.log.error("capture session runtime error: \(error?.localizedDescription ?? "unknown", privacy: .public)")
+            self?.queue.async { self?.restartIfStopped() }
+        })
+        sessionObservers.append(center.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: session, queue: nil) { note in
+            let reason = (note.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int) ?? -1
+            Self.log.notice("capture session interrupted, reason \(reason)")
+        })
+        sessionObservers.append(center.addObserver(forName: AVCaptureSession.interruptionEndedNotification, object: session, queue: nil) { [weak self] _ in
+            Self.log.notice("capture session interruption ended")
+            self?.queue.async { self?.restartIfStopped() }
+        })
     }
 
     deinit {
         if let microphoneObserver { NotificationCenter.default.removeObserver(microphoneObserver) }
+        sessionObservers.forEach(NotificationCenter.default.removeObserver)
+    }
+
+    /// On queue. Starts the prepared session again when it stopped before a recording began.
+    /// During a recording a stop is left to the writer checks (the take timeline would break).
+    private func restartIfStopped() {
+        guard prepared, !recording, !session.isRunning, !session.isInterrupted else { return }
+        Self.log.notice("restarting the capture session")
+        session.startRunning()
+        orientVideoConnection()
+        lock.lock()
+        clock = session.synchronizationClock ?? CMClockGetHostTimeClock()
+        lock.unlock()
     }
 
     var previewSession: AVCaptureSession { session }
@@ -167,6 +200,8 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async {
                 do {
+                    // A session that stopped after prepare() is started again instead of failing.
+                    self.restartIfStopped()
                     guard self.prepared, self.session.isRunning, !self.session.isInterrupted, !self.recording else { throw self.error("Capture is not ready.") }
                     guard let microphoneUID = self.selectedMicrophoneUID else { throw HeadsetMicrophoneError.unavailable }
                     try HeadsetMicrophoneSession.verify(microphoneUID)
