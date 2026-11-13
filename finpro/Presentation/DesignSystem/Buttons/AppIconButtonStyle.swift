@@ -15,11 +15,13 @@ struct AppIconButtonStyle: ButtonStyle {
         case tinted
     }
 
+    /// 44 pt in the design system; the recording controls use 50 pt.
+    static let defaultSize: CGFloat = 44
+
     var kind: Kind = .primary
+    var size: CGFloat = AppIconButtonStyle.defaultSize
 
     @Environment(\.isEnabled) private var isEnabled
-
-    private let size: CGFloat = 44
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -49,7 +51,8 @@ struct AppIconButtonStyle: ButtonStyle {
 }
 
 extension ButtonStyle where Self == AppIconButtonStyle {
-    static func appIcon(_ kind: AppIconButtonStyle.Kind = .primary) -> AppIconButtonStyle {
-        AppIconButtonStyle(kind: kind)
+    static func appIcon(_ kind: AppIconButtonStyle.Kind = .primary,
+                        size: CGFloat = AppIconButtonStyle.defaultSize) -> AppIconButtonStyle {
+        AppIconButtonStyle(kind: kind, size: size)
     }
 }

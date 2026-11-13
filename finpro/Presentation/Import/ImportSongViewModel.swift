@@ -139,12 +139,18 @@ final class ImportSongViewModel {
         stopSelectionPreview()
         let trim = selectionStart...(selectionStart + selectionLength)
         preparingAudio = audio
-        preparedLyrics = lyricsOnPreparedTimeline(trim)
+        let lyrics = lyricsOnPreparedTimeline(trim)
+        preparedLyrics = lyrics
+        // The parser spread each line's words by syllable count, so their lengths are the weights.
+        let lyricLines = lyrics.map { line in
+            LyricGuideNotesUseCase.Line(start: line.start, end: line.end, wordWeights: line.words.map { $0.end - $0.start })
+        }
         status = .preparing(step: "Starting…")
         let token = generation
         preparation = Task { [prepare] in
             do {
-                let choices = try await prepare.executeChoices(audioURL: audio.url, trimRange: trim, vocalRange: range) { step in
+                let choices = try await prepare.executeChoices(audioURL: audio.url, trimRange: trim, vocalRange: range,
+                                                               lyricLines: lyricLines) { step in
                     Task { @MainActor in
                         if self.generation == token, case .preparing = self.status { self.status = .preparing(step: step) }
                     }
@@ -152,6 +158,7 @@ final class ImportSongViewModel {
                 try Task.checkCancellation()
                 guard generation == token else { return }
                 preparedChoices = choices
+                preparedLyrics = Self.lyrics(lyrics, sungAt: choices.guideWords)
                 status = .prepared
             } catch is CancellationError {
                 guard generation == token else { return }
@@ -231,6 +238,17 @@ final class ImportSongViewModel {
     }
 
     // MARK: - Lyrics
+
+    /// The words moved to where the guide found them sung, so the lyrics card and the pitch guide
+    /// agree. Lines are left as they were when the guide was not built from the lyrics.
+    private static func lyrics(_ lines: [LyricLine], sungAt guideWords: [[LyricGuideNotesUseCase.Word]]) -> [LyricLine] {
+        guard guideWords.count == lines.count else { return lines }
+        return zip(lines, guideWords).map { line, sung in
+            guard sung.count == line.words.count else { return line }
+            return LyricLine(id: line.id, text: line.text, start: line.start, end: line.end,
+                             words: zip(line.words, sung).map { LyricWord(text: $0.text, start: $1.start, end: $1.end) })
+        }
+    }
 
     /// The lines sung in `trim`, shifted so the part starts at 0 like the prepared song.
     private func lyricsOnPreparedTimeline(_ trim: ClosedRange<TimeInterval>) -> [LyricLine] {

@@ -2,9 +2,10 @@
 //  PianoRollView.swift
 //  finpro
 //
-//  Centre lane of the recording screen (PRD §5.5): target notes scroll past a playhead at 25%,
-//  ~4 s visible, vertical range fitted to the current segment ± 3 semitones, and the user's
-//  pitch trail in green (within tolerance) or red, and the lyric word under each note.
+//  Pitch guide of the recording screen (PRD §5.5): target notes scroll past a playhead at 25%,
+//  ~4 s visible, the vertical range centred on the current segment, a dot where the user's
+//  voice is now, grey notes whose passed part turns green (sung within tolerance) or red as it
+//  is sung, and the lyric word under each note.
 //  UI only — never part of the recording.
 //
 
@@ -17,40 +18,83 @@ struct PianoRollView: View {
         let midi: Int
         let start: TimeInterval
         let end: TimeInterval
-        var isMissed = false
-    }
-
-    /// `.overlay` sits on the camera (dark, translucent); `.fullGuide` is the large plum panel of
-    /// the full pitch guide layout, where hit notes turn lime and missed ones red.
-    enum Style {
-        case overlay, fullGuide
     }
 
     static let visibleDuration: TimeInterval = 4
     static let playheadPosition = 0.25
-    static let rangePadding = 3
-    static let overlayNoteHeight: CGFloat = 10
-    static let fullGuideNoteHeight: CGFloat = 20
+    /// Distance between two lines (natural notes) in the design.
+    static let rowPitch: CGFloat = 22
+    /// Natural notes per octave and semitones per octave: a row is 12/7 semitones on average.
+    private static let naturalsPerOctave: CGFloat = 7
+    private static let semitonesPerOctave: CGFloat = 12
+    /// Space above the first and below the last line.
+    static let topInset: CGFloat = 13
+    static let bottomInset: CGFloat = 14
+    /// The playhead keeps its width at every size, as in the design.
+    static let playheadWidth: CGFloat = 4
     /// C D E F G A B: the rows drawn and named, as in the design.
-    static let naturalPitchClasses: Set<Int> = [0, 2, 4, 5, 7, 9, 11]
+    static let naturalPitchClasses: [Int] = [0, 2, 4, 5, 7, 9, 11]
+
+    /// Position of a note on the lines of the natural notes (7 per octave): the lines are evenly
+    /// spaced, a sharp or flat sits halfway between its neighbours, and a pitch between two
+    /// semitones is interpolated.
+    static func linePosition(of midi: Double) -> Double {
+        let lower = midi.rounded(.down)
+        let fraction = midi - lower
+        let a = linePosition(of: Int(lower))
+        let b = linePosition(of: Int(lower) + 1)
+        return a + (b - a) * fraction
+    }
+
+    private static func linePosition(of midi: Int) -> Double {
+        let octave = Int((Double(midi) / 12).rounded(.down))
+        let pitchClass = midi - octave * 12
+        if let index = naturalPitchClasses.firstIndex(of: pitchClass) {
+            return Double(octave * 7 + index)
+        }
+        let below = naturalPitchClasses.lastIndex { $0 < pitchClass } ?? 0
+        return Double(octave * 7 + below) + 0.5
+    }
+
+    /// The MIDI note on a line of the natural notes.
+    private static func midi(onLine line: Int) -> Int {
+        let octave = Int((Double(line) / 7).rounded(.down))
+        return octave * 12 + naturalPitchClasses[line - octave * 7]
+    }
+
+    /// A size that grows with the slider: `mid` is the design's default look at the middle of the
+    /// slider, `high` the "Pitch Max" look at the right end, `low` the left end.
+    static func scaled(_ scale: Double, low: CGFloat, mid: CGFloat, high: CGFloat) -> CGFloat {
+        let clamped = min(max(scale, 0), 1)
+        return clamped <= 0.5
+            ? low + (mid - low) * CGFloat(clamped / 0.5)
+            : mid + (high - mid) * CGFloat((clamped - 0.5) / 0.5)
+    }
+
+    /// Panel height for a number of lines, plus room for lyrics under them.
+    static func height(rows: CGFloat, lyricsHeight: CGFloat = 0) -> CGFloat {
+        topInset + rows * rowPitch + bottomInset + lyricsHeight
+    }
 
     let notes: [Note]
     let trail: [RecordingViewModel.TrailPoint]
-    /// Notes of the current segment, used to fit the vertical range.
+    /// Notes of the current segment, used to centre the vertical range.
     let focusMIDI: [Int]
     let songTime: () -> TimeInterval?
-    /// PRD §5.5: during pre-roll, notes before this time (previous material) are drawn greyed out.
+    /// PRD §5.5: notes before this time (material before the part being sung) are drawn greyed out.
     var dimmedBefore: TimeInterval?
     /// Stops redrawing (e.g. while a dialog is open) to leave CPU time for audio and video.
     var isPaused = false
     /// Lyric word sung on a note, drawn under it.
     var wordLabels: [UUID: String] = [:]
-    /// Opacity of the dark panel behind the roll (a display setting).
-    var backgroundOpacity = 0.6
-    var style = Style.overlay
+    /// Height reserved at the bottom for content drawn over the roll (the lyrics, in Concept 2).
+    var lyricsHeight: CGFloat = 0
+    /// Size of the notes, lines and voice dot (a display setting, see `scaled`).
+    var scale = RecordingDisplaySettings.defaultPitchGuideScale
 
     private let cornerRadius: CGFloat = 16
-    private let labelWidth: CGFloat = 30
+    private let labelWidth: CGFloat = 35
+    private let trailInset: CGFloat = 10
 
     var body: some View {
         TimelineView(.animation(minimumInterval: nil, paused: isPaused)) { _ in
@@ -58,109 +102,130 @@ struct PianoRollView: View {
                 draw(in: &context, size: size, now: songTime())
             }
         }
-        .background(panel)
-        .overlay(alignment: .topLeading) {
-            if trail.contains(where: { $0.midi != nil }) {
-                Label {
-                    Text("Your Voice")
-                } icon: {
-                    Circle().fill(Color.white).frame(width: 6, height: 6)
-                }
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.85))
-                .padding(.leading, labelWidth)
-                .padding(.top, 6)
-                .accessibilityHidden(true)
+        .background {
+            // Sketch: material "Dark / Regular" (a background blur) with a light tint on top.
+            ZStack {
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(.regularMaterial)
+                    .environment(\.colorScheme, .dark)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .fill(Palette.panel)
             }
         }
         .accessibilityElement()
         .accessibilityLabel("Pitch guide")
     }
 
-    @ViewBuilder
-    private var panel: some View {
-        switch style {
-        case .overlay:
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(.black.opacity(backgroundOpacity))
-        case .fullGuide:
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous).fill(Color.guidePanel)
+    // MARK: - Colors
+
+    /// The frosted panel of the design: a blurred dark material under a light tint at 20%, plum lines, grey
+    /// notes, light labels, a dark playhead and a lime dot where the voice is.
+    private enum Palette {
+        static let panel = Color.secondaryButton.opacity(0.2)
+        static let line = Color.tertiaryText.opacity(0.6)
+        static let label = Color.secondaryButton
+        /// A note not passed yet; it turns green or red once the playhead is past it.
+        static let note = Color.gray
+        /// Notes of the segments before the one being sung.
+        static let previousNote = Color.gray.opacity(0.45)
+        static let playhead = Color.primary800
+        static let dot = Color.secBrand
+        static let word = Color.secondaryButton
+    }
+
+    private var noteHeight: CGFloat { Self.scaled(scale, low: 5, mid: 8, high: 16) }
+    private var lineWidth: CGFloat { Self.scaled(scale, low: 1, mid: 2, high: 4) }
+    private var dotSize: CGFloat { Self.scaled(scale, low: 8, mid: 12, high: 22) }
+
+    // MARK: - Drawing
+
+    /// Colours the part of a note the playhead has passed, as it is sung (design review): each
+    /// stretch green where the voice was within tolerance, red where it was not. The rest stays grey.
+    private func fillSung(_ note: Note, shape: Path, upTo current: TimeInterval,
+                          in context: inout GraphicsContext, x: (TimeInterval) -> CGFloat) {
+        let end = min(note.end, current)
+        let samples = trail.filter { $0.songTime >= note.start && $0.songTime < end }
+        guard !samples.isEmpty else { return }
+        var clipped = context
+        clipped.clip(to: shape)
+        for (index, sample) in samples.enumerated() {
+            // A sample colours from where the previous stretch ended up to the next sample.
+            let from = index == 0 ? note.start : sample.songTime
+            let to = index + 1 < samples.count ? samples[index + 1].songTime : end
+            guard to > from else { continue }
+            let stretch = CGRect(x: x(from), y: shape.boundingRect.minY, width: x(to) - x(from), height: shape.boundingRect.height)
+            clipped.fill(Path(stretch), with: .color(sample.isHit ? .pitchHit : .noteMiss))
         }
     }
 
-    private var midiRange: ClosedRange<Int> {
-        let low = (focusMIDI.min() ?? 60) - Self.rangePadding
-        let high = (focusMIDI.max() ?? 60) + Self.rangePadding
-        return low...max(high, low + 2 * Self.rangePadding)
-    }
-
     private func draw(in context: inout GraphicsContext, size: CGSize, now: TimeInterval?) {
-        let range = midiRange
-        let rows = CGFloat(range.count)
-        let rowHeight = size.height / rows
-        let labelWidth = self.labelWidth
-        let laneWidth = size.width - labelWidth
+        let rowsTop = Self.topInset
+        let rowsHeight = max(Self.rowPitch, size.height - Self.topInset - Self.bottomInset - lyricsHeight)
+
+        // Lines that fit the area, centred on the focus notes; the area grows past its size when
+        // the segment is wider, so every note of the segment stays in view.
+        let focusLines = focusMIDI.map { Self.linePosition(of: Double($0)) }
+        let lowFocus = focusLines.min() ?? Self.linePosition(of: 60)
+        let highFocus = focusLines.max() ?? Self.linePosition(of: 60)
+        let span = max(rowsHeight / Self.rowPitch, highFocus - lowFocus + 2)
+        let pitch = rowsHeight / span
+        let lowLine = ((lowFocus + highFocus) / 2 - span / 2).rounded() - 0.5
+
+        let laneWidth = size.width - labelWidth - trailInset
         let playheadX = labelWidth + laneWidth * Self.playheadPosition
         let current = now ?? 0
         func x(_ time: TimeInterval) -> CGFloat {
             playheadX + CGFloat((time - current) / Self.visibleDuration) * laneWidth
         }
         func y(_ midi: Double) -> CGFloat {
-            size.height - (CGFloat(midi - Double(range.lowerBound)) + 0.5) * rowHeight
+            rowsTop + rowsHeight - CGFloat(Self.linePosition(of: midi) - lowLine) * pitch
         }
 
-        // Rows on the natural notes, named on the left edge as in the design.
-        for midi in range where Self.naturalPitchClasses.contains((midi % 12 + 12) % 12) {
+        // A line on every natural note, named on the left edge as in the design.
+        for line in Int((lowLine + 0.5).rounded(.up))...Int((lowLine + span - 0.5).rounded(.down)) {
+            let midi = Self.midi(onLine: line)
             let rowY = y(Double(midi))
-            context.draw(Text(PitchMath.noteName(midi: midi)).font(.system(size: 9, weight: .medium)).foregroundStyle(.white.opacity(0.7)),
-                         at: CGPoint(x: labelWidth / 2, y: rowY))
-            var line = Path()
-            line.move(to: CGPoint(x: labelWidth, y: rowY))
-            line.addLine(to: CGPoint(x: size.width - 8, y: rowY))
-            context.stroke(line, with: .color(.white.opacity(0.15)), lineWidth: 1)
+            context.draw(Text(PitchMath.noteName(midi: midi)).font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.label),
+                         at: CGPoint(x: labelWidth / 2 - 2, y: rowY))
+            var path = Path()
+            path.move(to: CGPoint(x: labelWidth, y: rowY))
+            path.addLine(to: CGPoint(x: size.width - trailInset, y: rowY))
+            context.stroke(path, with: .color(Palette.line), lineWidth: lineWidth)
         }
 
         guard now != nil else { return }
-        context.clip(to: Path(CGRect(x: labelWidth, y: 0, width: laneWidth, height: size.height)))
+        context.clip(to: Path(CGRect(x: labelWidth, y: 0, width: laneWidth + trailInset, height: size.height)))
 
         // Target notes.
         let windowStart = current - Self.visibleDuration * Self.playheadPosition
         let windowEnd = windowStart + Self.visibleDuration
-        for note in notes where note.end > windowStart && note.start < windowEnd && range.contains(note.midi) {
-            let height = max(4, min(style == .fullGuide ? Self.fullGuideNoteHeight : Self.overlayNoteHeight, rowHeight * 0.8))
+        for note in notes where note.end > windowStart && note.start < windowEnd {
+            let height = noteHeight
             let rect = CGRect(x: x(note.start), y: y(Double(note.midi)) - height / 2,
                               width: max(height, x(note.end) - x(note.start) - 2), height: height)
             let isPrevious = dimmedBefore.map { note.end <= $0 + 1e-6 } ?? false
-            let isHit = style == .fullGuide && !note.isMissed
-                && trail.contains { $0.isHit && $0.songTime >= note.start && $0.songTime < note.end }
-            let missed: Color = style == .fullGuide ? .noteMiss : .red
-            let color: Color = note.isMissed ? missed : isPrevious ? .gray.opacity(0.45)
-                : isHit ? .noteHit
-                : (note.start <= current && current < note.end ? .white : .white.opacity(0.85))
-            context.fill(Path(roundedRect: rect, cornerRadius: height / 2), with: .color(color))
+            let shape = Path(roundedRect: rect, cornerRadius: height / 2)
+            context.fill(shape, with: .color(isPrevious ? Palette.previousNote : Palette.note))
+            if !isPrevious { fillSung(note, shape: shape, upTo: current, in: &context, x: x) }
             if let word = wordLabels[note.id] {
-                context.draw(Text(word).font(.system(size: 8, weight: .medium)).foregroundStyle(.white.opacity(0.85)),
+                context.draw(Text(word).font(.system(size: 8, weight: .medium)).foregroundStyle(Palette.word),
                              at: CGPoint(x: rect.minX + 2, y: rect.maxY + 2), anchor: .topLeading)
             }
         }
 
-        // Pitch trail: consecutive voiced points are joined; unvoiced breaks the line.
+        // The voice is shown only as a dot at the playhead, no trail line (design review); the
+        // notes it sang turn green or red. A dot older than this means the voice stopped.
         let maxJoin = 0.12
-        for (previous, point) in zip(trail, trail.dropFirst()) {
-            guard let a = previous.midi, let b = point.midi, point.songTime - previous.songTime <= maxJoin else { continue }
-            var segment = Path()
-            segment.move(to: CGPoint(x: x(previous.songTime), y: y(Double(a))))
-            segment.addLine(to: CGPoint(x: x(point.songTime), y: y(Double(b))))
-            context.stroke(segment, with: .color(point.isHit ? .green : .red), style: StrokeStyle(lineWidth: 3, lineCap: .round))
-        }
 
         // Playhead, with a dot where the voice is now.
         var playhead = Path()
-        playhead.move(to: CGPoint(x: playheadX, y: 0))
-        playhead.addLine(to: CGPoint(x: playheadX, y: size.height))
-        context.stroke(playhead, with: .color(.white.opacity(0.9)), lineWidth: 2)
+        playhead.move(to: CGPoint(x: playheadX, y: rowsTop))
+        playhead.addLine(to: CGPoint(x: playheadX, y: rowsTop + rowsHeight))
+        context.stroke(playhead, with: .color(Palette.playhead), lineWidth: Self.playheadWidth)
         if let last = trail.last, let midi = last.midi, current - last.songTime < maxJoin {
-            let dot = CGRect(x: x(last.songTime) - 4, y: y(Double(midi)) - 4, width: 8, height: 8)
-            context.fill(Path(ellipseIn: dot), with: .color(.white))
+            let radius = dotSize / 2
+            let dot = CGRect(x: x(last.songTime) - radius, y: y(Double(midi)) - radius, width: dotSize, height: dotSize)
+            context.fill(Path(ellipseIn: dot), with: .color(Palette.dot))
         }
     }
 }
@@ -169,8 +234,13 @@ struct PianoRollView: View {
     let notes = DomainFixtures.segments.flatMap(\.targetNotes).map {
         PianoRollView.Note(id: $0.id, midi: $0.midiNote, start: $0.startTime, end: $0.endTime)
     }
-    PianoRollView(notes: notes, trail: [], focusMIDI: notes.prefix(4).map(\.midi), songTime: { 1.5 })
-        .frame(height: 180)
-        .padding()
-        .background(.gray)
+    VStack {
+        PianoRollView(notes: notes, trail: [], focusMIDI: notes.prefix(4).map(\.midi), songTime: { 1.5 })
+            .frame(height: PianoRollView.height(rows: 6))
+        PianoRollView(notes: notes, trail: [], focusMIDI: notes.prefix(4).map(\.midi), songTime: { 1.5 },
+                      lyricsHeight: 44)
+            .frame(height: PianoRollView.height(rows: 6, lyricsHeight: 44))
+    }
+    .padding()
+    .background(.gray)
 }

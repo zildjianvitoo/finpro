@@ -2,7 +2,8 @@
 //  CaptureRepositoryImpl.swift
 //  finpro
 //
-//  Front camera + headset microphone → RawMasterVideo.mov, and live CREPE pitch from the same
+//  Front camera + headset microphone → one raw video per recording pass (same exposure, white
+//  balance and focus in every pass of a cover), and live CREPE pitch from the same
 //  audio buffers (PRD §6.5.4, §7.1, §7.2). Permissions are requested by PermissionGate.
 //
 
@@ -14,7 +15,7 @@ extension Notification.Name {
 }
 
 /// Capture and writer state belongs exclusively to queue; clock snapshots and subscribers use lock.
-nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, CameraPreviewSource, MicrophoneSampleSource, MicrophoneInputProviding, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
+nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, CameraPreviewSource, MicrophoneSampleSource, MicrophoneInputProviding, CameraLookLocking, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
     // Recording format fixed by PRD §6.5.4 (portrait 1080×1920, see makeVideoInput).
     private static let framesPerSecond: Int32 = 30
     static let portraitRotation: CGFloat = 90
@@ -43,6 +44,8 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
         }
     }
     private var destination: URL?
+    /// The look locked at the start of the cover's first recording; reapplied by later passes.
+    private var cameraLook: CameraLook?
     private var prepared = false
     private var microphoneObserver: NSObjectProtocol?
     private var selectedMicrophoneUID: String?
@@ -168,8 +171,7 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
                     guard let microphoneUID = self.selectedMicrophoneUID else { throw HeadsetMicrophoneError.unavailable }
                     try HeadsetMicrophoneSession.verify(microphoneUID)
                     try SessionFiles.prepareDirectory()
-                    let url = SessionFiles.rawVideoURL
-                    try? FileManager.default.removeItem(at: url)
+                    let url = SessionFiles.newRawVideoURL()
                     let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
                     // The video input is added on the first frame, once its real size is known.
                     let audio = AVAssetWriterInput(mediaType: .audio, outputSettings: [AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: Self.audioSampleRate, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: Self.audioBitRate])
@@ -185,6 +187,7 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
                     self.lock.lock()
                     self.firstPTS = nil
                     self.lock.unlock()
+                    self.lockCameraLook()
                     self.recording = true
                     continuation.resume()
                 } catch { continuation.resume(throwing: error) }
@@ -192,10 +195,33 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
         }
     }
 
+    func resetCameraLook() {
+        queue.async { self.cameraLook = nil }
+    }
+
+    /// First pass of a cover: lock the camera as it is; later passes: the same look again. On queue.
+    private func lockCameraLook() {
+        guard let device = previewDevice, (try? device.lockForConfiguration()) != nil else { return }
+        defer { device.unlockForConfiguration() }
+        if let cameraLook {
+            cameraLook.apply(to: device)
+        } else {
+            cameraLook = CameraLook.lockCurrent(on: device)
+        }
+    }
+
+    /// On queue.
+    private func unlockCameraLook() {
+        guard let device = previewDevice, (try? device.lockForConfiguration()) != nil else { return }
+        defer { device.unlockForConfiguration() }
+        CameraLook.restoreAutomatic(on: device)
+    }
+
     func stopRecording() async throws -> URL {
         try await withCheckedThrowingContinuation { continuation in
             queue.async {
                 self.recording = false
+                self.unlockCameraLook()
                 self.session.stopRunning()
                 guard let writer = self.writer, let url = self.destination else {
                     continuation.resume(throwing: self.error("No recording to finish.")); return

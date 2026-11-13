@@ -26,12 +26,17 @@ nonisolated final class SessionTakeLogRepositoryImpl: SessionTakeLogRepository, 
         lock.lock()
         defer { lock.unlock() }
         var prefix: [TakeAttemptLog] = []
-        while let take = attempts.first(where: {
-            $0.segmentIndex == prefix.count && $0.status == .passed
-        }) {
-            prefix.append(take)
+        // The latest take of a segment is the one that counts; a `.failed` one marks it as deleted.
+        while let latest = attempts.last(where: { $0.segmentIndex == prefix.count }), latest.status != .failed {
+            prefix.append(latest)
         }
         return prefix
+    }
+
+    func discardAttempts(inPass recordingPass: Int) {
+        lock.lock()
+        defer { lock.unlock() }
+        attempts.removeAll { $0.recordingPass == recordingPass }
     }
 
     func clear() {

@@ -30,7 +30,6 @@ struct DebugSettingsView: View {
         NavigationStack {
             Form {
                 Section("Evaluation") {
-                    row("Pass threshold", $configuration.passThreshold, in: 0.5...1, step: 0.05, format: .percent)
                     row("Hit tolerance", $configuration.hitToleranceCents, in: 10...100, step: 5, unit: " cents")
                     row("Noise gate", $configuration.noiseGateDBFS, in: -70 ... -20, step: 5, unit: " dBFS")
                     row("Attack ignored", $configuration.attackIgnore, in: 0...0.3, step: 0.02, unit: " s")

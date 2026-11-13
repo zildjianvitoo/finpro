@@ -14,8 +14,32 @@ enum RecordingDisplaySettings {
     static let lyricsOpacityKey = "recording.lyricsOpacity"
     static let showsPitchGuideKey = "recording.showsPitchGuide"
     static let pitchGuideOpacityKey = "recording.pitchGuideOpacity"
-    /// Recording layout: false = full-screen camera with overlays, true = small camera and a large pitch guide.
-    static let usesFullGuideKey = "recording.usesFullGuide"
+    /// Where the lyrics sit: true = inside the pitch guide (Concept 2), false = a card near the camera (Concept 1).
+    static let lyricsInGuideKey = "recording.lyricsInGuide"
+    /// Text size of the lyrics card, an index into `lyricsTextStyles`.
+    static let lyricsTextStepKey = "recording.lyricsTextStep"
+
+    /// Size of the notes, lines and voice dot of the pitch guide, 0...1 (the Pitch Guide slider).
+    static let pitchGuideScaleKey = "recording.pitchGuideScale"
+
+    static let defaultLyricsInGuide = true
+    /// The middle of the slider is the design's default look; the right end is "Pitch Max".
+    static let defaultPitchGuideScale = 0.5
+    static let defaultLyricsTextStep = 0
+    static let lyricsTextStyles: [Font] = [.appSubheadline, .appBody, .appTitle3]
+
+    /// Lines (natural notes) the pitch guide shows, as in the design.
+    static let guideRows: CGFloat = 6
+    /// Two lines of lyrics under the notes (Concept 2).
+    static let guideLyricsHeight: CGFloat = 44
+
+    static func lyricsTextStyle(step: Int) -> Font {
+        lyricsTextStyles[min(max(step, 0), lyricsTextStyles.count - 1)]
+    }
+
+    static func nextLyricsTextStep(after step: Int) -> Int {
+        (step + 1) % lyricsTextStyles.count
+    }
 
     static let defaultLyricsOpacity = 0.7
     static let defaultPitchGuideOpacity = 0.5

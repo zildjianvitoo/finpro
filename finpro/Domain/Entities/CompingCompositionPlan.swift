@@ -9,7 +9,9 @@ import CoreMedia
 import Foundation
 
 nonisolated struct CompingCompositionPlan: Sendable {
-    let rawVideoURL: URL
+    /// The raw video of every recording pass, indexed by `TakeAttemptLog.recordingPass`: the
+    /// session first, then each retake or continue.
+    let rawVideoURLs: [URL]
     let instrumentalURL: URL
     /// Used to place each take at `segment.audioStartTime` on the song timeline.
     let segments: [SongSegment]

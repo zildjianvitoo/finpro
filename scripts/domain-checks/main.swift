@@ -12,6 +12,7 @@ let suites: [(name: String, run: () async throws -> Int?)] = [
     ("ComputeTranspositionUseCase", ComputeTranspositionUseCaseChecks.run),
     ("DetectVocalRangeUseCase", DetectVocalRangeUseCaseChecks.run),
     ("ExtractGuideNotesUseCase", ExtractGuideNotesUseCaseChecks.run),
+    ("LyricGuideNotesUseCase", LyricGuideNotesUseCaseChecks.run),
     ("PrepareSongUseCase", { try await PreparationChecks.run(); return nil }),
     ("EvaluateSegmentUseCase", EvaluateSegmentUseCaseChecks.run),
     ("LoopStateController", LoopStateControllerChecks.run),

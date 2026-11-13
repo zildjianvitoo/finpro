@@ -2,186 +2,427 @@
 //  ExportPreviewView.swift
 //  finpro
 //
-//  Final result (PRD §5.9): merging progress, "your recording is complete", the cover preview with
-//  the clips used, and Save to Photos. Owner: Zildjian Vito (ZV-13).
+//  Final result (PRD §5.9, Sketch 7.0–7.2): the cover being merged (7.0), its preview with the
+//  clips used (7.1), and Export, which saves it to Photos with a progress border around the video
+//  (7.2). Owner: Zildjian Vito (ZV-13).
 //
 
-import AVKit
 import SwiftUI
 import UIKit
 
 struct ExportPreviewView: View {
     private enum Page {
-        /// The cover is ready; Preview Cover opens the player.
-        case complete
+        /// 7.0 while merging, then 7.1.
         case preview
-        /// Every clip of the cover.
-        case clips
+        /// 7.2: saving to Photos.
+        case exporting
     }
 
     @State private var viewModel: CompingViewModel
-    @State private var player: AVPlayer?
-    @State private var page = Page.complete
+    @State private var player: CoverPlayerController?
+    @State private var page = Page.preview
+    @State private var confirmsLeave = false
+    @State private var showsDraftsSoon = false
+    /// Shown progress of the save to Photos, which reports none: it runs ahead to `saveRunUp`
+    /// while saving and completes when the save does.
+    @State private var exportProgress: Double = 0
+    @State private var showsExported = false
+    @State private var showsSaveError = false
     let onRetake: () -> Void
     let onStartOver: () -> Void
+    /// Sing one clip again (its segment index); the new take replaces it in the cover.
+    let onRetakeClip: (Int) -> Void
+    /// Sing on from the first segment not in the cover.
+    let onContinue: () -> Void
 
-    init(viewModel: CompingViewModel, onRetake: @escaping () -> Void, onStartOver: @escaping () -> Void) {
+    init(viewModel: CompingViewModel, onRetake: @escaping () -> Void, onStartOver: @escaping () -> Void,
+         onRetakeClip: @escaping (Int) -> Void = { _ in }, onContinue: @escaping () -> Void = {}) {
         _viewModel = State(initialValue: viewModel)
         self.onRetake = onRetake
         self.onStartOver = onStartOver
+        self.onRetakeClip = onRetakeClip
+        self.onContinue = onContinue
     }
 
-    /// Inset of the buttons from the screen edge.
-    private let buttonInset: CGFloat = 24
-    private let topBarHeight: CGFloat = 48
-    private let cardCornerRadius: CGFloat = 16
-    private let ringSize: CGFloat = 120
-    private let ringLineWidth: CGFloat = 6
-    private let completeIconSize: CGFloat = 72
-    private let posterInset: CGFloat = 34
-    private let posterAspectRatio: CGFloat = 1.36
-    private let playButtonSize: CGFloat = 48
-    private let previewInset: CGFloat = 36
-    private let playerAspectRatio: CGFloat = 1.54
-    private let clipsRowCount = 5
-    private let clipGridInset: CGFloat = 44
-    private let clipTileAspectRatio: CGFloat = 0.7
-    private let clipTileSpacing: CGFloat = 8
-    private let clipTileCornerRadius: CGFloat = 12
-    private let selectedClipBorder: CGFloat = 3
+    private let screenInset: CGFloat = 17
+    private let topBarInset: CGFloat = 13
+    private let videoMaxWidth: CGFloat = 280
+    private let videoAspectRatio: CGFloat = 9.0 / 16.0
+    private let videoCornerRadius: CGFloat = 12
+    private let seekBarInset: CGFloat = 15
+    private let seekBarBottom: CGFloat = 20
+    private let timelineHeight: CGFloat = 2
+    private let scrubbingLineHeight: CGFloat = 4
+    private let scrubKnobSize: CGFloat = 12
+    /// Finger-sized touch area around the 2 pt line.
+    private let scrubTouchHeight: CGFloat = 32
+    private let accessibilitySeekStep: TimeInterval = 5
+    private let sheetCornerRadius: CGFloat = 12
+    private let sheetTitleInset: CGFloat = 28
+    private let clipsInset: CGFloat = 32
+    private let clipWidth: CGFloat = 85
+    private let clipHeight: CGFloat = 124
+    private let clipSpacing: CGFloat = 12
+    private let clipCornerRadius: CGFloat = 12
+    private let selectedClipBorder: CGFloat = 4
+    private let badgeInset: CGFloat = 4
+    private let mergingIconSize: CGFloat = 64
+    private let exportFrameWidth: CGFloat = 288
+    private let exportFrameAspectRatio: CGFloat = 288.0 / 453.0
+    private let exportVideoInset: CGFloat = 18
+    private let exportBorderWidth: CGFloat = 10
+    private let saveRunUp = 0.9
+    private let saveRunUpDuration: TimeInterval = 1.6
+    private let exportedAlertDelay: Duration = .milliseconds(350)
 
     var body: some View {
         Group {
             switch viewModel.exportState {
-            case .idle, .exporting:
-                merging
-            case .finished(let url):
-                finished(url: url)
             case .failed(let message):
                 failed(message: message)
+            default:
+                switch page {
+                case .preview: preview.transition(.opacity)
+                case .exporting: exporting.transition(.opacity)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.onboardingBackground.ignoresSafeArea())
+        .background(Color.screenBackground.ignoresSafeArea())
+        .overlay { if isMerging { merging } }
         .animation(.default, value: page)
+        .animation(.default, value: isMerging)
         .task { await viewModel.export() }
         .onChange(of: viewModel.exportedURL) { _, url in
-            player = url.flatMap { viewModel.hasPlayableFile ? AVPlayer(url: $0) : nil }
+            player = url.flatMap { viewModel.hasPlayableFile ? CoverPlayerController(url: $0) : nil }
         }
+        .onChange(of: viewModel.saveState) { _, state in saveStateChanged(state) }
         .onDisappear { player?.pause() }
+        .alert("Video Exported", isPresented: $showsExported) {
+            // The confirm role draws a filled button in the tint (our dark purple) on iOS 26.
+            if #available(iOS 26, *) {
+                Button("OK", role: .confirm) { page = .preview }
+            } else {
+                Button("OK") { page = .preview }
+            }
+        } message: {
+            Text("This video was saved to your camera roll.")
+        }
+        .alert("Couldn't Export", isPresented: $showsSaveError) {
+            if viewModel.saveState == .denied {
+                Button("Open Settings") {
+                    if let url = URL(string: UIApplication.openSettingsURLString) {
+                        UIApplication.shared.open(url)
+                    }
+                    page = .preview
+                }
+            }
+            Button("OK", role: .cancel) { page = .preview }
+        } message: {
+            Text(saveErrorMessage)
+        }
+        .tint(Color.primary800)
     }
 
-    // MARK: - Merging
+    // MARK: - 7.0 Merging
 
-    private var progress: Double {
+    private var isMerging: Bool {
+        switch viewModel.exportState {
+        case .idle, .exporting: true
+        case .finished, .failed: false
+        }
+    }
+
+    private var mergeProgress: Double {
         if case .exporting(let value) = viewModel.exportState { value } else { 0 }
     }
 
     private var merging: some View {
-        VStack(spacing: 0) {
-            Text("Merging your recording..")
-                .font(.headline)
-                .foregroundStyle(Color.plumInk)
-
-            Text("Bringing your recordings together into one seamless video cover")
-                .font(.caption2)
-                .foregroundStyle(Color.plumInkSecondary)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 220)
-                .padding(.top, 6)
-
-            ZStack {
-                Circle()
-                    .stroke(Color.ringTrack, lineWidth: ringLineWidth)
-                Circle()
-                    .trim(from: 0, to: progress)
-                    .stroke(Color.plumNight, style: StrokeStyle(lineWidth: ringLineWidth, lineCap: .round))
-                    .rotationEffect(.degrees(-90))
-                Text(progress, format: .percent.precision(.fractionLength(0)))
-                    .font(.title2.weight(.bold))
+        ZStack {
+            Color.black.opacity(0.6)
+                .ignoresSafeArea()
+            VStack(spacing: 16) {
+                Image(systemName: "film.stack")
+                    .font(.system(size: mergingIconSize))
+                    .symbolEffect(.bounce, options: .repeat(.continuous))
+                    .accessibilityHidden(true)
+                Text("Merging your recording… \(mergeProgress.formatted(.percent.precision(.fractionLength(0))))")
+                    .font(.subheadline.weight(.semibold))
                     .monospacedDigit()
-                    .foregroundStyle(Color.plumInk)
             }
-            .frame(width: ringSize, height: ringSize)
-            .padding(.top, 20)
-            .animation(.easeInOut(duration: 0.3), value: progress)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Merging progress")
-            .accessibilityValue(Text(progress, format: .percent.precision(.fractionLength(0))))
+            .foregroundStyle(.white)
         }
-        .padding(.horizontal, buttonInset)
+        .accessibilityElement(children: .combine)
+        .transition(.opacity)
     }
 
-    // MARK: - Finished
+    // MARK: - 7.1 Preview
+
+    private var preview: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button {
+                    player?.pause()
+                    confirmsLeave = true
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.title3.weight(.medium))
+                        .foregroundStyle(Color.primary800)
+                }
+                .glassCircleButtonStyle()
+                .accessibilityLabel("Back")
+
+                Spacer()
+
+                Button("Export", action: startExport)
+                    .buttonStyle(ExportButtonStyle())
+                    .disabled(!viewModel.hasPlayableFile)
+            }
+            .padding(.horizontal, screenInset)
+            .padding(.top, topBarInset)
+
+            coverVideo
+                .padding(.vertical, 16)
+                .frame(maxHeight: .infinity)
+
+            clipsSheet
+        }
+        .confirmationDialog("Leave recording?", isPresented: $confirmsLeave, titleVisibility: .visible) {
+            // Sing on from the first segment not in the cover; a complete cover records again.
+            Button("Keep Recording", action: viewModel.canContinueRecording ? onContinue : onRetake)
+            Button("Save to Draft") { showsDraftsSoon = true }
+            // Only closes the dialog (design review). Not `.cancel`: iOS 26 hides that button here.
+            Button("Discard", role: .destructive) {}
+        } message: {
+            Text("You have an unfinished take. What would you like to do with it?")
+        }
+        .alert("Drafts Are Coming Soon", isPresented: $showsDraftsSoon) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Saving a cover to finish later isn't available yet.")
+        }
+    }
+
+    private var coverVideo: some View {
+        Color.clear
+            .aspectRatio(videoAspectRatio, contentMode: .fit)
+            .frame(maxWidth: videoMaxWidth)
+            .overlay { videoContent }
+            .clipShape(.rect(cornerRadius: videoCornerRadius, style: .continuous))
+            .overlay(alignment: .bottom) {
+                if let player { seekBar(player) }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { player?.togglePlayback() }
+    }
 
     @ViewBuilder
-    private func finished(url: URL) -> some View {
-        switch page {
-        case .complete:
-            complete
-                .transition(.opacity)
-        case .preview:
-            preview
-                .transition(.opacity)
-        case .clips:
-            clipsGrid
-                .transition(.opacity)
+    private var videoContent: some View {
+        if let player {
+            PlayerLayerView(player: player.player)
+        } else if isMerging {
+            Color.screenBackground
+        } else {
+            ZStack {
+                Color.clipPlaceholder
+                Label("No preview", systemImage: "film")
+                    .font(.footnote)
+                    .foregroundStyle(Color.primary800)
+            }
         }
     }
 
-    private var complete: some View {
-        VStack(spacing: 0) {
-            Spacer()
+    private func seekBar(_ player: CoverPlayerController) -> some View {
+        VStack(spacing: 13) {
+            HStack {
+                Button {
+                    player.togglePlayback()
+                } label: {
+                    Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.title3)
+                        .frame(minWidth: 24, minHeight: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
 
-            Image(systemName: "checkmark.circle")
-                .font(.system(size: completeIconSize, weight: .regular))
-                .foregroundStyle(Color.plumInk)
-                .accessibilityHidden(true)
+                Spacer()
 
-            Text("Your recording is complete!")
-                .font(.headline)
-                .foregroundStyle(Color.plumInk)
-                .padding(.top, 16)
+                Text("\(CompingViewModel.clock(player.currentTime)) / \(CompingViewModel.clock(player.duration))")
+                    .font(.subheadline)
+                    .monospacedDigit()
+            }
+            .foregroundStyle(.white)
 
-            Text("We’re now combining your takes into one smooth cover.")
-                .font(.caption2)
-                .foregroundStyle(Color.plumInkSecondary)
-                .multilineTextAlignment(.center)
-                .padding(.top, 6)
+            timeline(player)
+        }
+        .padding(.horizontal, seekBarInset)
+        .padding(.bottom, seekBarBottom)
+    }
 
+    /// The seek bar: drag (or tap) anywhere on it to move through the cover, like a video player.
+    /// The touch area is taller than the line; the line thickens and shows a knob while dragging.
+    private func timeline(_ player: CoverPlayerController) -> some View {
+        GeometryReader { proxy in
+            let width = max(proxy.size.width, 1)
+            let progressWidth = width * player.progress
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color(white: 0.67))
+                Capsule().fill(.white)
+                    .frame(width: progressWidth)
+            }
+            .frame(height: player.isScrubbing ? scrubbingLineHeight : timelineHeight)
+            .overlay(alignment: .leading) {
+                if player.isScrubbing {
+                    Circle().fill(.white)
+                        .frame(width: scrubKnobSize, height: scrubKnobSize)
+                        .offset(x: progressWidth - scrubKnobSize / 2)
+                }
+            }
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        player.beginScrubbing()
+                        player.scrub(to: value.location.x / width)
+                    }
+                    .onEnded { _ in player.endScrubbing() }
+            )
+        }
+        .frame(height: scrubTouchHeight)
+        .padding(.vertical, -(scrubTouchHeight - timelineHeight) / 2)
+        .animation(.easeOut(duration: 0.15), value: player.isScrubbing)
+        .accessibilityElement()
+        .accessibilityLabel("Playback position")
+        .accessibilityValue("\(CompingViewModel.clock(player.currentTime)) of \(CompingViewModel.clock(player.duration))")
+        .accessibilityAdjustableAction { direction in
+            guard player.duration > 0 else { return }
+            let step = accessibilitySeekStep / player.duration
+            player.seek(to: (player.progress + (direction == .increment ? step : -step)) * player.duration)
+        }
+    }
+
+    private var clipsSheet: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Clips")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.primaryBrand)
+                .padding(.horizontal, sheetTitleInset)
+                .accessibilityAddTraits(.isHeader)
+
+            ScrollView(.horizontal) {
+                HStack(alignment: .top, spacing: clipSpacing) {
+                    ForEach(viewModel.clips) { clip in
+                        clipItem(clip)
+                    }
+                    if viewModel.canContinueRecording && !isMerging {
+                        continueTile
+                    }
+                }
+                .padding(.horizontal, clipsInset)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            UnevenRoundedRectangle(topLeadingRadius: sheetCornerRadius, topTrailingRadius: sheetCornerRadius,
+                                   style: .continuous)
+                .fill(Color.secondaryButton)
+                .ignoresSafeArea(edges: .bottom)
+        }
+    }
+
+    private func clipItem(_ clip: CompingViewModel.Clip) -> some View {
+        let isSelected = !isMerging && viewModel.selectedClipID == clip.id
+        return VStack(spacing: 8) {
             Button {
-                page = .preview
+                // The first tap selects a clip; tapping the selected one (showing Retake) retakes it.
+                if isSelected {
+                    player?.pause()
+                    onRetakeClip(clip.id)
+                } else {
+                    viewModel.selectClip(clip.id)
+                    player?.seek(to: clip.start)
+                }
             } label: {
-                poster
+                clipFrame(of: clip)
+                    .frame(width: clipWidth, height: clipHeight)
+                    .overlay {
+                        if isSelected {
+                            VStack(spacing: 0) {
+                                Image(systemName: "arrow.trianglehead.counterclockwise")
+                                    .font(.title3.weight(.semibold))
+                                Text("Retake")
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            .foregroundStyle(Color.secBrand)
+                        }
+                    }
+                    .overlay(alignment: .bottom) {
+                        if clip.needsRetake && !isMerging {
+                            Text("Needs Retake")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(Color.noteMiss))
+                                .padding(.bottom, badgeInset)
+                        }
+                    }
+                    .clipShape(.rect(cornerRadius: clipCornerRadius, style: .continuous))
+                    .overlay {
+                        if isSelected {
+                            RoundedRectangle(cornerRadius: clipCornerRadius, style: .continuous)
+                                .strokeBorder(Color.primaryDark, lineWidth: selectedClipBorder)
+                        }
+                    }
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, posterInset)
-            .padding(.top, 24)
-            .accessibilityLabel("Preview cover")
+            .disabled(isMerging)
 
-            Spacer()
-
-            Button("Preview Cover") { page = .preview }
-                .buttonStyle(.primaryDeep)
-                .padding(.horizontal, buttonInset)
-                .padding(.bottom, 8)
+            if !isMerging {
+                Text(viewModel.timeRange(of: clip))
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(Color.secondaryText)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
         }
-        .padding(.horizontal, buttonInset)
+        .frame(width: clipWidth)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Clip \(clip.id + 1), \(viewModel.timeRange(of: clip))\(clip.needsRetake ? ", needs retake" : "")")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityHint(isSelected ? "Double-tap to sing this clip again" : "Double-tap to select")
     }
 
-    /// A frame of the cover with a play button; a flat tile while there is no video file.
-    private var poster: some View {
-        Color.clear
-            .aspectRatio(posterAspectRatio, contentMode: .fit)
-            .overlay { clipFrame(of: viewModel.clips.first) }
-            .clipShape(.rect(cornerRadius: cardCornerRadius))
-            .overlay {
-                Image(systemName: "play.fill")
-                    .font(.body)
-                    .foregroundStyle(Color.plumInk)
-                    .frame(width: playButtonSize, height: playButtonSize)
-                    .background(Circle().fill(.white.opacity(0.92)))
-            }
+    /// Continue Recording: shown when the session ended early.
+    private var continueTile: some View {
+        Button {
+            player?.pause()
+            onContinue()
+        } label: {
+            continueTileLabel
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var continueTileLabel: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "plus.square.fill")
+                .font(.title)
+                .foregroundStyle(Color.primaryBrand)
+            Text("Continue\nRecording")
+                .font(.system(size: 10, weight: .medium))
+                .multilineTextAlignment(.center)
+                .foregroundStyle(Color.secondaryText)
+        }
+        .frame(width: clipWidth, height: clipHeight)
+        .background(Color.clipAddTile, in: .rect(cornerRadius: clipCornerRadius, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 
     /// The still frame of a clip, filling its space; a flat tile when there is none.
@@ -192,220 +433,101 @@ struct ExportPreviewView: View {
                 .resizable()
                 .scaledToFill()
         } else {
-            Color.clipPlaceholder
+            isMerging ? Color.screenBackground : Color.clipPlaceholder
         }
     }
 
-    // MARK: - Preview
+    // MARK: - 7.2 Exporting
 
-    private var preview: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                Button {
-                    player?.pause()
-                    page = .complete
-                } label: {
-                    Image(systemName: "xmark")
-                        .fontWeight(.semibold)
-                        .foregroundStyle(Color.plumInk)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .accessibilityLabel("Close preview")
-
-                Text("Preview Cover")
-                    .font(.headline)
-                    .foregroundStyle(Color.plumInk)
-                    .accessibilityAddTraits(.isHeader)
-                Spacer()
-            }
-            .frame(minHeight: topBarHeight)
-            .padding(.horizontal, buttonInset)
-
-            ScrollView {
-                VStack(spacing: 14) {
-                    coverPlayer
-                    titleCard
-                    clipsCard
-                }
-                .padding(.horizontal, previewInset)
-                .padding(.top, 8)
-            }
-            .scrollBounceBehavior(.basedOnSize)
-
-            VStack(spacing: 10) {
-                Button {
-                    Task { await viewModel.saveToPhotos() }
-                } label: {
-                    saveLabel
-                }
-                .buttonStyle(.primaryDeep)
-                .disabled(viewModel.saveState == .saving || viewModel.saveState == .saved || !viewModel.hasPlayableFile)
-
-                Button("Create New Cover", action: onStartOver)
-                    .buttonStyle(.primaryMuted)
-
-                saveMessage
-            }
-            .padding(.horizontal, buttonInset)
-            .padding(.bottom, 8)
-        }
-    }
-
-    @ViewBuilder
-    private var coverPlayer: some View {
-        Group {
-            if let player {
-                VideoPlayer(player: player)
-            } else {
-                ZStack {
-                    Color.clipPlaceholder
-                    ContentUnavailableView("No preview",
-                                           systemImage: "film",
-                                           description: Text("Running on fakes, so no video file was written."))
-                        .foregroundStyle(Color.plumInk)
-                }
-            }
-        }
-        .aspectRatio(playerAspectRatio, contentMode: .fit)
-        .clipShape(.rect(cornerRadius: cardCornerRadius))
-    }
-
-    private var titleCard: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(viewModel.title)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(Color.noteHit)
-                .lineLimit(1)
-            Text(viewModel.subtitle)
-                .font(.caption2)
-                .foregroundStyle(.white.opacity(0.85))
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .background(RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous).fill(Color.guideFrame))
-        .accessibilityElement(children: .combine)
-    }
-
-    private var clipsCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Clip used")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(Color.noteHit)
-                Spacer()
-                Button {
-                    page = .clips
-                } label: {
-                    Label("See all", systemImage: "chevron.right")
-                        .labelStyle(TrailingIconLabelStyle())
-                        .font(.caption2)
-                        .foregroundStyle(Color.noteHit)
-                        .frame(minHeight: 28)
-                        .contentShape(Rectangle())
-                }
-            }
-
-            HStack(alignment: .top, spacing: clipTileSpacing) {
-                // Always five slots wide, so a few clips keep the same tile size.
-                ForEach(0..<clipsRowCount, id: \.self) { slot in
-                    if slot < viewModel.clips.count {
-                        let clip = viewModel.clips[slot]
-                        VStack(spacing: 4) {
-                            clipTile(clip, selectable: false)
-                            Text(viewModel.timeRange(of: clip))
-                                .font(.system(size: 8))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.6)
-                                .foregroundStyle(.white.opacity(0.85))
-                        }
-                        .frame(maxWidth: .infinity)
-                    } else {
-                        Color.clear.frame(maxWidth: .infinity)
-                    }
-                }
-            }
-        }
-        .padding(16)
-        .background(RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous).fill(Color.guideFrame))
-    }
-
-    // MARK: - All clips
-
-    private var clipsGrid: some View {
+    private var exporting: some View {
         VStack(spacing: 0) {
             HStack {
                 Button {
                     page = .preview
                 } label: {
-                    Label("Back", systemImage: "chevron.left")
-                        .font(.footnote.weight(.medium))
-                        .foregroundStyle(Color.plumInk)
-                        .padding(.horizontal, 12)
-                        .frame(minHeight: 32)
-                        .background(Capsule().fill(.white))
-                        .contentShape(Capsule())
+                    Image(systemName: "xmark")
+                        .font(.title3.weight(.medium))
+                        .foregroundStyle(Color.primary800)
                 }
-                .buttonStyle(.plain)
+                .glassCircleButtonStyle()
+                .accessibilityLabel("Close")
                 Spacer()
             }
-            .frame(minHeight: topBarHeight)
-            .padding(.horizontal, buttonInset)
+            .padding(.horizontal, screenInset)
+            .padding(.top, topBarInset)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Clip used")
-                        .font(.headline)
-                        .foregroundStyle(Color.plumInk)
-                        .accessibilityAddTraits(.isHeader)
-
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: clipTileSpacing), count: 3),
-                              spacing: clipTileSpacing) {
-                        ForEach(viewModel.clips) { clip in
-                            clipTile(clip, selectable: true)
-                        }
-                    }
-                }
-                .padding(.horizontal, clipGridInset)
-                .padding(.top, 8)
+            VStack(spacing: 1) {
+                Text("Exporting…")
+                    .font(.title3.weight(.semibold))
+                    .accessibilityAddTraits(.isHeader)
+                Text("Please don’t close the app or lock your screen.")
+                    .font(.footnote)
             }
-            .scrollBounceBehavior(.basedOnSize)
+            .foregroundStyle(Color.primary800)
+            .multilineTextAlignment(.center)
+            .padding(.top, -12)
+            .padding(.horizontal, screenInset)
 
-            Button("Retake cover", action: onRetake)
-                .buttonStyle(.primaryDeep)
-                .padding(.horizontal, buttonInset)
-                .padding(.bottom, 8)
+            Spacer(minLength: 24)
+
+            ZStack {
+                ExportProgressBorder(progress: exportProgress, lineWidth: exportBorderWidth)
+                exportStill
+                    .clipShape(.rect(cornerRadius: videoCornerRadius, style: .continuous))
+                    .overlay { AnimatedPercent(value: exportProgress) }
+                    .padding(exportVideoInset)
+            }
+            .aspectRatio(exportFrameAspectRatio, contentMode: .fit)
+            .frame(maxWidth: exportFrameWidth)
+            .padding(.horizontal, screenInset)
+
+            Spacer(minLength: 24)
         }
     }
 
-    /// One clip: a frame of it with a play mark; the chosen one has a dark border in the grid.
-    private func clipTile(_ clip: CompingViewModel.Clip, selectable: Bool) -> some View {
-        let isSelected = selectable && viewModel.selectedClipID == clip.id
-        return Button {
-            viewModel.selectClip(clip.id)
-        } label: {
-            Color.clear
-                .aspectRatio(clipTileAspectRatio, contentMode: .fit)
-                .overlay { clipFrame(of: clip) }
-                .overlay(alignment: .bottomTrailing) {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.plumInk)
-                        .padding(8)
-                }
-                .clipShape(.rect(cornerRadius: clipTileCornerRadius))
-                .overlay {
-                    if isSelected {
-                        RoundedRectangle(cornerRadius: clipTileCornerRadius, style: .continuous)
-                            .strokeBorder(Color.plumNight, lineWidth: selectedClipBorder)
-                    }
-                }
+    /// The paused frame of the cover, lightened as in the design.
+    @ViewBuilder
+    private var exportStill: some View {
+        Group {
+            if let player {
+                PlayerLayerView(player: player.player)
+            } else {
+                clipFrame(of: viewModel.clips.first)
+            }
         }
-        .buttonStyle(.plain)
-        .disabled(!selectable)
-        .accessibilityLabel("Clip \(clip.id + 1), \(viewModel.timeRange(of: clip))")
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .overlay(Color.white.opacity(0.3))
+    }
+
+    private func startExport() {
+        player?.pause()
+        exportProgress = 0
+        page = .exporting
+        withAnimation(.easeOut(duration: saveRunUpDuration)) { exportProgress = saveRunUp }
+        Task { await viewModel.saveToPhotos() }
+    }
+
+    private func saveStateChanged(_ state: CompingViewModel.SaveState) {
+        guard page == .exporting else { return }
+        switch state {
+        case .saved:
+            withAnimation(.easeOut(duration: 0.3)) { exportProgress = 1 }
+            Task {
+                try? await Task.sleep(for: exportedAlertDelay)
+                showsExported = true
+            }
+        case .denied, .failed:
+            showsSaveError = true
+        case .idle, .saving:
+            break
+        }
+    }
+
+    private var saveErrorMessage: String {
+        switch viewModel.saveState {
+        case .denied: "Allow access to Photos to save your cover."
+        case .failed(let message): message
+        default: ""
+        }
     }
 
     // MARK: - Failed
@@ -418,55 +540,44 @@ struct ExportPreviewView: View {
             }
             Spacer()
             Button("Create New Cover", action: onStartOver)
-                .buttonStyle(.primaryMuted)
-                .padding(.horizontal, buttonInset)
+                .buttonStyle(.appPrimary)
+                .padding(.horizontal, 24)
                 .padding(.bottom, 8)
-        }
-    }
-
-    // MARK: - Save
-
-    @ViewBuilder
-    private var saveLabel: some View {
-        switch viewModel.saveState {
-        case .saving: Text("Saving…")
-        case .saved: Label("Saved", systemImage: "checkmark")
-        default: Text("Save Cover")
-        }
-    }
-
-    @ViewBuilder
-    private var saveMessage: some View {
-        switch viewModel.saveState {
-        case .denied:
-            VStack(spacing: 4) {
-                Text("Allow access to Photos to save your cover.")
-                Button("Open Settings") {
-                    if let url = URL(string: UIApplication.openSettingsURLString) {
-                        UIApplication.shared.open(url)
-                    }
-                }
-            }
-            .font(.footnote)
-            .foregroundStyle(Color.plumInkSecondary)
-        case .failed(let message):
-            Text("Couldn't save: \(message)")
-                .font(.footnote)
-                .foregroundStyle(.red)
-        default:
-            EmptyView()
         }
     }
 }
 
-/// Title first, icon after it ("See all ›").
-private struct TrailingIconLabelStyle: LabelStyle {
+/// The small plum "Export" capsule of the top bar (Sketch "Primary Button").
+private struct ExportButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var isEnabled
+
     func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 4) {
-            configuration.title
-            configuration.icon
-                .font(.system(size: 8, weight: .semibold))
-        }
+        configuration.label
+            .font(.headline)
+            .foregroundStyle(.white)
+            .padding(.horizontal, 14)
+            .frame(minHeight: 45)
+            .background(Capsule().fill(configuration.isPressed ? Color.primary800 : Color.primaryButton))
+            .opacity(isEnabled ? 1 : 0.5)
+            .contentShape(Capsule())
+    }
+}
+
+/// A percentage that counts along with its animation.
+private struct AnimatedPercent: View, Animatable {
+    var value: Double
+
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+
+    var body: some View {
+        Text(value, format: .percent.precision(.fractionLength(0)))
+            .font(.title.weight(.bold))
+            .monospacedDigit()
+            .foregroundStyle(.white)
+            .accessibilityHidden(true)
     }
 }
 

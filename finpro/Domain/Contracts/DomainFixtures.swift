@@ -52,9 +52,10 @@ nonisolated enum DomainFixtures {
                     start: CMTime(seconds: start - crossfade, preferredTimescale: 600),
                     duration: CMTime(seconds: segment.audioDuration + 2 * crossfade, preferredTimescale: 600)
                 ),
-                accuracyScore: segment.isInstrumentalOnly ? 1.0 : 0.82,
+                accuracyScore: segment.isInstrumentalOnly ? 1.0 : (index == 0 ? 0.82 : 0.6),
                 missedNoteIDs: [],
-                status: .passed
+                // Segment 1 shows a take kept in the cover although it scored below the pass threshold.
+                status: index == 0 ? .passed : .completed
             )
         }
     }
@@ -62,7 +63,7 @@ nonisolated enum DomainFixtures {
     static func compingPlan(configuration: AppConfiguration = .default) -> CompingCompositionPlan {
         let takes = passedTakes(crossfade: configuration.crossfade)
         return CompingCompositionPlan(
-            rawVideoURL: placeholderDirectory.appendingPathComponent("RawMasterVideo.mov"),
+            rawVideoURLs: [placeholderDirectory.appendingPathComponent("RawMasterVideo.mov")],
             instrumentalURL: preparedSong.instrumentalURL,
             segments: segments,
             validTakes: takes,

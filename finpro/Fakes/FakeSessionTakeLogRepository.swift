@@ -22,12 +22,17 @@ nonisolated final class FakeSessionTakeLogRepository: SessionTakeLogRepository, 
     }
 
     func passedTakesPrefix() -> [TakeAttemptLog] {
-        let passed = attempts.withLock { $0.filter { $0.status == .passed } }
+        let all = attempts.withLock { $0 }
         var prefix: [TakeAttemptLog] = []
-        while let take = passed.first(where: { $0.segmentIndex == prefix.count }) {
-            prefix.append(take)
+        // The latest take of a segment is the one that counts; a `.failed` one marks it as deleted.
+        while let latest = all.last(where: { $0.segmentIndex == prefix.count }), latest.status != .failed {
+            prefix.append(latest)
         }
         return prefix
+    }
+
+    func discardAttempts(inPass recordingPass: Int) {
+        attempts.withLock { $0.removeAll { $0.recordingPass == recordingPass } }
     }
 
     func clear() {

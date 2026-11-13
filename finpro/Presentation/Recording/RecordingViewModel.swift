@@ -27,13 +27,6 @@ final class RecordingViewModel {
         case failed(UserFacingError)
     }
 
-    struct SegmentResult: Equatable {
-        let segmentIndex: Int
-        let score: Float
-        let passed: Bool
-        let missedNoteIDs: [UUID]
-    }
-
     /// One point of the user's pitch trail on the song timeline.
     struct TrailPoint {
         let songTime: TimeInterval
@@ -71,18 +64,24 @@ final class RecordingViewModel {
     }
 
     let song: PreparedSong
+    /// The session, a retake of one clip, or continuing the song.
+    let pass: RecordingPass
     /// Synced lyrics on the song timeline (empty when none were found).
     let lyrics: [LyricLine]
     private(set) var status: Status = .starting
     private(set) var loop: LoopStateController
-    private(set) var lastResult: SegmentResult?
     private(set) var trail: [TrailPoint] = []
+    /// Song time at which the part being sung starts (the segment a start or a resume began with);
+    /// notes before it are previous material.
+    private(set) var singingFrom: TimeInterval?
     private(set) var route: AudioOutputRoute
     /// Debug readout: pitch samples in the last second, how many were voiced, and the last note.
     private(set) var pitchStats = PitchStats()
     private(set) var microphoneName: String?
     /// The camera is configured, so its preview can be shown (also while recording starts).
     private(set) var isCameraReady = false
+    /// Retake / continue: the neighbouring clip's frame to line up with (see `RecordingPass.alignmentFrame`).
+    private(set) var alignmentImage: CGImage?
 
     @ObservationIgnored private let capture: any CaptureRepository
     @ObservationIgnored private let playback: any ReferencePlaybackRepository
@@ -93,6 +92,7 @@ final class RecordingViewModel {
     @ObservationIgnored private let onFinish: (CompingCompositionPlan) -> Void
     @ObservationIgnored private let onDiscard: () -> Void
     @ObservationIgnored private let allowsSpeaker: Bool
+    @ObservationIgnored private let frames: any ClipThumbnailProviding
 
     /// Capture-clock time at which song time 0 is heard. Set on every playback start.
     @ObservationIgnored private var anchor: CMTime?
@@ -117,9 +117,13 @@ final class RecordingViewModel {
          configuration: AppConfiguration,
          allowsSpeaker: Bool = false,
          lyrics: [LyricLine] = [],
+         pass: RecordingPass = .session,
+         frames: any ClipThumbnailProviding = AVClipThumbnailProvider(),
          onFinish: @escaping (CompingCompositionPlan) -> Void,
          onDiscard: @escaping () -> Void) {
         self.song = song
+        self.pass = pass
+        self.frames = frames
         self.lyrics = lyrics
         self.capture = capture
         self.playback = playback
@@ -132,7 +136,8 @@ final class RecordingViewModel {
         self.allowsSpeaker = allowsSpeaker
         trailDisplay = StabilizePitchDisplayUseCase(configuration: configuration)
         noteDisplay = StabilizePitchDisplayUseCase(configuration: configuration)
-        loop = LoopStateController(segments: song.segments, configuration: configuration)
+        loop = LoopStateController(segments: song.segments, configuration: configuration,
+                                   range: pass.segmentRange(segmentCount: song.segments.count))
         route = routeMonitor.currentRoute
     }
 
@@ -140,15 +145,16 @@ final class RecordingViewModel {
 
     var previewSource: (any CameraPreviewSource)? { capture as? any CameraPreviewSource }
     var segmentCount: Int { song.segments.count }
-    var passedCount: Int { loop.passedCount }
+    /// Segments sung to the end; they go into the cover.
+    var completedCount: Int { loop.completedCount }
     var showsBluetoothWarning: Bool { route == .bluetooth }
     /// Debug speaker test: recording on the loudspeaker is allowed and flagged on screen.
     var isSpeakerTest: Bool { route == .speaker && allowsSpeaker }
 
-    /// "Segment 3 / 7 · Attempt 2" (index + 1 for display).
+    /// "Segment 3 / 7" (index + 1 for display).
     var progressTitle: String {
         let segment = min(loop.segmentIndex, segmentCount - 1) + 1
-        return "Segment \(segment) / \(segmentCount) · Attempt \(max(loop.currentAttempt, 1))"
+        return "Segment \(segment) / \(segmentCount)"
     }
 
     /// Song time now, from the capture clock; nil before playback started.
@@ -156,18 +162,59 @@ final class RecordingViewModel {
         anchor.map { (capture.currentCaptureTime() - $0).seconds }
     }
 
-    /// What the piano roll shows: live song time while singing; during the TRY AGAIN result and
-    /// countdown it holds on the failed segment so its missed notes stay visible.
+    /// What the piano roll shows: live song time while singing; during the countdown and a pause
+    /// it holds on the start of the segment that will be sung.
     func displaySongTime() -> TimeInterval? {
         switch loop.phase {
-        case .showingResult, .countdown, .paused:
+        case .countdown, .paused:
             loop.currentSegment.map { $0.audioStartTime + Self.heldSegmentLead }
         default:
             currentSongTime()
         }
     }
 
+    /// Share of the song sung so far, 0...1, for the ring of the record button. It stays at the
+    /// start of the current segment during the countdown, the pre-roll and a pause.
+    func songProgress() -> Double {
+        let duration = max(song.duration, 0.001)
+        let segmentStart = loop.currentSegment?.audioStartTime ?? 0
+        let time: TimeInterval
+        switch loop.phase {
+        case .idle: time = 0
+        case .countdown, .preRoll, .paused: time = segmentStart
+        case .singing: time = currentSongTime() ?? segmentStart
+        case .ended: time = duration
+        }
+        return min(max(time / duration, 0), 1)
+    }
+
+    /// Share of the song at which each segment after the first starts.
+    var segmentBoundaries: [Double] {
+        let duration = max(song.duration, 0.001)
+        return song.segments.dropFirst().map { $0.audioStartTime / duration }
+    }
+
     var isPaused: Bool { loop.phase == .paused }
+
+    /// The alignment frame shows until the first note of this pass is played.
+    var showsAlignmentGuide: Bool {
+        guard alignmentImage != nil, singingFrom == nil else { return false }
+        switch status {
+        case .starting, .ready, .recording: return true
+        default: return false
+        }
+    }
+    /// This pass sang something that goes into the cover: a finished segment of the session, or a
+    /// take of this retake or continue that was not deleted.
+    var hasNewTakes: Bool {
+        if pass.isSession { return completedCount > 0 }
+        let latest = Dictionary(grouping: takeLog.allAttempts(), by: \.segmentIndex).compactMapValues(\.last)
+        return latest.values.contains { $0.recordingPass == pass.index && $0.status != .failed }
+    }
+    /// A retake sings one clip, so there is no earlier segment of this pass to delete.
+    var canDeleteSegment: Bool {
+        if case .retake = pass.kind { false } else { true }
+    }
     var canPause: Bool { status == .recording && (loop.canPause || isPaused) }
 
     /// Time since recording started, on the capture clock (display only; cuts never use it).
@@ -194,6 +241,7 @@ final class RecordingViewModel {
         do {
             try await capture.prepare()
             isCameraReady = true
+            await loadAlignmentImage()
             microphoneName = (capture as? any MicrophoneInputProviding)?.microphoneName
             if karaoke.isAvailable {
                 try karaoke.load(song: song)
@@ -211,6 +259,11 @@ final class RecordingViewModel {
                 status = .failed(.recordingFailed(details: error.localizedDescription))
             }
         }
+    }
+
+    private func loadAlignmentImage() async {
+        guard alignmentImage == nil, let frame = pass.alignmentFrame else { return }
+        alignmentImage = await frames.thumbnails(for: frame.videoURL, at: [frame.time]).first ?? nil
     }
 
     /// Starts the camera recording and the loop, after the user confirmed the tips.
@@ -277,10 +330,34 @@ final class RecordingViewModel {
         perform(loop.resume(now: capture.currentCaptureTime().seconds))
     }
 
+    /// Deletes the last finished segment and goes back to sing it again after the countdown (the
+    /// current one when none is finished). Capture keeps running; the deleted take stays in the
+    /// raw video but is marked as removed in the take log, so it never reaches the cover.
+    func deleteLastSegment() {
+        // Not once the last segment is done: the session is already finishing.
+        guard status == .recording, canDeleteSegment, loop.canPause || isPaused else { return }
+        let target = max(loop.range.lowerBound, loop.segmentIndex - 1)
+        if loop.segmentIndex > loop.range.lowerBound,
+           let removed = takeLog.allAttempts().last(where: { $0.segmentIndex == target }), removed.status != .failed {
+            takeLog.logAttempt(TakeAttemptLog(
+                segmentIndex: target,
+                attemptNumber: removed.attemptNumber + 1,
+                recordingPass: pass.index,
+                videoTimeRange: removed.videoTimeRange,
+                accuracyScore: 0,
+                missedNoteIDs: [],
+                status: .failed))
+        }
+        anchor = nil
+        evaluations = []
+        trail = []
+        perform(loop.goBackOneSegment(now: capture.currentCaptureTime().seconds))
+    }
+
     /// End Session → "Export N of M", or the session limit / last segment.
     func finish() async {
         guard let url = await stopCapture() else { return }
-        if let plan = planner.makePlan(rawVideoURL: url, song: song, configuration: configuration) {
+        if let plan = planner.makePlan(rawVideoURLs: pass.earlierRawVideoURLs + [url], song: song, configuration: configuration) {
             onFinish(plan)
         } else {
             status = .interrupted(.nothingToExport)
@@ -293,7 +370,7 @@ final class RecordingViewModel {
         let microphoneMissing = (capture as? any MicrophoneInputProviding)?.isHeadsetMicrophoneActive == false
         if await stopCapture() != nil {
             status = .interrupted(microphoneMissing ? .headsetMicrophoneRequired
-                                  : (passedCount > 0 ? .recordingInterrupted : .nothingToExport))
+                                  : (takeLog.passedTakesPrefix().isEmpty ? .nothingToExport : .recordingInterrupted))
         }
     }
 
@@ -305,14 +382,20 @@ final class RecordingViewModel {
     /// Export what passed before the interruption.
     func exportAfterInterruption() {
         guard let rawVideoURL,
-              let plan = planner.makePlan(rawVideoURL: rawVideoURL, song: song, configuration: configuration) else { return }
+              let plan = planner.makePlan(rawVideoURLs: pass.earlierRawVideoURLs + [rawVideoURL], song: song, configuration: configuration) else { return }
         onFinish(plan)
     }
 
+    /// Drops what this pass recorded. A retake or continue goes back to the cover as it was.
     func discard() async {
         if isCapturing { _ = await stopCapture() }
-        takeLog.clear()
-        SessionFiles.cleanUp()
+        if pass.isSession {
+            takeLog.clear()
+            SessionFiles.cleanUp()
+        } else {
+            takeLog.discardAttempts(inPass: pass.index)
+            if let rawVideoURL { SessionFiles.remove(rawVideoURL) }
+        }
         onDiscard()
     }
 
@@ -372,12 +455,12 @@ final class RecordingViewModel {
         case .none:
             break
         case .startPlayback(let referenceTime):
+            singingFrom = loop.currentSegment?.audioStartTime
             evaluations = []
             trail = []
             trailDisplay.reset()
             noteDisplay.reset()
             displayTargetID = nil
-            lastResult = nil
             do {
                 let heard = try playback.play(from: referenceTime)
                 anchor = heard - CMTime(seconds: referenceTime, preferredTimescale: heard.timescale)
@@ -400,8 +483,7 @@ final class RecordingViewModel {
                 && $0.referenceTime < segment.audioEndTime + configuration.pitchHop
         }
         let result = EvaluateSegmentUseCase(configuration: configuration).execute(segment: segment, evaluations: inSegment)
-        let passed = result.score >= configuration.passThreshold
-        // The take range is what makes comping possible; never pretend a take passed without one.
+        // The take range is what makes comping possible; never pretend a take was kept without one.
         guard let anchor,
               let referenceZero = capture.fileTime(forCaptureTime: anchor),
               let range = TakeRangeBuilder(configuration: configuration).execute(segment: segment, referenceZeroFileTime: referenceZero)
@@ -409,19 +491,18 @@ final class RecordingViewModel {
             Task { await fail(.recordingFailed(details: "This take couldn't be placed on the video timeline.")) }
             return
         }
+        // A segment is never repeated: it is kept whatever its score, which stays in the log.
         takeLog.logAttempt(TakeAttemptLog(
             segmentIndex: index,
-            attemptNumber: loop.currentAttempt,
+            attemptNumber: takeLog.allAttempts().filter { $0.segmentIndex == index }.count + 1,
+            recordingPass: pass.index,
             videoTimeRange: range,
             accuracyScore: result.score,
             missedNoteIDs: result.missedNoteIDs,
-            status: passed ? .passed : .failed))
-        lastResult = SegmentResult(segmentIndex: index, score: result.score, passed: passed, missedNoteIDs: result.missedNoteIDs)
-        if passed {
-            // The next segment is already being sung; keep only its evaluations.
-            evaluations.removeAll { $0.referenceTime < segment.audioEndTime - configuration.pitchHop }
-        }
-        perform(loop.resolve(passed: passed, now: capture.currentCaptureTime().seconds))
+            status: .completed))
+        // The next segment is already being sung; keep only its evaluations.
+        evaluations.removeAll { $0.referenceTime < segment.audioEndTime - configuration.pitchHop }
+        perform(loop.segmentEvaluated())
     }
 
     private func fail(_ error: UserFacingError) async {

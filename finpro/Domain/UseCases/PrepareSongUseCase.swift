@@ -49,20 +49,33 @@ nonisolated struct PrepareSongUseCase: Sendable {
         let vocalRange: VocalRange
         /// Separated stems before transposition (the Ready screen plays them in the original key).
         let stems: SeparatedStems
+        /// When the guide was built from the lyrics: where each word is sung, `[line][word]` in the
+        /// order of the lines passed in. Empty otherwise.
+        var guideWords: [[LyricGuideNotesUseCase.Word]] = []
     }
 
-    /// Separate and analyse once; render only the best fully fitting keys.
+    /// Separate and analyse once; render only the best fully fitting keys. With `lyricLines` (on
+    /// the trimmed timeline), the guide has one note per sung word instead of the raw pitch notes.
     func executeChoices(audioURL: URL, trimRange: ClosedRange<TimeInterval>, vocalRange: VocalRange,
+                        lyricLines: [LyricGuideNotesUseCase.Line] = [],
                         progress: @escaping @Sendable (String) -> Void = { _ in }) async throws -> Choices {
         let (stems, extracted) = try await extract(audioURL: audioURL, trimRange: trimRange, progress: progress)
-        return try await makeChoices(stems: stems, notes: extracted,
-                                     duration: trimRange.upperBound - trimRange.lowerBound,
-                                     vocalRange: vocalRange, progress: progress)
+        let duration = trimRange.upperBound - trimRange.lowerBound
+        let lyricGuide = LyricGuideNotesUseCase().execute(pitchNotes: extracted, lines: lyricLines)
+        guard !lyricGuide.notes.isEmpty else {
+            return try await makeChoices(stems: stems, notes: extracted, duration: duration,
+                                         vocalRange: vocalRange, progress: progress)
+        }
+        var choices = try await makeChoices(stems: stems, notes: lyricGuide.notes, duration: duration,
+                                            vocalRange: vocalRange, simplifies: false, progress: progress)
+        choices.guideWords = lyricGuide.words
+        return choices
     }
 
-    /// Also used by the demo, whose original guide is already known.
+    /// Also used by the demo, whose original guide is already known. `simplifies` merges and
+    /// bridges pitch fragments; a guide built from the lyrics is already one note per word.
     func makeChoices(stems: SeparatedStems, notes: [TargetMIDINote], duration: TimeInterval,
-                     vocalRange: VocalRange,
+                     vocalRange: VocalRange, simplifies: Bool = true,
                      progress: @escaping @Sendable (String) -> Void = { _ in }) async throws -> Choices {
         let slicer = SliceSegmentsUseCase(configuration: configuration)
         // Sanitise timestamps without simplifying away extremes or changing note durations.
@@ -73,7 +86,8 @@ nonisolated struct PrepareSongUseCase: Sendable {
         let recommender = RecommendKeysUseCase(configuration: configuration)
         let recommendations = try recommender.execute(notes: original, vocalRange: vocalRange)
         let excerpt = recommender.highestPhrase(notes: original, duration: duration)
-        let segments = try slicer.execute(notes: SimplifyGuideUseCase(configuration: configuration).execute(original), duration: duration)
+        let guide = simplifies ? SimplifyGuideUseCase(configuration: configuration).execute(original) : original
+        let segments = try slicer.execute(notes: guide, duration: duration)
         var options: [Choices.Option] = []
         for (index, recommendation) in recommendations.enumerated() {
             try Task.checkCancellation()

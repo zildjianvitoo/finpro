@@ -10,10 +10,20 @@ import CoreMedia
 import Foundation
 
 nonisolated enum SegmentAttemptStatus: String, Sendable, Codable {
+    /// Scored at or above the pass threshold (the session repeated failed segments).
     case passed
     case failed
+    /// Sung to the end and kept in the cover whatever the score (the session no longer repeats
+    /// segments); `accuracyScore` still holds the measured score.
+    case completed
 
-    var displayLabel: String { self == .passed ? "PASSED" : "TRY AGAIN" }
+    var displayLabel: String {
+        switch self {
+        case .passed: "PASSED"
+        case .completed: "DONE"
+        case .failed: "TRY AGAIN"
+        }
+    }
 }
 
 nonisolated struct TakeAttemptLog: Identifiable, Sendable {
@@ -22,7 +32,10 @@ nonisolated struct TakeAttemptLog: Identifiable, Sendable {
     let segmentIndex: Int
     /// 1-based, per segment.
     let attemptNumber: Int
-    /// File time inside RawMasterVideo.mov, aligned to what the user heard
+    /// Zero-based recording pass the take was sung in: 0 is the session, then one per retake or
+    /// continue. Each pass has its own raw video, `CompingCompositionPlan.rawVideoURLs[recordingPass]`.
+    let recordingPass: Int
+    /// File time inside the raw video of `recordingPass`, aligned to what the user heard
     /// (latency compensated), INCLUDING the crossfade handle on both sides.
     let videoTimeRange: CMTimeRange
     /// 0.0 ... 1.0
@@ -30,10 +43,12 @@ nonisolated struct TakeAttemptLog: Identifiable, Sendable {
     let missedNoteIDs: [UUID]
     let status: SegmentAttemptStatus
 
-    init(id: UUID = UUID(), segmentIndex: Int, attemptNumber: Int, videoTimeRange: CMTimeRange, accuracyScore: Float, missedNoteIDs: [UUID], status: SegmentAttemptStatus) {
+    init(id: UUID = UUID(), segmentIndex: Int, attemptNumber: Int, recordingPass: Int = 0, videoTimeRange: CMTimeRange,
+         accuracyScore: Float, missedNoteIDs: [UUID], status: SegmentAttemptStatus) {
         self.id = id
         self.segmentIndex = segmentIndex
         self.attemptNumber = attemptNumber
+        self.recordingPass = recordingPass
         self.videoTimeRange = videoTimeRange
         self.accuracyScore = accuracyScore
         self.missedNoteIDs = missedNoteIDs

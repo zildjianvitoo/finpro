@@ -7,6 +7,7 @@
 //  goes through one place and is checked against the contracts.
 //
 
+import CoreMedia
 import Foundation
 import Observation
 
@@ -34,6 +35,8 @@ final class AppFlow {
     /// Stems of the chosen song before transposition (Ready screen, original key).
     var separatedStems: SeparatedStems? { keyChoices?.stems }
     private(set) var compingPlan: CompingCompositionPlan?
+    /// What the recording screen records next: the session, or a retake / continue of the cover.
+    private(set) var recordingPass = RecordingPass.session
     /// Lyrics of the chosen part on the prepared song's timeline, for the recording screen.
     private(set) var recordingLyrics: [LyricLine] = []
     /// "Artist - Title" of the imported song, for the final result screens (nil for the demo).
@@ -149,7 +152,12 @@ final class AppFlow {
             let choices = try await prepare.makeChoices(stems: stems, notes: demo.segments.flatMap(\.targetNotes),
                                                         duration: demo.duration, vocalRange: range)
             guard step == .importSong else { return }
+            #if DEBUG
+            // The demo has no lyrics; placeholder lines let the lyrics settings be tried.
+            keysPrepared(choices, lyrics: DummyLyricsProvider.placeholder(duration: demo.duration).lines)
+            #else
             keysPrepared(choices)
+            #endif
         } catch {
             preparationError = .keyPreparationFailed
         }
@@ -157,15 +165,52 @@ final class AppFlow {
 
     /// Ready screen: user tapped Record. A new session starts, so files from the last one go (ZV-16).
     func startRecording() {
+        guard preparedSong != nil else { return }
+        container.takeLog.clear()
+        SessionFiles.cleanUp()
+        try? SessionFiles.prepareDirectory()
+        // A new cover: its first recording locks the camera look again.
+        (container.capture as? any CameraLookLocking)?.resetCameraLook()
+        record(.session)
+    }
+
+    /// Final result screen: sing one clip again; its new take replaces the old one in the cover.
+    func retakeClip(segment: Int) {
+        guard let compingPlan else { return }
+        // Line up with the end of the clip before it; for the first clip, the start of the one after.
+        let frame = segment > 0 ? alignmentFrame(compingPlan, takeAt: segment - 1, atEnd: true)
+            : alignmentFrame(compingPlan, takeAt: segment + 1, atEnd: false)
+        record(RecordingPass(kind: .retake(segment: segment), earlierRawVideoURLs: compingPlan.rawVideoURLs,
+                             alignmentFrame: frame))
+    }
+
+    /// Final result screen: the session ended early; sing on from the first segment not in the cover.
+    func continueRecording() {
+        guard let compingPlan, compingPlan.isPartial else { return }
+        record(RecordingPass(kind: .continueFrom(segment: compingPlan.validTakes.count),
+                             earlierRawVideoURLs: compingPlan.rawVideoURLs,
+                             alignmentFrame: alignmentFrame(compingPlan, takeAt: compingPlan.validTakes.count - 1, atEnd: true)))
+    }
+
+    /// The frame where a take of the cover meets its neighbour (its handles excluded).
+    private func alignmentFrame(_ plan: CompingCompositionPlan, takeAt position: Int, atEnd: Bool) -> RecordingPass.AlignmentFrame? {
+        guard plan.validTakes.indices.contains(position) else { return nil }
+        let take = plan.validTakes[position]
+        guard plan.rawVideoURLs.indices.contains(take.recordingPass) else { return nil }
+        let handle = plan.crossfadeDuration.seconds
+        let time = atEnd ? take.videoTimeRange.end.seconds - handle : take.videoTimeRange.start.seconds + handle
+        return RecordingPass.AlignmentFrame(videoURL: plan.rawVideoURLs[take.recordingPass], time: time)
+    }
+
+    /// Opens the recording screen for a pass. The take log and earlier raw videos are kept.
+    private func record(_ pass: RecordingPass) {
         guard let preparedSong else { return }
         // A key preview from the previous screens must not play over the recording.
         container.audioPreview.stop()
         #if DEBUG
         container.simulatedSinger?.prepare(song: preparedSong)
         #endif
-        container.takeLog.clear()
-        SessionFiles.cleanUp()
-        try? SessionFiles.prepareDirectory()
+        recordingPass = pass
         step = .recording
     }
 
@@ -177,7 +222,12 @@ final class AppFlow {
     }
 
     /// Recording screen (Takin) ended with nothing passed, or the user discarded the session.
+    /// A discarded retake or continue goes back to the cover as it was.
     func sessionDiscarded() {
+        if !recordingPass.isSession, compingPlan != nil {
+            step = .export
+            return
+        }
         container.takeLog.clear()
         step = .ready
     }

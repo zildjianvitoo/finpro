@@ -73,7 +73,8 @@ struct RootView: View {
             case .export:
                 if let plan = flow.compingPlan {
                     ExportPreviewView(viewModel: makeCompingViewModel(plan: plan), onRetake: flow.retakeCover,
-                                      onStartOver: flow.startOver)
+                                      onStartOver: flow.startOver, onRetakeClip: flow.retakeClip(segment:),
+                                      onContinue: flow.continueRecording)
                 }
             }
         }
@@ -144,6 +145,7 @@ struct RootView: View {
             configuration: container.configuration,
             allowsSpeaker: DebugOptions.allowsSpeakerRecording,
             lyrics: flow.recordingLyrics,
+            pass: flow.recordingPass,
             onFinish: flow.sessionEnded,
             onDiscard: flow.sessionDiscarded)
     }
@@ -154,7 +156,8 @@ struct RootView: View {
             plan: plan,
             songName: flow.songName,
             useCase: AutoCompingVideoUseCase(takeLog: container.takeLog, videoComposition: container.videoComposition),
-            videoLibrary: container.videoLibrary)
+            videoLibrary: container.videoLibrary,
+            passThreshold: container.configuration.passThreshold)
     }
 }
 

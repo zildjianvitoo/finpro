@@ -129,15 +129,18 @@ func muxRawRecording(video: URL, audio: URL, to url: URL) async throws {
 
 // MARK: - Plan
 
-func plan(takeCount: Int, rawURL: URL, instrumentalURL: URL, instrumentalGain: Float) -> CompingCompositionPlan {
+/// `passes[i]`: the recording pass take i comes from, an index into `rawURLs` (all pass 0 by default).
+func plan(takeCount: Int, rawURL: URL, instrumentalURL: URL, instrumentalGain: Float,
+          extraPassURLs: [URL] = [], passes: [Int] = []) -> CompingCompositionPlan {
     let takes = (0..<takeCount).map { index in
         TakeAttemptLog(segmentIndex: index, attemptNumber: index + 1,
+                       recordingPass: passes.indices.contains(index) ? passes[index] : 0,
                        videoTimeRange: CMTimeRange(start: CMTime(seconds: takeStartsInRaw[index] - crossfade, preferredTimescale: 48_000),
                                                    duration: CMTime(seconds: segments[index].audioDuration + 2 * crossfade, preferredTimescale: 48_000)),
                        accuracyScore: 0.9, missedNoteIDs: [], status: .passed)
     }
     let isPartial = takeCount < segments.count
-    return CompingCompositionPlan(rawVideoURL: rawURL, instrumentalURL: instrumentalURL, segments: segments,
+    return CompingCompositionPlan(rawVideoURLs: [rawURL] + extraPassURLs, instrumentalURL: instrumentalURL, segments: segments,
                                   validTakes: takes, endTime: segments[takeCount - 1].audioEndTime,
                                   crossfadeDuration: CMTime(seconds: crossfade, preferredTimescale: 48_000),
                                   instrumentalFadeOut: isPartial ? 1.0 : 0, vocalGain: 1.0, instrumentalGain: instrumentalGain)
@@ -203,6 +206,35 @@ func clickTimes(in samples: [Float]) -> [TimeInterval] {
 func maxStep(in samples: [Float], around seconds: TimeInterval, window: TimeInterval) -> Float {
     let start = max(1, Int((seconds - window) * sampleRate)), end = min(samples.count, Int((seconds + window) * sampleRate))
     return (start..<end).map { abs(samples[$0] - samples[$0 - 1]) }.max() ?? 0
+}
+
+// MARK: - Face alignment at cuts (pure math, no video)
+
+do {
+    let frame = CGSize(width: 1080, height: 1920)
+    let face = FaceCutAligner.Face(center: CGPoint(x: 540, y: 800), height: 400)
+    check("align: same face is left alone",
+          FaceCutAligner.correction(moving: face, onto: face, renderSize: frame) == nil, "no correction")
+
+    let shifted = FaceCutAligner.Face(center: CGPoint(x: 580, y: 800), height: 400)
+    let toLeft = FaceCutAligner.correction(moving: shifted, onto: face, renderSize: frame)
+    let moved = toLeft.map { shifted.center.applying($0) }
+    check("align: a shifted face lands on the target",
+          moved.map { abs($0.x - face.center.x) < 0.5 && abs($0.y - face.center.y) < 0.5 } ?? false,
+          "face centre \(moved.map { String(format: "%.1f, %.1f", $0.x, $0.y) } ?? "–") (target 540, 800)")
+
+    let far = FaceCutAligner.Face(center: CGPoint(x: 940, y: 1300), height: 300)
+    let corners = FaceCutAligner.correction(moving: far, onto: face, renderSize: frame).map {
+        [CGPoint.zero.applying($0), CGPoint(x: frame.width, y: frame.height).applying($0)]
+    }
+    let covers = corners.map { $0[0].x <= 0.5 && $0[0].y <= 0.5 && $0[1].x >= frame.width - 0.5 && $0[1].y >= frame.height - 0.5 } ?? false
+    let zoom = corners.map { ($0[1].x - $0[0].x) / frame.width } ?? 0
+    check("align: a far-off face never shows the frame edge", covers && zoom <= FaceCutAligner.maximumZoom + 1e-6,
+          String(format: "zoom %.3f (limit %.2f), frame still covered", zoom, FaceCutAligner.maximumZoom))
+
+    let closer = FaceCutAligner.Face(center: CGPoint(x: 540, y: 800), height: 600)
+    let noShrink = FaceCutAligner.correction(moving: closer, onto: face, renderSize: frame)
+    check("align: a bigger face is never zoomed out", noShrink == nil, "no correction (zooming out would show the edges)")
 }
 
 // MARK: - Run
@@ -284,6 +316,24 @@ Task {
         let partialDuration = try await AVURLAsset(url: partialURL).load(.duration).seconds
         check("partial export", abs(partialDuration - 9) < 0.05, String(format: "%.3f s (expected 9.000)", partialDuration))
 
+        // Retake: the middle take comes from a second raw file (a copy of the first, so the
+        // result must match the single-file export frame for frame).
+        let retakeRawURL = outputDirectory.appendingPathComponent("RawMasterVideo-pass1.mov")
+        try? FileManager.default.removeItem(at: retakeRawURL)
+        try FileManager.default.copyItem(at: rawURL, to: retakeRawURL)
+        let retakeDirectory = outputDirectory.appendingPathComponent("retake", isDirectory: true)
+        try FileManager.default.createDirectory(at: retakeDirectory, withIntermediateDirectories: true)
+        let retakeURL = try await VideoCompositionRepositoryImpl(outputURL: retakeDirectory.appendingPathComponent("FinalCoverVideo.mp4"))
+            .stitchAndExport(plan: plan(takeCount: 3, rawURL: rawURL, instrumentalURL: instrumentalURL, instrumentalGain: 0,
+                                        extraPassURLs: [retakeRawURL], passes: [0, 1, 0])) { _ in }
+        let retakeFrames = try await centerColors(AVURLAsset(url: retakeURL))
+        let retakeFrameError = [0.5, 7.5, 12.0].map { distance(color(at: $0, in: retakeFrames), color(at: $0, in: fullFrames)) }.max() ?? 99
+        let retakeClicks = clickTimes(in: try await decodeAudio(AVURLAsset(url: retakeURL)))
+        let retakeSync = (clickSongTimes.map { expected in retakeClicks.map { abs($0 - expected) }.min() ?? .infinity }.max() ?? .infinity) * 1000
+        check("takes from two raw files", retakeFrameError <= sameFrame && retakeClicks.count == clickSongTimes.count && retakeSync < 5,
+              String(format: "frame difference %d (limit %d), %d/%d beats, worst offset %.1f ms", retakeFrameError, sameFrame,
+                     retakeClicks.count, clickSongTimes.count, retakeSync))
+
         // Orientation: portrait raw stays portrait; landscape frames with a 90° transform
         // (devices that ignore the connection's rotation) also come out portrait, unsqueezed.
         let landscapeVideoURL = outputDirectory.appendingPathComponent("raw-video-landscape.mov")
@@ -300,6 +350,11 @@ Task {
             let shown = size.applying(transform)
             return CGSize(width: abs(shown.width), height: abs(shown.height))
         }
+        // The rotated raw must show its picture, not black: its frame lands in the render area.
+        let rotatedFrames = try await centerColors(AVURLAsset(url: rotatedURL))
+        let rotatedBrightness = rotatedFrames.map { $0.rgb.reduce(0, +) }.max() ?? 0
+        check("landscape raw is visible", rotatedBrightness > 60,
+              "brightest centre pixel sum \(rotatedBrightness) over \(rotatedFrames.count) frames (0 = black)")
         let portraitShown = try await displaySize(fullURL), rotatedShown = try await displaySize(rotatedURL)
         let ratio = { (size: CGSize) in size.height / size.width }
         check("portrait output", abs(ratio(portraitShown) - 16.0 / 9) < 0.02 && abs(ratio(rotatedShown) - 16.0 / 9) < 0.02,
