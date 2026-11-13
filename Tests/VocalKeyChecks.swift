@@ -14,7 +14,7 @@ nonisolated final class ScriptedPitchSource: LivePitchSource {
         let note = notes[min(index, notes.count - 1)]
         index += 1
         return AsyncStream { continuation in
-            for frame in 0..<(frames?.count ?? 141) {
+            for frame in 0..<(frames?.count ?? 501) {
                 let midi = frames.map { $0[frame] } ?? note.map { $0 + (frame.isMultiple(of: 2) ? Float(0.1) : -0.1) }
                 continuation.yield(PitchSample(captureTime: CMTime(seconds: Double(frame) * 0.05, preferredTimescale: 60000),
                     frequency: midi.map { Float(440 * pow(2, Double($0 - 69) / 12)) }, rmsDecibels: -20))
@@ -103,9 +103,9 @@ struct VocalKeyChecks {
         let highLong = try recommender.execute(notes: [note(60, 0, 1), note(72, 1, 9)], vocalRange: VocalRange(lowestMIDI: 60, highestMIDI: 76))
         try check(lowLong[0].plan.semitoneShift > highLong[0].plan.semitoneShift, "duration weights change the best key")
         let weighted = try recommender.execute(notes: [note(61, 0, 1), note(67, 1, 3)], vocalRange: VocalRange(lowestMIDI: 60, highestMIDI: 68))
-        try check(weighted[0].plan == .none && abs(weighted[0].penalty - 25) < 0.000001, "quadratic penalty is duration-weighted and uses span/4 for a narrow range")
+        try check(weighted[0].plan.semitoneShift == -1 && abs(weighted[0].penalty - 53.125) < 0.000001, "quadratic penalty measures distance from the center of the entire range")
         let narrow = try recommender.execute(notes: [note(61)], vocalRange: VocalRange(lowestMIDI: 60, highestMIDI: 64))
-        try check(narrow[0].plan.semitoneShift == 0 && narrow[0].penalty == 0, "narrow ranges use span/4 band and deterministic zero-penalty ties")
+        try check(narrow[0].plan.semitoneShift == 1 && narrow[0].penalty == 0, "a narrow melody is shifted into the middle of a narrow vocal range")
         for bounds in [(Float(60),Float(60)), (.nan,72), (60,.infinity), (72,60)] {
             var rejected = false
             do {
@@ -145,7 +145,7 @@ struct VocalKeyChecks {
         try check(chosen == nil, "explicit choice is required")
         selection.listen(1)
         for _ in 0..<1000 { if selection.loadingIndex == nil { break }; await Task.yield() }
-        try check(preview.playedURL == choices.options[1].song.instrumentalURL && preview.interval == choices.excerpt, "preview plays instrumental, at the same highest phrase")
+        try check(preview.playedURL == choices.options[1].song.earphoneMixURL && preview.interval == choices.excerpt, "preview includes reference vocals at the same highest phrase")
         let oldCompletion = preview.completion
         selection.listen(2)
         for _ in 0..<1000 { if selection.loadingIndex == nil { break }; await Task.yield() }
@@ -186,7 +186,7 @@ struct VocalKeyChecks {
         let missingMic = VocalRangeViewModel(source: UnavailableMicrophone(), repository: FakeVocalRangeRepository(), configuration: .default, onSaved: {})
         await capture(missingMic)
         try check(missingMic.status == .failed(.headsetMicrophoneRequired), "missing headset produces an actionable error")
-        let unstableSource = ScriptedPitchSource(frames: (0...140).map { $0.isMultiple(of: 2) ? Float(48) : Float(52) })
+        let unstableSource = ScriptedPitchSource(frames: (0...500).map { $0.isMultiple(of: 2) ? Float(48) : Float(52) })
         let unstable = VocalRangeViewModel(source: unstableSource, repository: FakeVocalRangeRepository(), configuration: .default, onSaved: {})
         await capture(unstable)
         unstable.next()

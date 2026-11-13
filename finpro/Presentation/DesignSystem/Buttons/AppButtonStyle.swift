@@ -14,13 +14,14 @@ struct AppButtonStyle: ButtonStyle {
         case primary
         /// Lime accent, the "Secondary Button" in Sketch.
         case accent
+        case secondary
     }
 
     var kind: Kind = .primary
 
     @Environment(\.isEnabled) private var isEnabled
 
-    private let height: CGFloat = 56
+    private let height = AppLayout.buttonHeight
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
@@ -41,11 +42,13 @@ struct AppButtonStyle: ButtonStyle {
         switch kind {
         case .primary: return isPressed ? .primary800 : .primaryButton
         case .accent: return isPressed ? .secondary500 : .smallButton
+        case .secondary: return isPressed ? .primary100 : .secondaryButton
         }
     }
 }
 
 extension ButtonStyle where Self == AppButtonStyle {
     static var appPrimary: AppButtonStyle { AppButtonStyle(kind: .primary) }
+    static var appSecondary: AppButtonStyle { AppButtonStyle(kind: .secondary) }
     static var appAccent: AppButtonStyle { AppButtonStyle(kind: .accent) }
 }

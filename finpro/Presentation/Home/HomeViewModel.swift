@@ -21,9 +21,13 @@ final class HomeViewModel {
         let date: Date
         let duration: TimeInterval
         let status: Status
-        // TODO(logic): Add video thumbnail URL or asset reference
+        var videoURL: URL? = nil
     }
 
+    let songLibrary: SongLibrary
+    let coverLibrary: CoverLibrary?
+    private let onSongs: () -> Void
+    private let onOpenSong: (SavedSong) -> Void
     private let vocalRangeRepository: VocalRangeRepository
     private let onStartCreateCover: () -> Void
     private let onRetestVocalRangeAction: () -> Void
@@ -37,18 +41,31 @@ final class HomeViewModel {
         return "\(low)-\(high)"
     }
 
-    /// Empty until saved covers are wired up; the screen then shows its empty state.
-    // TODO(logic): connect to saved recent covers library / photo album
-    private(set) var recentCovers: [RecentCoverItem]
+    /// Saved exports and partial covers; fixtures can still be injected for previews.
+    private var previewCovers: [RecentCoverItem]
+    var recentCovers: [RecentCoverItem] {
+        guard let coverLibrary else { return previewCovers }
+        return coverLibrary.covers.map {
+            RecentCoverItem(id: $0.id, title: $0.title, date: $0.date, duration: $0.duration,
+                            status: $0.isDraft ? .draft : .finished, videoURL: coverLibrary.url(for: $0))
+        }
+    }
 
     init(
         vocalRangeRepository: VocalRangeRepository,
         recentCovers: [RecentCoverItem] = [],
+        songLibrary: SongLibrary = SongLibrary(), coverLibrary: CoverLibrary? = nil,
+        onSongs: @escaping () -> Void = {},
+        onOpenSong: @escaping (SavedSong) -> Void = { _ in },
         onCreateCover: @escaping () -> Void,
         onRetestVocalRange: @escaping () -> Void
     ) {
+        self.songLibrary = songLibrary
+        self.coverLibrary = coverLibrary
+        self.onSongs = onSongs
+        self.onOpenSong = onOpenSong
         self.vocalRangeRepository = vocalRangeRepository
-        self.recentCovers = recentCovers
+        self.previewCovers = recentCovers
         self.onStartCreateCover = onCreateCover
         self.onRetestVocalRangeAction = onRetestVocalRange
     }
@@ -61,9 +78,8 @@ final class HomeViewModel {
         onRetestVocalRangeAction()
     }
 
-    func seeAllTapped() {
-        // TODO(logic): open full recent covers list or gallery
-    }
+    func songsTapped() { onSongs() }
+    func openSong(_ song: SavedSong) { onOpenSong(song) }
 }
 
 #if DEBUG

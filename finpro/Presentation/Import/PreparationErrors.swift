@@ -11,7 +11,8 @@ extension CoreMLSeparationError: UserFacingConvertible {
     var userFacingError: UserFacingError {
         switch self {
         case .drmProtected: .protectedFile
-        case .unreadable, .invalidTrim, .modelUnavailable: .unreadableFile
+        case .unreadable, .invalidTrim: .unreadableFile
+        case .modelUnavailable: .separationFailed
         }
     }
 }

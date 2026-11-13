@@ -5,7 +5,7 @@
 
 import Foundation
 
-/// Duration-weighted edge penalty. Only keys whose entire melody fits are returned.
+/// Extremes and duration-weighted distance from the center of the tested range. Only keys whose entire melody fits are returned.
 nonisolated struct RecommendKeysUseCase: Sendable {
     struct Recommendation: Sendable, Equatable {
         let plan: TranspositionPlan
@@ -25,9 +25,10 @@ nonisolated struct RecommendKeysUseCase: Sendable {
         guard notes.allSatisfy({ (0...127).contains($0.midiNote) && $0.duration.isFinite && $0.duration > 0 }) else {
             throw ContractViolation(contract: "KeyRecommendations", message: "Invalid guide notes.")
         }
-        let band = min(configuration.rangePenaltyBand, (high - low) / configuration.rangePenaltySpanDivisor)
+        let halfSpan = (high - low) / 2
+        let extremesWeight = configuration.rangePenaltyExtremesWeight
         let totalDuration = notes.reduce(0) { $0 + $1.duration }
-        guard band > 0, totalDuration.isFinite else {
+        guard halfSpan > 0, totalDuration.isFinite, (0...1).contains(extremesWeight) else {
             throw ContractViolation(contract: "KeyRecommendations", message: "Invalid scoring configuration.")
         }
         // Audio and targets must use exactly the same shift. Target-only octave shifts
@@ -35,13 +36,17 @@ nonisolated struct RecommendKeysUseCase: Sendable {
         let candidates = TranspositionPlan.semitoneRange.compactMap { shift -> Recommendation? in
             let pitches = notes.map { $0.midiNote + shift }
             guard pitches.allSatisfy({ (0...127).contains($0) && Double($0) >= low && Double($0) <= high }) else { return nil }
-            let weighted = zip(notes, pitches).reduce(0.0) { sum, pair in
-                let distance = min(Double(pair.1) - low, high - Double(pair.1))
-                let edge = max(0, 1 - distance / band)
-                return sum + edge * edge * pair.0.duration
+            func edgeCost(_ pitch: Int) -> Double {
+                let distance = min(Double(pitch) - low, high - Double(pitch))
+                let edge = max(0, 1 - distance / halfSpan)
+                return edge * edge
             }
+            let weighted = zip(notes, pitches).reduce(0.0) { $0 + edgeCost($1.1) * $1.0.duration } / totalDuration
+            // Even a brief high/low note matters, and sustained notes still affect comfort.
+            let extremes = (edgeCost(pitches.min()!) + edgeCost(pitches.max()!)) / 2
+            let penalty = extremesWeight * extremes + (1 - extremesWeight) * weighted
             return Recommendation(plan: TranspositionPlan(octaveShift: 0, semitoneShift: shift),
-                                  penalty: 100 * weighted / totalDuration,
+                                  penalty: 100 * penalty,
                                   lowestMIDI: pitches.min()!, highestMIDI: pitches.max()!)
         }
         return Array(candidates.sorted {

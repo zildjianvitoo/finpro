@@ -58,16 +58,19 @@ nonisolated struct PrepareSongUseCase: Sendable {
     /// the trimmed timeline), the guide has one note per sung word instead of the raw pitch notes.
     func executeChoices(audioURL: URL, trimRange: ClosedRange<TimeInterval>, vocalRange: VocalRange,
                         lyricLines: [LyricGuideNotesUseCase.Line] = [],
+                        recommendationLimit: Int? = nil,
                         progress: @escaping @Sendable (String) -> Void = { _ in }) async throws -> Choices {
         let (stems, extracted) = try await extract(audioURL: audioURL, trimRange: trimRange, progress: progress)
         let duration = trimRange.upperBound - trimRange.lowerBound
         let lyricGuide = LyricGuideNotesUseCase().execute(pitchNotes: extracted, lines: lyricLines)
         guard !lyricGuide.notes.isEmpty else {
             return try await makeChoices(stems: stems, notes: extracted, duration: duration,
-                                         vocalRange: vocalRange, progress: progress)
+                                         vocalRange: vocalRange, recommendationLimit: recommendationLimit,
+                                         progress: progress)
         }
         var choices = try await makeChoices(stems: stems, notes: lyricGuide.notes, duration: duration,
-                                            vocalRange: vocalRange, simplifies: false, progress: progress)
+                                            vocalRange: vocalRange, simplifies: false,
+                                            recommendationLimit: recommendationLimit, progress: progress)
         choices.guideWords = lyricGuide.words
         return choices
     }
@@ -75,7 +78,7 @@ nonisolated struct PrepareSongUseCase: Sendable {
     /// Also used by the demo, whose original guide is already known. `simplifies` merges and
     /// bridges pitch fragments; a guide built from the lyrics is already one note per word.
     func makeChoices(stems: SeparatedStems, notes: [TargetMIDINote], duration: TimeInterval,
-                     vocalRange: VocalRange, simplifies: Bool = true,
+                     vocalRange: VocalRange, simplifies: Bool = true, recommendationLimit: Int? = nil,
                      progress: @escaping @Sendable (String) -> Void = { _ in }) async throws -> Choices {
         let slicer = SliceSegmentsUseCase(configuration: configuration)
         // Sanitise timestamps without simplifying away extremes or changing note durations.
@@ -84,7 +87,8 @@ nonisolated struct PrepareSongUseCase: Sendable {
             throw ContractViolation(contract: "Preparation", message: "No guide notes detected.")
         }
         let recommender = RecommendKeysUseCase(configuration: configuration)
-        let recommendations = try recommender.execute(notes: original, vocalRange: vocalRange)
+        let ranked = try recommender.execute(notes: original, vocalRange: vocalRange)
+        let recommendations = Array(ranked.prefix(max(0, recommendationLimit ?? ranked.count)))
         let excerpt = recommender.highestPhrase(notes: original, duration: duration)
         let guide = simplifies ? SimplifyGuideUseCase(configuration: configuration).execute(original) : original
         let segments = try slicer.execute(notes: guide, duration: duration)

@@ -47,19 +47,22 @@ final class CompingViewModel {
 
     private let useCase: AutoCompingVideoUseCase
     private let videoLibrary: any VideoLibrarySaving
+    private let onExported: (URL) -> Void
     private let thumbnailProvider: any ClipThumbnailProviding
     private let passThreshold: Float
 
     init(plan: CompingCompositionPlan, songName: String? = nil, useCase: AutoCompingVideoUseCase,
          videoLibrary: any VideoLibrarySaving,
          thumbnailProvider: any ClipThumbnailProviding = AVClipThumbnailProvider(),
-         passThreshold: Float = AppConfiguration().passThreshold) {
+         passThreshold: Float = AppConfiguration().passThreshold,
+         onExported: @escaping (URL) -> Void = { _ in }) {
         self.plan = plan
         self.songName = songName
         self.useCase = useCase
         self.videoLibrary = videoLibrary
         self.thumbnailProvider = thumbnailProvider
         self.passThreshold = passThreshold
+        self.onExported = onExported
         selectedClipID = plan.validTakes.first?.segmentIndex
     }
 
@@ -127,6 +130,7 @@ final class CompingViewModel {
                     self.exportState = .exporting(progress: progress)
                 }
             }
+            if FileManager.default.fileExists(atPath: url.path) { onExported(url) }
             exportState = .finished(url)
             await loadThumbnails(from: url)
         } catch {

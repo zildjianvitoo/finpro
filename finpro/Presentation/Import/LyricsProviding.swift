@@ -8,13 +8,13 @@
 
 import Foundation
 
-nonisolated struct LyricWord: Equatable, Sendable {
+nonisolated struct LyricWord: Equatable, Sendable, Codable {
     let text: String
     let start: TimeInterval
     let end: TimeInterval
 }
 
-nonisolated struct LyricLine: Equatable, Sendable, Identifiable {
+nonisolated struct LyricLine: Equatable, Sendable, Identifiable, Codable {
     let id: Int
     let text: String
     let start: TimeInterval
@@ -24,7 +24,7 @@ nonisolated struct LyricLine: Equatable, Sendable, Identifiable {
     let words: [LyricWord]
 }
 
-nonisolated struct SongLyrics: Equatable, Sendable {
+nonisolated struct SongLyrics: Equatable, Sendable, Codable {
     let lines: [LyricLine]
     /// Indices into `lines` of the chorus' first occurrence (the most repeated block), if any.
     let chorus: Range<Int>?
