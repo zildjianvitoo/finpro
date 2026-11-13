@@ -46,7 +46,7 @@ struct CoverListView: View {
                 .disabled(viewModel.recentCovers.isEmpty)
                 if selecting {
                     Button(role: .destructive) { confirmsDelete = true } label: {
-                        Image(systemName: "trash").foregroundStyle(Color.primaryBrand)
+                        Image(systemName: "trash.fill").foregroundStyle(Color.primaryBrand)
                     }
                         .buttonStyle(.appIcon(.glass))
                         .disabled(selectedIDs.isEmpty)

@@ -126,8 +126,8 @@ struct ImportSongView: View {
                 }
             SongSectionLyrics(viewModel: viewModel)
             Spacer(minLength: AppSpacing.regular)
-            SongSectionWaveform(viewModel: viewModel, audio: audio, style: isEditingSavedSong ? .library : .clip)
-                .frame(height: isEditingSavedSong ? 64 : 86)
+            SongSectionWaveform(viewModel: viewModel, audio: audio)
+                .frame(height: isEditingSavedSong ? 72 : 86)
                 // The waveform scrolls off the sheet's edges (design 4.3).
                 .padding(.horizontal, -AppSpacing.large)
             HStack {

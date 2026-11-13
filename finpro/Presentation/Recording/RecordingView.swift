@@ -428,44 +428,40 @@ struct RecordingView: View {
 
     // MARK: - Tips
 
+    /// Light alert card over a dimmed screen (Sketch "TestFlight UT" 5.1, "Alerts/Light").
     private var tipsCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Image(systemName: "headphones")
-                .font(.body)
-                .foregroundStyle(Color.primary800)
-                .environment(\.colorScheme, .light)
-                .frame(width: 32, height: 32)
-                .background(Circle().fill(.white))
-                .frame(maxWidth: .infinity)
-                .accessibilityHidden(true)
-
-            Text("Quick Recording Tips")
-                .font(.appSubheadline.weight(.semibold))
-                .foregroundStyle(.white)
-                .accessibilityAddTraits(.isHeader)
-
-            Text("Wear headphones, keep your camera steady, and find a quiet place for the best recording.")
-                .font(.appFootnote)
-                .foregroundStyle(.white.opacity(0.85))
-                .fixedSize(horizontal: false, vertical: true)
-
-            Button {
-                Task { await viewModel.beginRecording() }
-            } label: {
-                Text("Let’s Record")
-                    .font(.appSubheadline.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(Capsule().fill(Color.primary800))
-                    .contentShape(Capsule())
+        ZStack {
+            Color.black.opacity(0.25).ignoresSafeArea().allowsHitTesting(false)
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Quick Recording Tips")
+                        .font(.appHeadline)
+                        .foregroundStyle(Color.primaryBrand)
+                        .accessibilityAddTraits(.isHeader)
+                    Text("Wear wired headphones, keep your camera steady, and find a quiet spot for the best result.")
+                        .font(.appBody)
+                        .foregroundStyle(Color.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(EdgeInsets(top: 8, leading: 8, bottom: 24, trailing: 8))
+                Button {
+                    Task { await viewModel.beginRecording() }
+                } label: {
+                    Text("Let’s Record")
+                        .font(.appCTA)
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity, minHeight: 56)
+                        .background(Capsule().fill(Color.primaryButton))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
-            .padding(.top, 6)
+            .padding(14)
+            .frame(maxWidth: 330)
+            .glassCardBackground(cornerRadius: 34)
+            .environment(\.colorScheme, .light)
+            .padding(.horizontal, AppSpacing.regular)
         }
-        .padding(14)
-        .frame(maxWidth: 260)
-        .glassCardBackground(cornerRadius: 22)
-        .environment(\.colorScheme, .dark)
     }
 
     // MARK: - Countdown

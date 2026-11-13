@@ -24,8 +24,16 @@ struct SongListView: View {
                 Button(viewModel.selecting ? "Cancel" : "Select", action: viewModel.toggleSelectionMode)
                     .buttonStyle(AppChipButtonStyle(selected: viewModel.selecting))
                     .disabled(viewModel.library.songs.isEmpty)
-                Button(action: onAdd) { Image(systemName: "plus") }
-                    .buttonStyle(.appIcon(.primary)).accessibilityLabel("Add a song")
+                if viewModel.selecting {
+                    Button(role: .destructive) { viewModel.delete(viewModel.selectedIDs) } label: {
+                        Image(systemName: "trash.fill").foregroundStyle(Color.primaryBrand)
+                    }
+                    .buttonStyle(.appIcon(.glass)).disabled(viewModel.selectedIDs.isEmpty)
+                    .accessibilityLabel("Delete selected songs")
+                } else {
+                    Button(action: onAdd) { Image(systemName: "plus") }
+                        .buttonStyle(.appIcon(.primary)).accessibilityLabel("Add a song")
+                }
             }
             .padding(.horizontal, 16)
             Text("Song List").font(.appTitle1.weight(.bold)).foregroundStyle(Color.primaryDark)
@@ -52,17 +60,7 @@ struct SongListView: View {
             if let error = viewModel.library.error ?? viewModel.error {
                 Text(error.title).font(.appCaption).foregroundStyle(Color.primaryBrand).padding(12)
             }
-            if viewModel.selecting {
-                HStack {
-                    Spacer()
-                    Button(role: .destructive) { viewModel.delete(viewModel.selectedIDs) } label: {
-                        Image(systemName: "trash")
-                    }
-                    .buttonStyle(.appIcon(.tinted)).disabled(viewModel.selectedIDs.isEmpty)
-                    .accessibilityLabel("Delete selected songs")
-                }
-                .padding(.horizontal, 16).padding(.bottom, 12)
-            } else {
+            if !viewModel.selecting {
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass")
                     TextField("Search", text: $viewModel.query).autocorrectionDisabled()
@@ -99,7 +97,8 @@ struct SongListView: View {
         return VStack(spacing: 6) {
             HStack(spacing: 12) {
                 if viewModel.selecting {
-                    Image(systemName: viewModel.selectedIDs.contains(song.id) ? "circle.fill" : "circle")
+                    Image(systemName: viewModel.selectedIDs.contains(song.id) ? "checkmark.circle.fill" : "circle")
+                        .font(.appTitle2.weight(.regular))
                         .accessibilityHidden(true)
                 }
                 VStack(alignment: .leading, spacing: 5) {
@@ -131,10 +130,19 @@ struct SongListView: View {
                 else { viewModel.play(song) }
             }
             if expanded {
-                ProgressView(value: viewModel.playingID == song.id ? viewModel.playbackTime / max(1, song.duration) : 0)
-                    .tint(Color.primaryBrand)
-                    .scaleEffect(x: 1, y: 2.5, anchor: .center)
-                    .padding(.vertical, AppSpacing.small)
+                let progress = viewModel.playingID == song.id ? viewModel.playbackTime / max(1, song.duration) : 0
+                GeometryReader { proxy in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.primaryBrand.opacity(0.35))
+                        Capsule().fill(Color.primaryBrand)
+                            .frame(width: max(8, proxy.size.width * min(1, max(0, progress))))
+                    }
+                }
+                .frame(height: 8)
+                .padding(.vertical, AppSpacing.tiny)
+                .accessibilityElement()
+                .accessibilityLabel("Playback position")
+                .accessibilityValue(Text(min(1, max(0, progress)), format: .percent.precision(.fractionLength(0))))
                 HStack {
                     Spacer()
                     Button { viewModel.togglePlayback(song) } label: {
@@ -152,6 +160,7 @@ struct SongListView: View {
         .foregroundStyle(Color.primaryBrand)
         .padding(12)
         .background(expanded ? Color.secBrand : Color.secondaryButton, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityAddTraits(viewModel.selecting && viewModel.selectedIDs.contains(song.id) ? .isSelected : [])
         .contextMenu {
             Button("Select") { viewModel.beginSelecting(song.id) }
             Button("Rename") { beginRename(song) }

@@ -10,10 +10,8 @@
 import SwiftUI
 
 struct SongSectionWaveform: View {
-    enum Style { case clip, library }
     @Bindable var viewModel: ImportSongViewModel
     let audio: ImportedAudio
-    var style: Style = .clip
     /// The selection when the current drag began.
     @State private var origin: (start: TimeInterval, length: TimeInterval)?
     /// While an edge is dragged, the box stays where it was (so the edge follows the finger):
@@ -21,7 +19,7 @@ struct SongSectionWaveform: View {
     @State private var resizeAnchor: (time: TimeInterval, x: CGFloat)?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var barCount: Int { style == .clip ? 32 : 48 }
+    private let barCount = 32
     private var visibleSeconds: TimeInterval { viewModel.waveformVisibleSeconds }
     private var barSeconds: TimeInterval { visibleSeconds / Double(barCount) }
     private var selectionEnd: TimeInterval { viewModel.selectionStart + viewModel.selectionLength }
@@ -36,10 +34,10 @@ struct SongSectionWaveform: View {
             ZStack(alignment: .leading) {
                 Color.clear.contentShape(Rectangle())
                 RoundedRectangle(cornerRadius: AppRadius.extraSmall)
-                    .fill(style == .library ? Color.primary800.opacity(0.4) : Color.secondary300.opacity(0.6))
+                    .fill(Color.secondary300.opacity(0.6))
                     .frame(width: max(0, end - start)).offset(x: start)
                 RoundedRectangle(cornerRadius: AppRadius.extraSmall)
-                    .fill(style == .library ? Color.primaryBrand.opacity(0.4) : Color.secBrand)
+                    .fill(Color.secBrand)
                     .frame(width: max(0, min(end, played) - start)).offset(x: start)
                 bars(width: width, height: proxy.size.height, scale: scale)
                 RoundedRectangle(cornerRadius: AppRadius.extraSmall)
@@ -77,13 +75,13 @@ struct SongSectionWaveform: View {
         let total = Int((audio.duration / barSeconds).rounded(.up))
         let first = max(0, Int(((viewModel.selectionStart - visibleSeconds) / barSeconds).rounded(.down)))
         let last = min(total, Int(((selectionEnd + visibleSeconds) / barSeconds).rounded(.up)))
-        let barWidth: CGFloat = style == .clip ? 6 : 4
+        let barWidth: CGFloat = 6
         return ZStack(alignment: .leading) {
             ForEach(first..<max(first, last), id: \.self) { index in
                 let time = (Double(index) + 0.5) * barSeconds
                 let inside = time >= viewModel.selectionStart && time <= selectionEnd
                 Capsule()
-                    .fill(style == .library ? Color.primary100 : inside ? Color.primaryBrand : Color.primary300)
+                    .fill(inside ? Color.primaryBrand : Color.primary300)
                     .frame(width: barWidth, height: max(4, CGFloat(level(at: time)) * height * 0.85))
                     .offset(x: x(time, width: width, scale: scale) - barWidth / 2)
             }

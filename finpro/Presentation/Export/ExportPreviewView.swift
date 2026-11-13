@@ -177,7 +177,7 @@ struct ExportPreviewView: View {
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.title3.weight(.medium))
-                        .foregroundStyle(Color.primary800)
+                        .foregroundStyle(Color.primary)
                 }
                 .glassCircleButtonStyle()
                 .accessibilityLabel("Back")

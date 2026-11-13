@@ -52,7 +52,7 @@ struct KeySelectionView: View {
                     }
                     if let error = viewModel.error { ErrorStateView(error: error) }
                 }
-                .padding(.horizontal, 28).padding(.top, 32).padding(.bottom, 24)
+                .padding(.horizontal, AppSpacing.regular).padding(.top, 32).padding(.bottom, 24)
             }
             if !viewModel.choices.options.isEmpty {
                 Button("Use selected key", action: viewModel.confirm).buttonStyle(.appPrimary)
