@@ -45,7 +45,7 @@ struct OnboardingView: View {
                 VStack(spacing: 10) {
                     Text("Record covers effortlessly.").font(.appTitle2)
                         .foregroundStyle(Color.primaryBrand)
-                    Text("A smoother way to record your singing covers.")
+                    Text("A smoother way to create your singing covers.")
                         .font(.appSubheadline).foregroundStyle(Color.secondaryText)
                 }
                 .multilineTextAlignment(.center)

@@ -14,8 +14,8 @@ final class AppContainer {
     var configuration: AppConfiguration
 
     // Ikzaz
+    /// HTDemucs only (no center-channel fallback or switch).
     let stemSeparation: any StemSeparationRepository
-    let demucsSeparation: any StemSeparationRepository
     let audioAnalysis: any AudioAnalysisRepository
     let audioTransposition: any AudioTranspositionRepository
     let vocalRange: any VocalRangeRepository
@@ -64,12 +64,10 @@ final class AppContainer {
          videoComposition: any VideoCompositionRepository,
          videoLibrary: any VideoLibrarySaving,
          permissions: any MediaPermissionProviding,
-         modelPrewarmer: ModelPrewarmer? = nil,
-         demucsSeparation: (any StemSeparationRepository)? = nil) {
+         modelPrewarmer: ModelPrewarmer? = nil) {
         self.configuration = configuration
         self.demo = demo
         self.stemSeparation = stemSeparation
-        self.demucsSeparation = demucsSeparation ?? stemSeparation
         self.audioAnalysis = audioAnalysis
         self.audioTransposition = audioTransposition
         self.vocalRange = vocalRange
@@ -117,10 +115,7 @@ final class AppContainer {
         let container = AppContainer(
             configuration: store.load(),
             demo: demo,
-            stemSeparation: SelectingStemSeparationRepository(
-                coreML: coreMLSeparation,
-                centerChannel: CenterChannelStemRepository(),
-                useCoreML: { store.load().useCoreMLSeparation }),
+            stemSeparation: coreMLSeparation,
             audioAnalysis: CrepeAnalysisRepository(),
             audioTransposition: AudioTranspositionRepositoryImpl(),
             vocalRange: VocalRangeRepositoryImpl(),
@@ -132,8 +127,7 @@ final class AppContainer {
             videoComposition: videoComposition,
             videoLibrary: PhotoLibraryVideoSaver(),
             permissions: SystemMediaPermissions(),
-            modelPrewarmer: ModelPrewarmer(htDemucs: htDemucs),
-            demucsSeparation: coreMLSeparation
+            modelPrewarmer: ModelPrewarmer(htDemucs: htDemucs)
         )
         #if DEBUG && targetEnvironment(simulator)
         container.simulatedSinger = singer

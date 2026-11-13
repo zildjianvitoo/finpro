@@ -10,17 +10,18 @@ import UniformTypeIdentifiers
 struct ImportSongView: View {
     @State private var viewModel: ImportSongViewModel
     @State private var picking = false
-    @State private var openedLaunchFile = false
+    #if DEBUG
+    /// `-importFile` opens once per app launch, not every time this sheet opens again.
+    private static var openedLaunchFile = false
+    #endif
     @Environment(\.scenePhase) private var scenePhase
     let onBack: () -> Void
-    let onUseDemo: () -> Void
     var isEditingSavedSong = false
 
     init(viewModel: ImportSongViewModel, onBack: @escaping () -> Void,
-         isEditingSavedSong: Bool = false, onUseDemo: @escaping () -> Void) {
+         isEditingSavedSong: Bool = false) {
         _viewModel = State(initialValue: viewModel)
         self.onBack = onBack
-        self.onUseDemo = onUseDemo
         self.isEditingSavedSong = isEditingSavedSong
     }
 
@@ -65,8 +66,8 @@ struct ImportSongView: View {
         .task {
             viewModel.openInitialSong()
             #if DEBUG
-            if !openedLaunchFile, let url = DebugOptions.launchImportFile {
-                openedLaunchFile = true
+            if !Self.openedLaunchFile, let url = DebugOptions.launchImportFile {
+                Self.openedLaunchFile = true
                 viewModel.picked(.success(url))
             }
             #endif

@@ -63,12 +63,20 @@ struct RootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .sheet(isPresented: Binding(get: { flow.step == .importSong }, set: { if !$0 { flow.closeImport() } })) {
             ImportSongView(viewModel: makeImportViewModel(), onBack: flow.closeImport,
-                           isEditingSavedSong: flow.selectedLibrarySong != nil) {
-                Task { await flow.loadDemoSong() }
-            }
+                           isEditingSavedSong: flow.selectedLibrarySong != nil)
         }
         .animation(.default, value: flow.step)
         #if DEBUG
+        .overlay(alignment: .bottomTrailing) {
+            // Debug builds only, and only on Home: the designed screens have no button for it.
+            if flow.step == .home {
+                Button("Debug Settings", systemImage: "slider.horizontal.3") {
+                    showsDebugSettings = true
+                }
+                .labelStyle(.iconOnly)
+                .padding()
+            }
+        }
         .onAppear {
             if DebugOptions.launchScreen == "debugSettings" { showsDebugSettings = true }
         }
@@ -120,7 +128,7 @@ struct RootView: View {
             inspector: container.audioInspector,
             lyrics: container.lyrics,
             previewer: container.audioPreview,
-            prepare: PrepareSongUseCase(separation: container.demucsSeparation,
+            prepare: PrepareSongUseCase(separation: container.stemSeparation,
                                         analysis: container.audioAnalysis,
                                         fallbackAnalysis: nil,
                                         transposition: container.audioTransposition,

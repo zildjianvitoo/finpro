@@ -35,8 +35,6 @@ final class AppFlow {
     private(set) var keyChoices: PrepareSongUseCase.Choices?
     private(set) var preparationError: UserFacingError?
     private(set) var loadingDemo = false
-    /// Stems of the chosen song before transposition (Ready screen, original key).
-    var separatedStems: SeparatedStems? { keyChoices?.stems }
     private(set) var compingPlan: CompingCompositionPlan?
     /// What the recording screen records next: the session, or a retake / continue of the cover.
     private(set) var recordingPass = RecordingPass.session
