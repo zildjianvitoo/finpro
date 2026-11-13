@@ -30,8 +30,10 @@ struct RecordingView: View {
     private let lyricsCardGap: CGFloat = 8
     private let lyricsCardInset: CGFloat = 33
     private let pitchGuideMaxWidth: CGFloat = 316
-    private let guideControlsGap: CGFloat = 22
-    private let recordButtonSize: CGFloat = 68
+    /// The controls row is as tall as the record button, so the button stays inside the 9:16 frame;
+    /// the gap is the design's 22 less the 6 pt the button used to stick out above its row.
+    private let guideControlsGap: CGFloat = 16
+    private let recordButtonSize: CGFloat = 80
     private let controlsBottomInset: CGFloat = 9
     private let settingsButtonSize: CGFloat = 50
     private let deleteGlyphSize: CGFloat = 28
@@ -280,12 +282,10 @@ struct RecordingView: View {
             timer
             HStack {
                 LiquidGlassGroup {
+                    // Back leaves without asking: the session is dropped and the setup page opens
+                    // (a retake or continue goes back to the cover as it was).
                     Button {
-                        if viewModel.status == .ready {
-                            Task { await viewModel.discard() }
-                        } else {
-                            confirmsEnd = true
-                        }
+                        Task { await viewModel.discard() }
                     } label: {
                         Image(systemName: "chevron.left")
                             .fontWeight(.semibold)
@@ -444,7 +444,7 @@ struct RecordingView: View {
             Button {
                 Task { await viewModel.beginRecording() }
             } label: {
-                Text("Got It, Let’s Record")
+                Text("Let’s Record")
                     .font(.appSubheadline.weight(.semibold))
                     .foregroundStyle(.white)
                     .frame(maxWidth: .infinity, minHeight: 44)
@@ -456,7 +456,7 @@ struct RecordingView: View {
         }
         .padding(14)
         .frame(maxWidth: 260)
-        .background(.ultraThinMaterial.opacity(0.9), in: .rect(cornerRadius: 22))
+        .glassCardBackground(cornerRadius: 22)
         .environment(\.colorScheme, .dark)
     }
 

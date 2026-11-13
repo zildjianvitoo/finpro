@@ -37,6 +37,18 @@ extension View {
     }
 }
 
+extension View {
+    /// Glass panel behind a card such as the recording tips, with a material fallback.
+    @ViewBuilder
+    func glassCardBackground(cornerRadius: CGFloat) -> some View {
+        if #available(iOS 26, *) {
+            self.glassEffect(.regular, in: .rect(cornerRadius: cornerRadius))
+        } else {
+            self.background(.ultraThinMaterial, in: .rect(cornerRadius: cornerRadius))
+        }
+    }
+}
+
 struct LiquidGlassGroup<Content: View>: View {
     @ViewBuilder let content: Content
 

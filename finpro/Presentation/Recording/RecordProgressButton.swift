@@ -3,7 +3,7 @@
 //  finpro
 //
 //  The record button of the recording screen, in the style of a short-video camera: a red disc
-//  to start or resume, and a larger translucent disc with a red rounded square while recording.
+//  to start or resume, and a translucent disc of the same size with a red rounded square while recording.
 //  A red ring on the edge of the button fills with the progress through the song, with a white mark at the start
 //  of every segment and at the end of the filled part.
 //
@@ -26,7 +26,7 @@ struct RecordProgressButton: View {
     let action: () -> Void
 
     private let idleDiameter: CGFloat = 80
-    private let recordingDiameter: CGFloat = 100
+    private let recordingDiameter: CGFloat = 80
     private let ringWidth: CGFloat = 6
     /// Width of the grey ring around the red disc when idle; the red progress ring sits on its edge.
     private let idleRingWidth: CGFloat = 12
