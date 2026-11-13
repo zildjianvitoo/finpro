@@ -116,9 +116,9 @@ final class VocalRangeViewModel {
                 var display = StabilizePitchDisplayUseCase(configuration: configuration)
                 var detector = DetectVocalRangeUseCase(configuration: configuration, duration: configuration.vocalRangeHoldDuration)
                 var speech: [Float] = []
-                var lastSpeechTime: TimeInterval?
-                var voicedDuration: TimeInterval = 0
-                var wasVoiced = false
+                var lastSampleTime: TimeInterval?
+                var lastLoudTime: TimeInterval?
+                var speakingDuration: TimeInterval = 0
                 for await sample in samples {
                     guard !Task.isCancelled, generation == token else { return }
                     let amplitude = sample.rmsDecibels.isFinite
@@ -129,20 +129,24 @@ final class VocalRangeViewModel {
                     if prompt == .speaking && !practice {
                         let time = sample.captureTime.seconds
                         guard time.isFinite else { continue }
-                        let elapsed = lastSpeechTime.map { time - $0 } ?? 0
-                        lastSpeechTime = time
+                        let elapsed = lastSampleTime.map { time - $0 } ?? 0
+                        lastSampleTime = time
+                        // Reading progress follows loudness, not pitch: consonants and short
+                        // pauses between words have no pitch but are still part of reading.
+                        let isLoud = sample.rmsDecibels.isFinite && sample.rmsDecibels >= configuration.noiseGateDBFS
+                        if isLoud { lastLoudTime = time }
+                        if let lastLoudTime, time - lastLoudTime <= configuration.speechPauseTolerance,
+                           elapsed > 0, elapsed <= DetectVocalRangeUseCase.maxGap {
+                            speakingDuration += elapsed
+                        }
+                        // The pitched frames give the speaking note.
                         var spokenMIDI: Float?
-                        if let frequency = sample.frequency, frequency.isFinite, frequency > 0,
-                           sample.rmsDecibels >= configuration.noiseGateDBFS {
+                        if isLoud, let frequency = sample.frequency, frequency.isFinite, frequency > 0 {
                             let midi = 69 + 12 * log2(frequency / 440)
                             spokenMIDI = midi
                             speech.append(midi)
-                            if wasVoiced, elapsed > 0, elapsed <= DetectVocalRangeUseCase.maxGap {
-                                voicedDuration += elapsed
-                            }
                         }
-                        wasVoiced = spokenMIDI != nil
-                        holdProgress = min(1, voicedDuration / readingDuration)
+                        holdProgress = min(1, speakingDuration / readingDuration)
                         liveMIDI = display.execute(midi: spokenMIDI, time: time)
                         if holdProgress >= 1 {
                             guard Double(speech.count) * configuration.pitchHop >= configuration.minimumSpeakingVoicedDuration else {

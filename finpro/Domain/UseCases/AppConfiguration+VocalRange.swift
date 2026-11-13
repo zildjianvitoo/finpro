@@ -17,5 +17,7 @@ extension AppConfiguration {
     nonisolated var rangePenaltySpanDivisor: Double { 4 }
     nonisolated var speakingSampleDuration: TimeInterval { 6 }
     nonisolated var minimumSpeakingVoicedDuration: TimeInterval { 2 }
+    /// Warm-up: a quiet moment this short (between words, on a consonant) still counts as reading.
+    nonisolated var speechPauseTolerance: TimeInterval { 0.5 }
     nonisolated var minimumVocalRangeSpan: Float { 3 }
 }

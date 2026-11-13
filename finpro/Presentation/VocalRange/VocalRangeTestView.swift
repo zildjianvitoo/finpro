@@ -165,7 +165,7 @@ struct VocalRangeTestView: View {
     private var passage: AttributedString {
         var text = AttributedString(viewModel.instructions)
         text.foregroundColor = Color.secondaryText.opacity(0.65)
-        // Highlight only complete words. Time advances only while the microphone hears speech.
+        // Highlight only complete words. Time advances while the microphone hears speech (short pauses included).
         let words = viewModel.instructions.split(whereSeparator: \.isWhitespace)
         let count = Int(Double(words.count) * viewModel.holdProgress)
         let readCount = words.prefix(count).last.map {

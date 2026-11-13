@@ -45,9 +45,30 @@ nonisolated final class WaitingRangePitchSource: LivePitchSource {
 
 @main
 struct VocalRangeHoldChecks {
-    static func sample(_ time: Double, _ midi: Double?) -> PitchSample {
+    static func sample(_ time: Double, _ midi: Double?, rms: Float = -20) -> PitchSample {
         PitchSample(captureTime: CMTime(seconds: time, preferredTimescale: 60000),
-                    frequency: midi.map { Float(440 * pow(2, ($0 - 69) / 12)) }, rmsDecibels: -20)
+                    frequency: midi.map { Float(440 * pow(2, ($0 - 69) / 12)) }, rmsDecibels: rms)
+    }
+    /// Runs the warm-up on these frames until it stops listening (capture, failure or end of input).
+    @MainActor static func warmUp(_ frames: [PitchSample]) async -> VocalRangeViewModel {
+        let model = VocalRangeViewModel(source: RangePitchSource(frames), repository: FakeVocalRangeRepository(),
+                                        configuration: .default, onSaved: {})
+        model.listen()
+        for _ in 0..<10000 {
+            if case .listening = model.status { await Task.yield() } else { break }
+        }
+        return model
+    }
+    /// Reading aloud, 50 ms frames: a pitched syllable (4), a consonant without pitch (2), a short pause (2).
+    static func reading(for seconds: Double) -> [PitchSample] {
+        (0..<Int(seconds / 0.05)).map { frame in
+            let time = Double(frame) * 0.05
+            switch frame % 8 {
+            case 0..<4: return sample(time, 52)
+            case 4..<6: return sample(time, nil)
+            default: return sample(time, nil, rms: -70)
+            }
+        }
     }
     static func require(_ value: Bool, _ message: String) {
         precondition(value, message)
@@ -150,14 +171,24 @@ struct VocalRangeHoldChecks {
         model.restart()
         require(model.holdProgress == 0 && model.liveMIDI == nil && model.baselineMIDI == nil,
                 "Restart clears progress and notes")
-        let silence = VocalRangeViewModel(source: RangePitchSource((0...500).map { sample(Double($0) * 0.05, nil) }),
-                                          repository: FakeVocalRangeRepository(), configuration: .default, onSaved: {})
-        silence.listen()
-        for _ in 0..<10000 {
-            if case .listening = silence.status { await Task.yield() } else { break }
-        }
+        let silence = await warmUp((0...500).map { sample(Double($0) * 0.05, nil, rms: -70) })
         require(silence.holdProgress == 0 && silence.baselineMIDI == nil,
                 "Silence must not move passage progress or capture a baseline")
+        // Warm-up progress follows reading time, not just the pitched part of speech.
+        let readingTime = model.readingDuration
+        let tooShort = await warmUp(reading(for: readingTime * 0.9))
+        require(tooShort.baselineMIDI == nil && tooShort.holdProgress > 0.85,
+                "Reading with consonants and short pauses moves progress at reading pace (\(tooShort.holdProgress))")
+        let enough = await warmUp(reading(for: readingTime * 1.05))
+        require(enough.baselineMIDI.map { abs($0 - 52) < 0.01 } == true,
+                "Reading the passage at a normal pace finishes the warm-up and keeps the spoken note")
+        let paused = await warmUp((0..<60).map { sample(Double($0) * 0.05, 52) }
+            + (60..<120).map { sample(Double($0) * 0.05, nil, rms: -70) })
+        let pausedSeconds = paused.holdProgress * model.readingDuration
+        require(pausedSeconds > 2.9 && pausedSeconds < 3.6,
+                "A long silence stops progress after the pause tolerance (\(pausedSeconds) s)")
+        let unpitched = await warmUp(reading(for: readingTime * 1.05).map { sample($0.captureTime.seconds, nil, rms: $0.rmsDecibels) })
+        require(unpitched.baselineMIDI == nil, "Speech without any detected pitch cannot finish the warm-up")
         let waiting = WaitingRangePitchSource()
         let stopped = VocalRangeViewModel(source: waiting, repository: FakeVocalRangeRepository(),
                                            configuration: .default, onSaved: {})
@@ -183,6 +214,6 @@ struct VocalRangeHoldChecks {
         complete.save()
         require(sequence.startCount == 4 && store.load() == VocalRange(lowestMIDI: 48, highestMIDI: 67),
                 "Four explicit taps measure speech, practice, low and high, then persist the actual range")
-        print("PASS: one-second hold, tap-to-start, waveform state, humming practice, silence, pitch changes, baseline, restart")
+        print("PASS: one-second hold, tap-to-start, waveform state, humming practice, silence, pitch changes, baseline, restart, warm-up reading pace")
     }
 }
