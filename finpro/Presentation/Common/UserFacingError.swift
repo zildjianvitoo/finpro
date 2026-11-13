@@ -16,7 +16,6 @@ nonisolated enum UserFacingError: Equatable, Sendable {
     case unreadableFile
     case protectedFile
     case songTooShort(minimumSeconds: Int)
-    case monoSong
     case noVocalDetected
     case speakerOutput
     case lowStorage(requiredGB: Double)
@@ -42,7 +41,6 @@ nonisolated enum UserFacingError: Equatable, Sendable {
         case .unreadableFile: "This file can't be used"
         case .protectedFile: "This song is protected"
         case .songTooShort: "This song is too short"
-        case .monoSong: "Vocals can't be removed"
         case .noVocalDetected: "No vocal melody found"
         case .speakerOutput: "Plug in earphones"
         case .lowStorage: "Not enough storage"
@@ -77,8 +75,6 @@ nonisolated enum UserFacingError: Equatable, Sendable {
             "Songs from Apple Music and other streaming apps are copy-protected. Pick a file you own, like an MP3 or M4A."
         case .songTooShort(let minimumSeconds):
             "Pick a song that is at least \(minimumSeconds) seconds long."
-        case .monoSong:
-            "This recording is mono, so the singer can't be separated from the music. Try a stereo version."
         case .noVocalDetected:
             "We couldn't find a vocal melody in this section. Try another part of the song."
         case .speakerOutput:
@@ -119,7 +115,6 @@ nonisolated enum UserFacingError: Equatable, Sendable {
         case .unreadableFile: "doc.questionmark"
         case .protectedFile: "lock.doc"
         case .songTooShort: "timer"
-        case .monoSong: "speaker.slash"
         case .noVocalDetected: "waveform.slash"
         case .speakerOutput: "headphones"
         case .lowStorage: "externaldrive.badge.exclamationmark"

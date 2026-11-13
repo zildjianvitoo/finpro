@@ -16,13 +16,3 @@ extension CoreMLSeparationError: UserFacingConvertible {
         }
     }
 }
-
-extension CenterChannelError: UserFacingConvertible {
-    var userFacingError: UserFacingError {
-        switch self {
-        case .drmProtected: .protectedFile
-        case .monoSource: .monoSong
-        case .unreadable, .noAudioTrack, .invalidTrim: .unreadableFile
-        }
-    }
-}

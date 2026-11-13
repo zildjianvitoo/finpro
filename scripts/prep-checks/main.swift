@@ -10,7 +10,6 @@ import Foundation
 let modelURL = URL(fileURLWithPath: CommandLine.arguments[1])
 let htDemucsModelURL = URL(fileURLWithPath: CommandLine.arguments[2])
 let suites: [(name: String, run: () async throws -> Int)] = [
-    ("CenterChannelStemRepository", CenterChannelChecks.run),
     ("CrepeAnalysisRepository", { try await CrepeAnalysisChecks.run(modelURL: modelURL) }),
     ("AudioTranspositionRepositoryImpl", AudioTranspositionChecks.run),
     ("HTDemucsStemSeparationRepository", { try await HTDemucsSeparationChecks.run(htDemucsModelURL: htDemucsModelURL) }),
