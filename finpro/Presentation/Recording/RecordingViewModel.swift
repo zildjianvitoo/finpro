@@ -281,7 +281,19 @@ final class RecordingViewModel {
             isCapturing = true
             // The file starts at the first video frame; playing before it exists would put the
             // first take's handle before the start of the file.
-            try await waitForFirstFrame()
+            do {
+                try await waitForFirstFrame()
+            } catch RecordingError.noVideoFrames {
+                // A cold camera (first run after install) can stop before its first frame; a
+                // second prepare() starts it again, as leaving and reopening the screen did.
+                isCapturing = false
+                _ = try? await capture.stopRecording()
+                guard status == .starting else { return }
+                try await capture.prepare()
+                try await capture.startRecording()
+                isCapturing = true
+                try await waitForFirstFrame()
+            }
             guard status == .starting else { return }
             sessionStart = capture.currentCaptureTime().seconds
             lastStorageCheck = sessionStart
@@ -300,9 +312,11 @@ final class RecordingViewModel {
     }
 
     private func waitForFirstFrame() async throws {
-        let deadline = capture.currentCaptureTime().seconds + Self.firstFrameTimeout
+        // A real-time timeout: the capture clock stops when the camera session does, and the
+        // wait never ended (the record button stayed disabled).
+        let deadline = ContinuousClock.now + .seconds(Self.firstFrameTimeout)
         while capture.fileTime(forCaptureTime: capture.currentCaptureTime()) == nil {
-            guard capture.currentCaptureTime().seconds < deadline else {
+            guard ContinuousClock.now < deadline else {
                 throw RecordingError.noVideoFrames
             }
             try await Task.sleep(for: .milliseconds(10))

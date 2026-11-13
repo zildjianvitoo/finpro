@@ -77,7 +77,15 @@ struct RecordingView: View {
             .environment(\.colorScheme, .light)
         }
         .preferredColorScheme(.dark)
-        .task { await viewModel.start() }
+        .task {
+            // Right after the camera and microphone prompts the app is not active yet, and a
+            // camera or audio session started then may not run (first launch after install).
+            while UIApplication.shared.applicationState != .active {
+                try? await Task.sleep(for: .milliseconds(100))
+                if Task.isCancelled { return }
+            }
+            await viewModel.start()
+        }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .background else { return }
             // PRD §5.8: leaving the app stops the session; ask for time to finalize the file.
