@@ -534,9 +534,6 @@ struct RecordingView: View {
 
     private var focusMIDI: [Int] {
         guard let segment = viewModel.loop.currentSegment else { return [] }
-        let notes = segment.targetNotes.isEmpty
-            ? viewModel.song.segments.flatMap(\.targetNotes)
-            : segment.targetNotes
-        return notes.map(viewModel.song.transposition.transposed)
+        return segment.targetNotes.map(viewModel.song.transposition.transposed)
     }
 }

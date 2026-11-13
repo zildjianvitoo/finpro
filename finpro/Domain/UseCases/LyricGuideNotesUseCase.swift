@@ -73,7 +73,52 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
                     note: TargetMIDINote(id: note.id, midiNote: pitch, startTime: note.startTime, duration: note.duration))
             }
         }
+        words = Self.foldedAgainstNeighbours(words)
         return Result(notes: words.flatMap { $0.compactMap(\.note) }, words: words)
+    }
+
+    /// Notes on each side compared with a word in the second octave pass.
+    static let neighbourCount = 3
+
+    /// Second octave pass, across line boundaries: a word more than `octaveErrorDistance` from the
+    /// middle of the words around it moves an octave toward them. The line pass misses an octave
+    /// error that pulls its own line's middle up (one high word in a short line).
+    private static func foldedAgainstNeighbours(_ words: [[Word]]) -> [[Word]] {
+        let positions = words.indices.flatMap { line in
+            words[line].indices.compactMap { words[line][$0].note == nil ? nil : (line, $0) }
+        }
+        var pitches = positions.map { words[$0.0][$0.1].note!.midiNote }
+        var result = words
+        for index in pitches.indices {
+            let around = (max(0, index - neighbourCount)..<min(pitches.count, index + neighbourCount + 1))
+                .filter { $0 != index }.map { pitches[$0] }
+            guard around.count >= minimumNotesForLineMiddle, let middle = middle(around) else { continue }
+            let pitch = foldedAgainstNeighbours(pitches[index], toward: middle)
+            guard pitch != pitches[index] else { continue }
+            pitches[index] = pitch
+            let (line, word) = positions[index]
+            let old = result[line][word]
+            let note = old.note!
+            result[line][word] = Word(start: old.start, end: old.end,
+                                      note: TargetMIDINote(id: note.id, midiNote: pitch, startTime: note.startTime,
+                                                           duration: note.duration))
+        }
+        return result
+    }
+
+    /// Neighbour pass: six words around are a steadier reference than one line, so a word this far
+    /// (a minor seventh or more) from their middle moves an octave when that brings it closer.
+    static let neighbourOctaveErrorDistance = 10
+
+    static func foldedAgainstNeighbours(_ pitch: Int, toward middle: Double) -> Int {
+        var result = pitch
+        while abs(Double(result) - middle) >= Double(neighbourOctaveErrorDistance) {
+            let step = Double(result) > middle ? -12 : 12
+            guard (0...127).contains(result + step),
+                  abs(Double(result + step) - middle) < abs(Double(result) - middle) else { break }
+            result += step
+        }
+        return result
     }
 
     /// Moves `pitch` by octaves while it is more than `octaveErrorDistance` from `middle`.

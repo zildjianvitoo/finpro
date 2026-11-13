@@ -3,7 +3,7 @@
 //  finpro
 //
 //  Pitch guide of the recording screen (PRD §5.5): target notes scroll past a playhead at 25%,
-//  ~4 s visible, the vertical range centred on the current segment, a dot where the user's
+//  ~4 s visible, six lines centred on the notes on screen (gliding with the song), a dot where the user's
 //  voice is now, grey notes whose passed part turns green (sung within tolerance) or red as it
 //  is sung, and the lyric word under each note.
 //  UI only — never part of the recording.
@@ -92,6 +92,15 @@ struct PianoRollView: View {
     /// Size of the notes, lines and voice dot (a display setting, see `scaled`).
     var scale = RecordingDisplaySettings.defaultPitchGuideScale
 
+    /// Extra lines the view may add when the notes on screen do not fit (at most 8 in all with
+    /// the design's 6).
+    static let maximumExtraLines: Double = 2
+    /// Notes this close to the playhead decide the range when the whole screen does not fit.
+    static let nearWindow: ClosedRange<TimeInterval> = -0.5...1.5
+    /// Notes ahead used to place the lines while none is on screen.
+    static let upcomingNoteCount = 4
+    @State private var viewport = PianoRollViewport()
+
     private let cornerRadius: CGFloat = 16
     private let labelWidth: CGFloat = 35
     private let trailInset: CGFloat = 10
@@ -158,22 +167,44 @@ struct PianoRollView: View {
         }
     }
 
+    /// Centre and number of lines that show the notes on screen (or the segment's notes before
+    /// any are on screen).
+    private func targetLines(at current: TimeInterval, fitting rows: Double) -> (center: Double, span: Double) {
+        let windowStart = current - Self.visibleDuration * Self.playheadPosition
+        let windowEnd = windowStart + Self.visibleDuration
+        func lines(_ midi: [Int]) -> (low: Double, high: Double)? {
+            let positions = midi.map { Self.linePosition(of: Double($0)) }
+            guard let low = positions.min(), let high = positions.max() else { return nil }
+            return (low, high)
+        }
+        let onScreen = notes.filter { $0.end > windowStart && $0.start < windowEnd }.map(\.midi)
+        let near = notes.filter { $0.end > current + Self.nearWindow.lowerBound && $0.start < current + Self.nearWindow.upperBound }
+            .map(\.midi)
+        let maximum = rows + Self.maximumExtraLines
+        // Between phrases, the next notes to sing.
+        let upcoming = notes.filter { $0.start >= windowEnd }.sorted { $0.start < $1.start }
+            .prefix(Self.upcomingNoteCount).map(\.midi)
+        let fallback = Self.linePosition(of: 60)
+        var range = lines(onScreen) ?? lines(Array(upcoming)) ?? lines(focusMIDI) ?? (fallback, fallback)
+        if range.high - range.low + 2 > maximum, let nearRange = lines(near) { range = nearRange }
+        let span = min(maximum, max(rows, range.high - range.low + 2))
+        return ((range.low + range.high) / 2, span)
+    }
+
     private func draw(in context: inout GraphicsContext, size: CGSize, now: TimeInterval?) {
         let rowsTop = Self.topInset
         let rowsHeight = max(Self.rowPitch, size.height - Self.topInset - Self.bottomInset - lyricsHeight)
 
-        // Lines that fit the area, centred on the focus notes; the area grows past its size when
-        // the segment is wider, so every note of the segment stays in view.
-        let focusLines = focusMIDI.map { Self.linePosition(of: Double($0)) }
-        let lowFocus = focusLines.min() ?? Self.linePosition(of: 60)
-        let highFocus = focusLines.max() ?? Self.linePosition(of: 60)
-        let span = max(rowsHeight / Self.rowPitch, highFocus - lowFocus + 2)
-        let pitch = rowsHeight / span
-        let lowLine = ((lowFocus + highFocus) / 2 - span / 2).rounded() - 0.5
-
         let laneWidth = size.width - labelWidth - trailInset
         let playheadX = labelWidth + laneWidth * Self.playheadPosition
         let current = now ?? 0
+
+        // The lines in view: as many as fit (6 in the design), centred on the notes on screen and
+        // gliding as the song moves, so a wide segment or a stray note never squeezes the rows.
+        let target = targetLines(at: current, fitting: rowsHeight / Self.rowPitch)
+        let (center, span) = viewport.update(center: target.center, span: target.span)
+        let pitch = rowsHeight / span
+        let lowLine = center - span / 2
         func x(_ time: TimeInterval) -> CGFloat {
             playheadX + CGFloat((time - current) / Self.visibleDuration) * laneWidth
         }
@@ -181,20 +212,26 @@ struct PianoRollView: View {
             rowsTop + rowsHeight - CGFloat(Self.linePosition(of: midi) - lowLine) * pitch
         }
 
-        // A line on every natural note, named on the left edge as in the design.
-        for line in Int((lowLine + 0.5).rounded(.up))...Int((lowLine + span - 0.5).rounded(.down)) {
+        // A line on every natural note, named on the left edge as in the design. Lines scroll in
+        // and out at the panel's edges.
+        var lineContext = context
+        lineContext.clip(to: Path(CGRect(x: 0, y: rowsTop, width: size.width, height: rowsHeight)))
+        for line in Int(lowLine.rounded(.down))...Int((lowLine + span).rounded(.up)) {
             let midi = Self.midi(onLine: line)
             let rowY = y(Double(midi))
-            context.draw(Text(PitchMath.noteName(midi: midi)).font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.label),
+            lineContext.draw(Text(PitchMath.noteName(midi: midi)).font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.label),
                          at: CGPoint(x: labelWidth / 2 - 2, y: rowY))
             var path = Path()
             path.move(to: CGPoint(x: labelWidth, y: rowY))
             path.addLine(to: CGPoint(x: size.width - trailInset, y: rowY))
-            context.stroke(path, with: .color(Palette.line), lineWidth: lineWidth)
+            lineContext.stroke(path, with: .color(Palette.line), lineWidth: lineWidth)
         }
 
         guard now != nil else { return }
-        context.clip(to: Path(CGRect(x: labelWidth, y: 0, width: laneWidth + trailInset, height: size.height)))
+        // Notes above or below the lines in view stay hidden until the lines glide to them.
+        let noteMargin = noteHeight / 2
+        context.clip(to: Path(CGRect(x: labelWidth, y: rowsTop - noteMargin, width: laneWidth + trailInset,
+                                     height: rowsHeight + noteMargin * 2)))
 
         // Target notes.
         let windowStart = current - Self.visibleDuration * Self.playheadPosition
@@ -224,7 +261,9 @@ struct PianoRollView: View {
         context.stroke(playhead, with: .color(Palette.playhead), lineWidth: Self.playheadWidth)
         if let last = trail.last, let midi = last.midi, current - last.songTime < maxJoin {
             let radius = dotSize / 2
-            let dot = CGRect(x: x(last.songTime) - radius, y: y(Double(midi)) - radius, width: dotSize, height: dotSize)
+            // Pinned to the top or bottom line when the voice is outside the lines in view.
+            let dotY = min(max(y(Double(midi)), rowsTop + radius), rowsTop + rowsHeight - radius)
+            let dot = CGRect(x: x(last.songTime) - radius, y: dotY - radius, width: dotSize, height: dotSize)
             context.fill(Path(ellipseIn: dot), with: .color(Palette.dot))
         }
     }
