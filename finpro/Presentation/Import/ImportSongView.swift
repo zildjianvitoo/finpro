@@ -82,21 +82,26 @@ struct ImportSongView: View {
     }
 
     private var importPrompt: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 0) {
             Text("Import Song").font(.appHeadline).foregroundStyle(Color.primaryBrand)
-            Image(systemName: "music.note").font(.system(size: 76, weight: .bold))
-                .foregroundStyle(Color.primary800)
-                .frame(width: 140, height: 140)
-                .background(Color.white.opacity(0.5), in: RoundedRectangle(cornerRadius: 16))
-            Spacer(minLength: 0)
+                .padding(.top, AppSpacing.tiny)
+            // Design asset (Sketch "TestFlight UT" 4.1, "Music Symbol").
+            Image("ImportMusicNotes").resizable().scaledToFit()
+                .frame(width: 64, height: 68)
+                .frame(width: 142, height: 142)
+                .background(Color.white.opacity(0.5), in: RoundedRectangle(cornerRadius: AppRadius.medium))
+                .padding(.top, AppSpacing.regular)
+                .accessibilityHidden(true)
             Text("Select an audio file containing full vocals and instrumental. We'll use the vocals as your pitch reference.")
-                .font(.appSubheadline).foregroundStyle(Color.primaryBrand)
+                .font(.appFootnote).foregroundStyle(Color.primaryBrand)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
-                .padding(.horizontal, 32)
+                .frame(maxWidth: 260)
+                .padding(.top, AppSpacing.regular)
             Text("Supported formats: MP3, M4A, WAV")
                 .font(.appCaption).foregroundStyle(Color.tertiaryText)
-            Spacer(minLength: 0)
+                .padding(.top, AppSpacing.small)
+            Spacer(minLength: AppSpacing.large)
             Button("Choose File") { picking = true }.buttonStyle(.appPrimary)
         }
     }
