@@ -26,7 +26,7 @@ struct KeySelectionView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     Text("Find Your Key").font(.appLargeTitle).foregroundStyle(Color.primaryBrand)
                     Text("Listen to each version and choose what feels comfortable to sing.")
-                        .font(.appBody).foregroundStyle(Color.secondaryText)
+                        .font(.appSubheadline).foregroundStyle(Color.secondaryText)
                     if viewModel.choices.options.isEmpty {
                         ContentUnavailableView("No key fits this range", systemImage: "music.note.list",
                             description: Text("Try a shorter section or test your comfortable vocal range again."))

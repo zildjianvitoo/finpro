@@ -64,6 +64,15 @@ struct VocalRangeTestView: View {
         default: "Now, find your\nhighest note"
         }
     }
+    /// Width of the subtitle's text box in the design, so its lines break where the design's do.
+    private var subtitleWidth: CGFloat {
+        switch stage {
+        case .warmup: 294
+        case .hummingGuide: 273
+        case .lowest: 295
+        default: 303
+        }
+    }
     private var subtitle: String {
         switch stage {
         case .warmup: "Read the sentences below in your everyday speaking voice."
@@ -112,9 +121,10 @@ struct VocalRangeTestView: View {
                 Text(title).font(.appLargeTitle).foregroundStyle(foreground)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
-                Text(subtitle).font(.appSubheadline)
-                    .foregroundStyle(isWarmup ? Color.secBrand : Color.primaryBrand)
+                Text(subtitle).font(isWarmup ? .appSubheadline : .appBody)
+                    .foregroundStyle(isWarmup ? Color.secBrand : isHumming ? Color.primaryBrand : Color.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: subtitleWidth, alignment: .leading)
             }
             .padding(.horizontal, AppSpacing.textInset).padding(.top, AppSpacing.large)
             Spacer(minLength: 0)
@@ -133,6 +143,7 @@ struct VocalRangeTestView: View {
             if isWarmup {
                 Text(passage).font(.appTitle2.weight(.bold))
                     .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 294, alignment: .leading)
                     .accessibilityLabel(viewModel.instructions)
                     .padding(.top, AppSpacing.large)
             } else if isHumming {
@@ -141,7 +152,8 @@ struct VocalRangeTestView: View {
                     .background(Color.primary400, in: RoundedRectangle(cornerRadius: AppRadius.medium))
                     .padding(.top, AppSpacing.section)
                 Text("Tip: Keep your voice steady. Stop before your voice feels strained or turns into vocal fry.")
-                    .font(.appCaption).foregroundStyle(Color.secondaryText)
+                    .font(.appFootnote).foregroundStyle(Color.secondaryText)
+                    .frame(maxWidth: 295, alignment: .leading)
             } else {
                 VocalPitchBar(midi: displayMIDI, referenceMIDI: viewModel.baselineMIDI ?? 57)
                     .id(viewModel.prompt)
