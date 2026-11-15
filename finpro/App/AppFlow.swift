@@ -196,6 +196,17 @@ final class AppFlow {
     /// Ready screen: user tapped Record. A new session starts, so files from the last one go (ZV-16).
     func startRecording() {
         guard preparedSong != nil else { return }
+        // The previous cover's draft may still be copying its raw videos out of the session
+        // folder; clearing the folder before that ends would leave the draft incomplete.
+        guard draftSave == nil else {
+            let pending = draftSave
+            draftSave = nil
+            Task {
+                await pending?.value
+                startRecording()
+            }
+            return
+        }
         container.takeLog.clear()
         SessionFiles.cleanUp()
         try? SessionFiles.prepareDirectory()
