@@ -57,7 +57,14 @@ final class ImportSongViewModel {
 
     private(set) var savedSongID: UUID?
     private(set) var actionError: UserFacingError?
-    private(set) var status: Status = .idle
+    private(set) var status: Status = .idle {
+        didSet {
+            if case .preparing(let step) = status, stepStarted?.step != step { stepStarted = (step, .now) }
+            if case .preparing = status {} else { stepStarted = nil }
+        }
+    }
+    /// When the current preparation step began, so the progress keeps moving within a long step.
+    @ObservationIgnored private var stepStarted: (step: String, at: ContinuousClock.Instant)?
     var selectionStart: TimeInterval = 0 { didSet { selectionChanged() } }
     var selectionLength: TimeInterval = defaultLength { didSet { selectionChanged() } }
     private(set) var lyrics: LyricsState = .idle
@@ -164,8 +171,14 @@ final class ImportSongViewModel {
             do {
                 let audio = try await inspector.importFile(at: url)
                 guard !Task.isCancelled, generation == token else { return }
-                savedSongID = nil
-                open(audio)
+                if let library, let existing = library.song(matching: audio) {
+                    // The same file again: continue with its saved song (section, lyrics, caches).
+                    savedSongID = existing.id
+                    open(library.audio(for: existing), saved: existing)
+                } else {
+                    savedSongID = nil
+                    open(audio)
+                }
             } catch {
                 guard !Task.isCancelled, generation == token else { return }
                 status = .failed(Self.userFacing(error))
@@ -293,32 +306,32 @@ final class ImportSongViewModel {
     /// Progress of the preparation, mapped from the steps PrepareSongUseCase reports. Separation
     /// produces both stems at once, so they share a state; later steps (guide, segments, keys)
     /// move the overall progress.
-    var preparationProgress: PreparationProgress? {
+    var preparationProgress: PreparationProgress? { preparationProgress(at: .now) }
+
+    /// Progress at each step's start; within a step it eases toward the next one (never past it),
+    /// so the long separation does not sit on one number for a minute.
+    private static let progressSteps: [(prefix: String, fraction: Double, separating: Bool)] = [
+        ("Starting", 0.05, true), ("Separating", 0.2, true), ("Extracting", 0.5, false), ("Using fallback", 0.5, false),
+        ("Building", 0.65, false), ("Preparing key", 0.75, false), ("Rendering", 0.9, false), ("Ready", 0.99, false),
+    ]
+    /// Seconds to cover about two thirds of the way to the next step (separation is the long one).
+    private static let separatingEasing: Double = 15
+    private static let stepEasing: Double = 3
+    /// Share of the gap to the next step a step may fill on its own.
+    private static let stepFillLimit = 0.9
+
+    func preparationProgress(at now: ContinuousClock.Instant) -> PreparationProgress? {
         switch status {
         case .prepared:
             return PreparationProgress(fraction: 1, vocals: .done, instrumental: .done)
         case .preparing(let step):
-            let fraction: Double
-            let separating: Bool
-            switch step {
-            case _ where step.hasPrefix("Starting"):
-                (fraction, separating) = (0.05, true)
-            case _ where step.hasPrefix("Separating"):
-                (fraction, separating) = (0.2, true)
-            case _ where step.hasPrefix("Extracting"), _ where step.hasPrefix("Using fallback"):
-                (fraction, separating) = (0.5, false)
-            case _ where step.hasPrefix("Building"):
-                (fraction, separating) = (0.65, false)
-            case _ where step.hasPrefix("Preparing key"):
-                (fraction, separating) = (0.75, false)
-            case _ where step.hasPrefix("Rendering"):
-                (fraction, separating) = (0.9, false)
-            case _ where step.hasPrefix("Ready"):
-                (fraction, separating) = (0.99, false)
-            default:
-                (fraction, separating) = (0.05, true)
-            }
-            let stem: PreparationProgress.StemState = separating ? .processing : .done
+            let index = Self.progressSteps.firstIndex { step.hasPrefix($0.prefix) }
+            let current = index.map { Self.progressSteps[$0] } ?? Self.progressSteps[0]
+            let next = index.flatMap { Self.progressSteps.dropFirst($0 + 1).first { $0.fraction > current.fraction } }?.fraction ?? 1
+            let elapsed = stepStarted.map { (now - $0.at) / .seconds(1) } ?? 0
+            let easing = current.separating ? Self.separatingEasing : Self.stepEasing
+            let fraction = current.fraction + (next - current.fraction) * Self.stepFillLimit * (1 - exp(-max(0, elapsed) / easing))
+            let stem: PreparationProgress.StemState = current.separating ? .processing : .done
             return PreparationProgress(fraction: fraction, vocals: stem, instrumental: stem)
         default:
             return nil

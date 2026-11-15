@@ -33,5 +33,8 @@ nonisolated struct SongLibraryStore: Sendable {
         try FileManager.default.copyItem(at: source, to: directory.appendingPathComponent(filename))
         return filename
     }
+    static func fileSize(_ url: URL) -> Int? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int
+    }
     func removeAudio(_ song: SavedSong) { try? FileManager.default.removeItem(at: url(for: song)) }
 }

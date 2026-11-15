@@ -48,8 +48,12 @@ struct ImportSongView: View {
                     Image(systemName: "film.stack")
                         .font(.system(size: AppLayout.loadingIcon, weight: .regular))
                         .accessibilityHidden(true)
-                    Text("Preparing your song… \(Int(((viewModel.preparationProgress?.fraction ?? 0) * 100).rounded()))%")
-                        .font(.appHeadline).monospacedDigit()
+                    // Redrawn a few times a second: the progress moves with time inside a step.
+                    TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                        Text("Preparing your song… \(Int(((viewModel.preparationProgress?.fraction ?? 0) * 100).rounded()))%")
+                            .font(.appHeadline).monospacedDigit()
+                            .contentTransition(.numericText())
+                    }
                 }
                 .foregroundStyle(.white)
                 .accessibilityElement(children: .combine)

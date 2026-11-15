@@ -25,6 +25,18 @@ final class SongLibrary {
             self.error = .songLibraryFailed
         }
     }
+    /// The saved song made from the same file, if any: picking a file again opens its song
+    /// instead of adding a copy.
+    func song(matching audio: ImportedAudio) -> SavedSong? {
+        let size = SongLibraryStore.fileSize(audio.url)
+        return songs.first {
+            abs($0.duration - audio.duration) < Self.sameDurationTolerance && $0.sourceTitle == audio.title
+                && $0.artist == audio.artist && size != nil && SongLibraryStore.fileSize(store.url(for: $0)) == size
+        }
+    }
+    /// Durations of one file read twice differ by far less than this.
+    private static let sameDurationTolerance: TimeInterval = 0.05
+
     func audio(for song: SavedSong) -> ImportedAudio {
         ImportedAudio(url: store.url(for: song), name: song.title, duration: song.duration,
                       waveform: song.waveform, title: song.sourceTitle, artist: song.artist)
@@ -54,7 +66,8 @@ final class SongLibrary {
             } else {
                 let id = UUID()
                 let filename = try store.copyAudio(audio.url, id: id)
-                song = SavedSong(id: id, title: "Song \(nextNumber)", createdAt: Date(), filename: filename,
+                let title = audio.title.trimmingCharacters(in: .whitespaces)
+                song = SavedSong(id: id, title: title.isEmpty ? "Song \(nextNumber)" : title, createdAt: Date(), filename: filename,
                                  duration: audio.duration, waveform: audio.waveform, sourceTitle: audio.title,
                                  artist: audio.artist, selectionStart: start, selectionLength: length, lyrics: lyrics)
                 added = song
