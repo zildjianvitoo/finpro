@@ -110,6 +110,22 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
     /// (a minor seventh or more) from their middle moves an octave when that brings it closer.
     static let neighbourOctaveErrorDistance = 10
 
+    /// The neighbour pass for a guide without lyrics: the raw pitch notes in time order.
+    static func foldingOctaveErrors(_ notes: [TargetMIDINote]) -> [TargetMIDINote] {
+        var sorted = notes.sorted { $0.startTime < $1.startTime }
+        for index in sorted.indices {
+            let around = (max(0, index - neighbourCount)..<min(sorted.count, index + neighbourCount + 1))
+                .filter { $0 != index }.map { sorted[$0].midiNote }
+            guard around.count >= minimumNotesForLineMiddle, let middle = middle(around) else { continue }
+            let note = sorted[index]
+            let pitch = foldedAgainstNeighbours(note.midiNote, toward: middle)
+            if pitch != note.midiNote {
+                sorted[index] = TargetMIDINote(id: note.id, midiNote: pitch, startTime: note.startTime, duration: note.duration)
+            }
+        }
+        return sorted
+    }
+
     static func foldedAgainstNeighbours(_ pitch: Int, toward middle: Double) -> Int {
         var result = pitch
         while abs(Double(result) - middle) >= Double(neighbourOctaveErrorDistance) {

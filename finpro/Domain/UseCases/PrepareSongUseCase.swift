@@ -64,7 +64,10 @@ nonisolated struct PrepareSongUseCase: Sendable {
         let duration = trimRange.upperBound - trimRange.lowerBound
         let lyricGuide = LyricGuideNotesUseCase().execute(pitchNotes: extracted, lines: lyricLines)
         guard !lyricGuide.notes.isEmpty else {
-            return try await makeChoices(stems: stems, notes: extracted, duration: duration,
+            // No lyrics: the raw pitch notes, with the tracker's octave errors folded back so the
+            // key recommendation does not plan around notes nobody sings.
+            return try await makeChoices(stems: stems, notes: LyricGuideNotesUseCase.foldingOctaveErrors(extracted),
+                                         duration: duration,
                                          vocalRange: vocalRange, recommendationLimit: recommendationLimit,
                                          progress: progress)
         }

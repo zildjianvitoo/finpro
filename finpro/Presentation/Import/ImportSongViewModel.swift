@@ -9,6 +9,7 @@
 
 import Foundation
 import Observation
+import os
 
 @Observable
 final class ImportSongViewModel {
@@ -242,6 +243,7 @@ final class ImportSongViewModel {
                 guard generation == token else { return }
                 preparedChoices = choices
                 preparedLyrics = Self.lyrics(lyrics, sungAt: choices.guideWords)
+                Self.logPrepared(choices, lyricLines: lyricLines.count, file: audio.url.lastPathComponent, trim: trim)
                 status = .prepared
             } catch is CancellationError {
                 guard generation == token else { return }
@@ -251,6 +253,18 @@ final class ImportSongViewModel {
                 status = .failed(Self.userFacing(error))
             }
         }
+    }
+
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Preparation")
+
+    /// Which guide the keys were planned on and what came out, to trace a surprising key choice.
+    private static func logPrepared(_ choices: PrepareSongUseCase.Choices, lyricLines: Int, file: String,
+                                    trim: ClosedRange<TimeInterval>) {
+        let range = "\(PitchMath.noteName(midi: Int(choices.vocalRange.lowestMIDI.rounded())))-\(PitchMath.noteName(midi: Int(choices.vocalRange.highestMIDI.rounded())))"
+        let keys = choices.options.map {
+            "\($0.song.transposition.semitoneShift)(\(PitchMath.noteName(midi: $0.recommendation.lowestMIDI))-\(PitchMath.noteName(midi: $0.recommendation.highestMIDI)), fits \($0.recommendation.fitsRange))"
+        }.joined(separator: ", ")
+        log.notice("prepared \(file, privacy: .public) \(trim.lowerBound, privacy: .public)-\(trim.upperBound, privacy: .public) s: lyric lines \(lyricLines, privacy: .public), guide \(choices.guideWords.isEmpty ? "raw pitch" : "lyrics", privacy: .public), range \(range, privacy: .public), keys \(keys, privacy: .public)")
     }
 
     func cancelPreparation() {
