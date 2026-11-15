@@ -17,12 +17,16 @@ nonisolated enum CompingError: Error, CustomStringConvertible {
     case invalidPlan([ContractViolation])
     case missingTrack(String)
     case exportUnavailable
+    /// iOS stopped the export (the video hardware was busy or the app left the foreground) and
+    /// the retries did not get through.
+    case exportInterrupted
 
     var description: String {
         switch self {
         case .invalidPlan(let violations): "Invalid comping plan:\n" + violations.map(\.description).joined(separator: "\n")
         case .missingTrack(let name): "Missing track: \(name)"
         case .exportUnavailable: "Export session could not be created"
+        case .exportInterrupted: "The export was interrupted. Keep EasySing open and tap Try Again."
         }
     }
 }

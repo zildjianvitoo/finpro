@@ -47,6 +47,9 @@ final class CompingViewModel {
     /// True when the user tapped the selected clip (it then shows Retake); false when the
     /// selection only follows the playing video.
     private(set) var isClipChosen = false
+    /// The last export failed because iOS interrupted it (app in the background, video hardware
+    /// busy); it is retried when the app is active again.
+    private(set) var wasInterrupted = false
 
     private let useCase: AutoCompingVideoUseCase
     private let videoLibrary: any VideoLibrarySaving
@@ -143,6 +146,7 @@ final class CompingViewModel {
         if case .exporting = exportState { return }
         exportState = .exporting(progress: 0)
         saveState = .idle
+        wasInterrupted = false
         do {
             // The view model is MainActor-isolated (so Sendable); holding it until the export ends is fine.
             let url = try await useCase.export(plan) { progress in
@@ -155,8 +159,15 @@ final class CompingViewModel {
             exportState = .finished(url)
             await loadThumbnails(from: url)
         } catch {
+            if case CompingError.exportInterrupted = error { wasInterrupted = true }
             exportState = .failed(String(describing: error))
         }
+    }
+
+    /// The app is active again: an export that iOS interrupted starts over by itself.
+    func appBecameActive() async {
+        guard wasInterrupted, case .failed = exportState else { return }
+        await export()
     }
 
     /// A frame from the middle of each clip.

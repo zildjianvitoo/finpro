@@ -81,6 +81,8 @@ struct ExportPreviewView: View {
     private let saveRunUpDuration: TimeInterval = 1.6
     private let exportedAlertDelay: Duration = .milliseconds(350)
 
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some View {
         Group {
             switch viewModel.exportState {
@@ -98,7 +100,18 @@ struct ExportPreviewView: View {
         .overlay { if isMerging { merging } }
         .animation(.default, value: page)
         .animation(.default, value: isMerging)
-        .task { await viewModel.export() }
+        .task {
+            // iOS stops an export started while the app is not in the foreground (screen locked
+            // right as the recording ended, Control Center open): wait until it is.
+            while UIApplication.shared.applicationState != .active {
+                try? await Task.sleep(for: .milliseconds(100))
+                if Task.isCancelled { return }
+            }
+            await viewModel.export()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await viewModel.appBecameActive() } }
+        }
         .onChange(of: viewModel.exportedURL) { _, url in
             player = url.flatMap { viewModel.hasPlayableFile ? CoverPlayerController(url: $0) : nil }
         }
