@@ -5,6 +5,7 @@
 
 import Foundation
 import Observation
+import os
 
 @Observable
 final class KeySelectionViewModel {
@@ -26,6 +27,11 @@ final class KeySelectionViewModel {
     @ObservationIgnored private var request = UUID()
     @ObservationIgnored private var playback: Task<Void, Never>?
     @ObservationIgnored private var generation = UUID()
+
+    /// A preview that fails is tried once more after this pause: right after the song is prepared
+    /// (or the import sheet closes and stops the shared player) the first attempt can fail once.
+    private static let previewRetryDelay: Duration = .milliseconds(300)
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "KeyPreview")
 
     init(choices: PrepareSongUseCase.Choices, previewer: any AudioPreviewing,
          renderer: RenderSongKeyUseCase? = nil, automaticallySelectRecommended: Bool = false,
@@ -98,17 +104,29 @@ final class KeySelectionViewModel {
         guard let excerpt = choices.excerpt else { return }
         let token = generation
         isManualPreviewPlaying = true
+        error = nil
         playback = Task { [self] in
+            let onFinish: @Sendable () -> Void = { [weak self] in
+                Task { @MainActor in
+                    guard let self, self.generation == token else { return }
+                    self.isManualPreviewPlaying = false
+                    self.playback = nil
+                }
+            }
             do {
-                try await previewer.play(song.earphoneMixURL, excerpt: excerpt) { [weak self] in
-                    Task { @MainActor in
-                        guard let self, self.generation == token else { return }
-                        self.isManualPreviewPlaying = false
-                        self.playback = nil
-                    }
+                do {
+                    try await previewer.play(song.earphoneMixURL, excerpt: excerpt, onCompletion: onFinish)
+                } catch {
+                    // Our own stop() changes `generation`; anything else is worth one more try.
+                    guard !Task.isCancelled, generation == token else { return }
+                    Self.log.notice("key preview failed, retrying: \(String(describing: error), privacy: .public)")
+                    try await Task.sleep(for: Self.previewRetryDelay)
+                    guard generation == token else { return }
+                    try await previewer.play(song.earphoneMixURL, excerpt: excerpt, onCompletion: onFinish)
                 }
             } catch {
                 guard !Task.isCancelled, generation == token else { return }
+                Self.log.error("key preview failed: \(String(describing: error), privacy: .public), excerpt \(excerpt.lowerBound, privacy: .public)-\(excerpt.upperBound, privacy: .public), file \(song.earphoneMixURL.lastPathComponent, privacy: .public)")
                 isManualPreviewPlaying = false
                 self.error = .keyPreviewFailed
             }
