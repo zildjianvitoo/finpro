@@ -65,10 +65,22 @@ nonisolated final class HTDemucsStemSeparationRepository: StemSeparationReposito
             let (vocals, instrumental) = try Self.separate(mix, model: model)
             let writeStarted = clock.now
             let mono = [zip(vocals[0], vocals[1]).map { ($0 + $1) / 2 }]
-            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-            try Self.write(mix, to: mixURL)
-            try Self.write(mono, to: vocalURL)
-            try Self.write(instrumental, to: instrumentalURL)
+            // Written to a scratch folder and moved in whole: a separation stopped half way
+            // (app killed while writing) must never leave stems that look complete.
+            let fileManager = FileManager.default
+            let scratch = folder.deletingLastPathComponent()
+                .appendingPathComponent(folder.lastPathComponent + ".partial-" + UUID().uuidString, isDirectory: true)
+            try fileManager.createDirectory(at: scratch, withIntermediateDirectories: true)
+            do {
+                try Self.write(mix, to: scratch.appendingPathComponent(mixURL.lastPathComponent))
+                try Self.write(mono, to: scratch.appendingPathComponent(vocalURL.lastPathComponent))
+                try Self.write(instrumental, to: scratch.appendingPathComponent(instrumentalURL.lastPathComponent))
+                try? fileManager.removeItem(at: folder)
+                try fileManager.moveItem(at: scratch, to: folder)
+            } catch {
+                try? fileManager.removeItem(at: scratch)
+                throw error
+            }
             Self.log.notice("""
                 htdemucs timing: model load \(loadSeconds, format: .fixed(precision: 2)) s, read audio \(readSeconds, format: .fixed(precision: 2)) s, \
                 write stems \((clock.now - writeStarted) / .seconds(1), format: .fixed(precision: 2)) s
