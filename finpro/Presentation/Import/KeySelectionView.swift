@@ -50,9 +50,14 @@ struct KeySelectionView: View {
                             }
                         }
                     }
-                    if let error = viewModel.error { ErrorStateView(error: error) }
                 }
                 .padding(.horizontal, AppSpacing.regular).padding(.top, 32).padding(.bottom, 24)
+            }
+            // Outside the scroll view: an error appearing must not push the title out of view.
+            if let error = viewModel.error {
+                ErrorStateView(error: error)
+                    .padding(.horizontal, AppSpacing.regular).padding(.bottom, AppSpacing.small)
+                    .transition(.opacity)
             }
             if !viewModel.choices.options.isEmpty {
                 Button("Use selected key", action: viewModel.confirm).buttonStyle(.appPrimary)
