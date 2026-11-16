@@ -11,9 +11,15 @@ struct VocalRangeTestView: View {
     @State private var stage: Stage = .intro
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let onDismiss: (() -> Void)?
+    /// Where audio goes now; nil until known. Earphones plugged in or out update it.
+    let routeMonitor: (any AudioRouteMonitor)?
+    @State private var outputRoute: AudioOutputRoute?
+    /// A failed listen (e.g. no headset microphone), shown as a system alert.
+    @State private var showsFailure = false
 
-    init(viewModel: VocalRangeViewModel, onDismiss: (() -> Void)? = nil) {
+    init(viewModel: VocalRangeViewModel, routeMonitor: (any AudioRouteMonitor)? = nil, onDismiss: (() -> Void)? = nil) {
         _viewModel = State(initialValue: viewModel)
+        self.routeMonitor = routeMonitor
         self.onDismiss = onDismiss
     }
 
@@ -39,6 +45,21 @@ struct VocalRangeTestView: View {
         .background(Color.screenBackground.ignoresSafeArea())
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: stage)
         .onDisappear { viewModel.stopListening() }
+        .alert(failure?.title ?? "", isPresented: $showsFailure, presenting: failure) { _ in
+            Button("Try Again") {
+                viewModel.resetCapture()
+                viewModel.toggleMicrophone(practice: isHumming)
+            }
+            Button("OK", role: .cancel) { viewModel.resetCapture() }
+        } message: { error in
+            Text(error.message)
+        }
+        .onChange(of: failure) { _, error in showsFailure = error != nil }
+        .task {
+            guard let routeMonitor else { return }
+            outputRoute = routeMonitor.currentRoute
+            for await route in routeMonitor.routeChanges() { outputRoute = route }
+        }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active, viewModel.status == .listening {
                 viewModel.resetCapture()
@@ -47,6 +68,15 @@ struct VocalRangeTestView: View {
     }
 
     @Environment(\.scenePhase) private var scenePhase
+
+    private var failure: UserFacingError? {
+        if case .failed(let error) = viewModel.status { error } else { nil }
+    }
+
+    /// Sound goes to the phone's speaker, so no earphones (and no headset microphone) are connected.
+    private var showsEarphoneHint: Bool {
+        outputRoute == .speaker && !DebugOptions.allowsSpeakerRecording
+    }
 
     private var isWarmup: Bool { stage == .warmup }
     private var isHumming: Bool { stage == .hummingGuide }
@@ -87,7 +117,8 @@ struct VocalRangeTestView: View {
             let diameter = min(AppLayout.microphoneDiameter, max(120, proxy.size.height * 0.224))
             let micCenter = proxy.size.height * 0.76
             let headerHeight = proxy.size.height * ((isWarmup || isHumming) ? 0.28 : 0.25)
-            let contentHeight = max(40, micCenter - diameter / 2 - headerHeight - AppSpacing.regular)
+            let hintHeight: CGFloat = showsEarphoneHint ? 32 : 0
+            let contentHeight = max(40, micCenter - diameter / 2 - headerHeight - AppSpacing.regular - hintHeight)
             ZStack(alignment: .topLeading) {
                 header(height: headerHeight)
                 ScrollView {
@@ -96,6 +127,12 @@ struct VocalRangeTestView: View {
                 .scrollBounceBehavior(.basedOnSize)
                 .frame(width: max(1, proxy.size.width - AppSpacing.textInset * 2), height: contentHeight)
                 .position(x: proxy.size.width / 2, y: headerHeight + contentHeight / 2)
+
+                if showsEarphoneHint {
+                    earphoneHint
+                        .position(x: proxy.size.width / 2, y: micCenter - diameter / 2 - AppSpacing.regular)
+                        .transition(.opacity)
+                }
 
                 microphone(diameter: diameter)
                     .position(x: proxy.size.width / 2, y: micCenter)
@@ -109,7 +146,16 @@ struct VocalRangeTestView: View {
                 .frame(width: proxy.size.width, height: proxy.size.height)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: showsEarphoneHint)
         }
+    }
+
+    private var earphoneHint: some View {
+        Label("Connect earphones with a mic", systemImage: "headphones")
+            .font(.appFootnote.weight(.semibold))
+            .foregroundStyle(Color.primaryBrand)
+            .padding(.horizontal, AppSpacing.medium).padding(.vertical, AppSpacing.tiny)
+            .background(Color.primary100, in: Capsule())
     }
 
     private func header(height: CGFloat) -> some View {
@@ -159,7 +205,6 @@ struct VocalRangeTestView: View {
                     .id(viewModel.prompt)
                     .padding(.top, AppSpacing.spacious * 2)
             }
-            if case .failed(let error) = viewModel.status { ErrorStateView(error: error) }
         }
     }
 

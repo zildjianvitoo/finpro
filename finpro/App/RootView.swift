@@ -31,6 +31,7 @@ struct RootView: View {
                             repository: flow.container.vocalRange,
                             configuration: flow.container.configuration,
                             onSaved: flow.vocalRangeSaved),
+                        routeMonitor: flow.container.audioRoute,
                         onDismiss: flow.dismissVocalRange)
                 }
             case .home, .songList, .importSong:
