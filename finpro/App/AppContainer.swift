@@ -27,6 +27,8 @@ final class AppContainer {
     let audioPreview: any AudioPreviewing = AudioPreviewPlayer()
     /// Real synced lyrics in both Debug and Release; saved copies work offline.
     let lyrics: any LyricsProviding = LRCLibLyricsProvider()
+    /// Names imported songs (title and artist) from their sound.
+    let songRecognizer: any SongRecognizing = ShazamSongRecognizer()
     /// Microphone pitch for the vocal range test.
     let livePitch: any LivePitchSource
 

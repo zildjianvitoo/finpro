@@ -42,6 +42,18 @@ actor SelectionPipeline: StemSeparationRepository, AudioAnalysisRepository, Audi
         return url.appendingPathExtension("key\(semitones)")
     }
 }
+nonisolated final class RecognitionSpy: SongRecognizing, @unchecked Sendable {
+    let answer: RecognizedSong?
+    var calls = 0
+    init(answer: RecognizedSong?) { self.answer = answer }
+    func recognize(fileAt url: URL, duration: TimeInterval) async throws -> RecognizedSong? { calls += 1; return answer }
+}
+nonisolated final class LyricsSearchSpy: LyricsProviding, @unchecked Sendable {
+    var titles: [String] = []
+    func lyrics(title: String, artist: String?, duration: TimeInterval) async throws -> SongLyrics? {
+        titles.append(title); return nil
+    }
+}
 @main struct SongSelectionChecks {
     @MainActor static var count = 0
     @MainActor static func check(_ condition: Bool, _ message: String) {
@@ -196,6 +208,65 @@ actor SelectionPipeline: StemSeparationRepository, AudioAnalysisRepository, Audi
         check(model.waveformInterval.lowerBound <= model.selectionStart
               && model.waveformInterval.upperBound >= model.selectionStart + model.selectionLength,
               "Waveform viewport contains the entire chosen section")
+        try await recognitionChecks(directory: directory, preview: preview, useCase: useCase)
         print("PASS SongSelectionChecks (\(count) checks)")
+    }
+
+    /// Shazam names new songs and old unnamed ones, the lyrics search uses that name, and a name
+    /// the user typed is never replaced.
+    @MainActor static func recognitionChecks(directory: URL, preview: SelectionPreviewSpy,
+                                             useCase: PrepareSongUseCase) async throws {
+        let file = directory.appendingPathComponent("y2mate.com - track.mp3")
+        try Data([4, 5, 6, 7]).write(to: file)
+        let messy = ImportedAudio(url: file, name: "y2mate.com - track", duration: 120, waveform: [0.5],
+                                  title: "track", artist: nil)
+        let library = SongLibrary(store: SongLibraryStore(directory: directory.appendingPathComponent("named")))
+        let shazam = RecognitionSpy(answer: RecognizedSong(title: "Malibu Nights", artist: "LANY"))
+        let search = LyricsSearchSpy()
+        func model(initialSong: SavedSong? = nil, recognizer: RecognitionSpy = shazam) -> ImportSongViewModel {
+            ImportSongViewModel(inspector: SelectionInspector(audio: messy), lyrics: search, recognizer: recognizer,
+                                previewer: preview, prepare: useCase, vocalRange: { nil },
+                                library: library, initialSong: initialSong, onPrepared: { _, _, _ in })
+        }
+        let importing = model()
+        importing.picked(.success(file))
+        await waitUntil { search.titles.count == 1 }
+        check(search.titles == ["Malibu Nights"], "Lyrics are searched with the recognized title")
+        importing.saveToSongList()
+        let saved = library.songs.first
+        check(saved?.title == "Malibu Nights" && saved?.displayArtist == "LANY" && saved?.isRecognitionDone == true,
+              "A new song is saved under its recognized name")
+        check(saved?.sourceTitle == "track", "The file's own name is kept for recognising the same file again")
+        importing.suspend()
+
+        // Opening it again does not ask Shazam again.
+        let reopened = model(initialSong: saved)
+        reopened.openInitialSong()
+        await waitUntil { search.titles.count == 2 }
+        check(shazam.calls == 1 && search.titles.last == "Malibu Nights", "A named song is not recognized twice")
+        reopened.suspend()
+
+        // A song saved before recognition existed gets its name the next time it is opened.
+        let old = try library.save(audio: messy, existingID: nil, start: 0, length: 15, lyrics: nil)
+        let opening = model(initialSong: old)
+        opening.openInitialSong()
+        await waitUntil { library.songs.first { $0.id == old.id }?.isRecognitionDone == true }
+        check(library.songs.first { $0.id == old.id }?.title == "Malibu Nights", "An old song is renamed when opened")
+        opening.suspend()
+
+        // A name the user typed stays.
+        let mine = try library.save(audio: messy, existingID: nil, start: 0, length: 15, lyrics: nil)
+        library.rename(mine.id, title: "Lagu kesukaan")
+        library.applyRecognition(mine.id, song: RecognizedSong(title: "Malibu Nights", artist: "LANY"))
+        check(library.songs.first { $0.id == mine.id }?.title == "Lagu kesukaan", "Recognition never replaces the user's name")
+
+        // No match: the cleaned file name stays.
+        let unknown = RecognitionSpy(answer: nil)
+        let unmatched = try library.save(audio: messy, existingID: nil, start: 0, length: 15, lyrics: nil)
+        let openingUnknown = model(initialSong: unmatched, recognizer: unknown)
+        openingUnknown.openInitialSong()
+        await waitUntil { library.songs.first { $0.id == unmatched.id }?.isRecognitionDone == true }
+        check(library.songs.first { $0.id == unmatched.id }?.title == "track", "Without a match the song keeps its name")
+        openingUnknown.suspend()
     }
 }

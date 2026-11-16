@@ -17,4 +17,10 @@ nonisolated struct SavedSong: Identifiable, Equatable, Codable, Sendable {
     var selectionStart: TimeInterval
     var selectionLength: TimeInterval
     var lyrics: SongLyrics?
+    /// The song's artist: from Shazam, else the file. Nil in songs saved before it existed.
+    var displayArtist: String? = nil
+    /// Shazam was asked about this song and answered (a match or not); it is not asked again.
+    var isRecognitionDone: Bool? = nil
+    /// The user renamed the song; a recognized name never replaces theirs.
+    var isRenamedByUser: Bool? = nil
 }

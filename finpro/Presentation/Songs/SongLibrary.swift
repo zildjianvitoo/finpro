@@ -69,7 +69,8 @@ final class SongLibrary {
                 let title = audio.title.trimmingCharacters(in: .whitespaces)
                 song = SavedSong(id: id, title: title.isEmpty ? "Song \(nextNumber)" : title, createdAt: Date(), filename: filename,
                                  duration: audio.duration, waveform: audio.waveform, sourceTitle: audio.title,
-                                 artist: audio.artist, selectionStart: start, selectionLength: length, lyrics: lyrics)
+                                 artist: audio.artist, selectionStart: start, selectionLength: length, lyrics: lyrics,
+                                 displayArtist: audio.artist)
                 added = song
                 updated.insert(song, at: 0)
             }
@@ -90,7 +91,22 @@ final class SongLibrary {
         guard !value.isEmpty, let index = songs.firstIndex(where: { $0.id == id }) else { return }
         var updated = songs
         updated[index].title = value
+        updated[index].isRenamedByUser = true
         commit(updated)
+    }
+    /// Shazam answered for a saved song: use its name (unless the user renamed the song) and don't
+    /// ask again. Returns the song as saved.
+    @discardableResult
+    func applyRecognition(_ id: UUID, song recognized: RecognizedSong?) -> SavedSong? {
+        guard let index = songs.firstIndex(where: { $0.id == id }) else { return nil }
+        var updated = songs
+        updated[index].isRecognitionDone = true
+        if let recognized, updated[index].isRenamedByUser != true {
+            updated[index].title = recognized.title
+            updated[index].displayArtist = recognized.artist ?? updated[index].displayArtist
+        }
+        guard updated[index] != songs[index] else { return songs[index] }
+        return commit(updated) ? updated[index] : songs[index]
     }
     func delete(_ ids: Set<UUID>) {
         let removed = songs.filter { ids.contains($0.id) }

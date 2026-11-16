@@ -127,6 +127,7 @@ struct RootView: View {
         return ImportSongViewModel(
             inspector: container.audioInspector,
             lyrics: container.lyrics,
+            recognizer: container.songRecognizer,
             previewer: container.audioPreview,
             prepare: PrepareSongUseCase(separation: container.stemSeparation,
                                         analysis: container.audioAnalysis,
