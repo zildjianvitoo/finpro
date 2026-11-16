@@ -83,8 +83,10 @@ final class RecordingViewModel {
     private(set) var voiceDot: VoiceDot?
     /// How each guide note was sung so far, for its colour (see NoteTally; display only).
     private(set) var noteTallies: [UUID: NoteTally] = [:]
-    /// Start of each guide note, to leave out its attack like the score does.
-    @ObservationIgnored private var noteStarts: [UUID: TimeInterval] = [:]
+    /// Feeds the live pitch into `noteTallies` (timing grace, glitch filter; see NoteColoring).
+    @ObservationIgnored private var noteColoring = NoteColoring(notes: [])
+    @ObservationIgnored private var loggedNoteIDs: Set<UUID> = []
+    @ObservationIgnored private var guideNotes: [NoteColoring.GuideNote] = []
     /// Singing time shown by the timer (see `elapsedRecordingTime`), and the tick it was last
     /// brought up to date (nil outside singing).
     @ObservationIgnored private var singingTime: TimeInterval = 0
@@ -155,8 +157,10 @@ final class RecordingViewModel {
         self.allowsSpeaker = allowsSpeaker
         trailDisplay = StabilizePitchDisplayUseCase(configuration: configuration)
         noteDisplay = StabilizePitchDisplayUseCase(configuration: configuration)
-        noteStarts = Dictionary(song.segments.flatMap(\.targetNotes).map { ($0.id, $0.startTime) },
-                                uniquingKeysWith: { first, _ in first })
+        guideNotes = song.segments.flatMap(\.targetNotes).map {
+            NoteColoring.GuideNote(id: $0.id, start: $0.startTime, end: $0.endTime, midi: Float(song.transposition.transposed($0)))
+        }
+        noteColoring = NoteColoring(notes: guideNotes)
         loop = LoopStateController(segments: song.segments, configuration: configuration,
                                    range: pass.segmentRange(segmentCount: song.segments.count))
         route = routeMonitor.currentRoute
@@ -612,10 +616,22 @@ final class RecordingViewModel {
         tasks.removeAll()
     }
 
+    /// One line per sung note in the event log, to tune the colouring from real takes.
+    private func logFinishedNotes(before time: TimeInterval) {
+        for note in guideNotes where note.end < time && !loggedNoteIDs.contains(note.id) {
+            guard let tally = noteTallies[note.id] else { continue }
+            loggedNoteIDs.insert(note.id)
+            Self.noteLog.notice("note \(PitchMath.noteName(midi: Int(note.midi)), privacy: .public) \(note.start, format: .fixed(precision: 2), privacy: .public)-\(note.end, format: .fixed(precision: 2), privacy: .public) s: \(tally.summary, privacy: .public)")
+        }
+    }
+    private static let noteLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Notes")
+
     private func resetVoiceDot() {
         voiceDotFilter.reset()
         voiceDot = nil
         noteTallies = [:]
+        noteColoring.reset()
+        loggedNoteIDs.removeAll()
     }
 
     private func handle(_ sample: PitchSample) {
@@ -632,10 +648,9 @@ final class RecordingViewModel {
         trail.append(TrailPoint(songTime: evaluation.referenceTime, midi: midi, isHit: evaluation.isHit))
         // Note colours (user decision 2026-11-16): a whole note is green or red by NoteTally's
         // looser rule; the clip score still uses every raw sample with its own tolerance.
-        if let id = evaluation.targetNoteID, let start = noteStarts[id],
-           evaluation.referenceTime >= start + configuration.attackIgnore {
-            noteTallies[id, default: NoteTally()].add(centDeviation: evaluation.centDeviation)
-        }
+        noteColoring.add(time: evaluation.referenceTime, midi: evaluation.detectedMIDINote)
+        if noteColoring.tallies != noteTallies { noteTallies = noteColoring.tallies }
+        logFinishedNotes(before: evaluation.referenceTime - NoteColoring.lateGrace)
         voiceDotFilter.update(midi: evaluation.detectedMIDINote, time: evaluation.referenceTime,
                               foldToDot: evaluation.targetNoteID == nil)
         if let dotMIDI = voiceDotFilter.midi, let heard = voiceDotFilter.lastVoicedTime {
