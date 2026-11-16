@@ -161,6 +161,7 @@ struct RootView: View {
         return CompingViewModel(
             plan: plan,
             songName: flow.songName,
+            existingExport: flow.compingPlanExportURL,
             useCase: AutoCompingVideoUseCase(takeLog: container.takeLog, videoComposition: container.videoComposition),
             videoLibrary: container.videoLibrary,
             passThreshold: container.configuration.passThreshold,

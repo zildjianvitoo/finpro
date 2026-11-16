@@ -112,6 +112,12 @@ struct ExportPreviewView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await viewModel.appBecameActive() } }
         }
+        .onAppear {
+            // An existing video (draft) is ready before the first frame: no merge, no onChange.
+            if player == nil, viewModel.hasPlayableFile, let url = viewModel.exportedURL {
+                player = CoverPlayerController(url: url)
+            }
+        }
         .onChange(of: viewModel.exportedURL) { _, url in
             player = url.flatMap { viewModel.hasPlayableFile ? CoverPlayerController(url: $0) : nil }
         }

@@ -59,7 +59,10 @@ final class CompingViewModel {
     private let thumbnailProvider: any ClipThumbnailProviding
     private let passThreshold: Float
 
-    init(plan: CompingCompositionPlan, songName: String? = nil, useCase: AutoCompingVideoUseCase,
+    /// - Parameter existingExport: a video already exported from `plan`; it is shown as is
+    ///   instead of merging the takes again.
+    init(plan: CompingCompositionPlan, songName: String? = nil, existingExport: URL? = nil,
+         useCase: AutoCompingVideoUseCase,
          videoLibrary: any VideoLibrarySaving,
          thumbnailProvider: any ClipThumbnailProviding = AVClipThumbnailProvider(),
          passThreshold: Float = AppConfiguration().passThreshold,
@@ -74,6 +77,9 @@ final class CompingViewModel {
         self.onExported = onExported
         self.onSavedToPhotos = onSavedToPhotos
         selectedClipID = plan.validTakes.first?.segmentIndex
+        if let existingExport, FileManager.default.fileExists(atPath: existingExport.path) {
+            exportState = .finished(existingExport)
+        }
     }
 
     var title: String { songName ?? "Your cover" }
@@ -144,6 +150,11 @@ final class CompingViewModel {
 
     func export() async {
         if case .exporting = exportState { return }
+        // Already exported (an existing video was passed in): only the clip frames are missing.
+        if hasPlayableFile, let url = exportedURL {
+            if thumbnails.isEmpty { await loadThumbnails(from: url) }
+            return
+        }
         exportState = .exporting(progress: 0)
         saveState = .idle
         wasInterrupted = false

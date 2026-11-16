@@ -35,7 +35,12 @@ final class AppFlow {
     private(set) var keyChoices: PrepareSongUseCase.Choices?
     private(set) var preparationError: UserFacingError?
     private(set) var loadingDemo = false
-    private(set) var compingPlan: CompingCompositionPlan?
+    private(set) var compingPlan: CompingCompositionPlan? {
+        didSet { compingPlanExportURL = nil }
+    }
+    /// The saved cover video made from exactly `compingPlan`, so the result screen can show it
+    /// without merging the takes again (opening a draft, or coming back from a discarded retake).
+    private(set) var compingPlanExportURL: URL?
     /// What the recording screen records next: the session, or a retake / continue of the cover.
     private(set) var recordingPass = RecordingPass.session
     /// Lyrics of the chosen part on the prepared song's timeline, for the recording screen.
@@ -262,6 +267,7 @@ final class AppFlow {
     func coverExported(_ url: URL, plan: CompingCompositionPlan) {
         savedCoverID = container.coverLibrary.save(url, title: songName, duration: plan.endTime,
                                                    isDraft: plan.isPartial, replacing: savedCoverID) ?? savedCoverID
+        compingPlanExportURL = savedCoverURL
         guard let id = savedCoverID, let preparedSong else { return }
         let draft = CoverDraft(song: preparedSong, plan: plan, attempts: container.takeLog.allAttempts(),
                                lyrics: recordingLyrics, songName: songName)
@@ -271,6 +277,11 @@ final class AppFlow {
             await previous?.value
             try? await drafts.save(draft, id: id)
         }
+    }
+
+    private var savedCoverURL: URL? {
+        let library = container.coverLibrary
+        return library.covers.first { $0.id == savedCoverID }.map(library.url(for:))
     }
 
     /// Home: a draft cover was tapped. Opens it on the result screen with its takes, so it can be
@@ -289,6 +300,8 @@ final class AppFlow {
         compingPlan = draft.plan
         recordingPass = .session
         savedCoverID = id
+        // The draft's plan is the one its saved video was exported from.
+        compingPlanExportURL = savedCoverURL
         step = .export
         return true
     }
