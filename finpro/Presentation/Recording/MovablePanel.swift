@@ -25,6 +25,9 @@ struct MovablePanel<Content: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let handleHitSize: CGFloat = 44
+    // Both handles move with the panel, so their drags are measured on the screen (.global):
+    // measured in the handle's own (moving) space, every move changed the translation again
+    // and the panel shook while dragged.
 
     var body: some View {
         let shown = clamped(current)
@@ -59,7 +62,7 @@ struct MovablePanel<Content: View>: View {
             .frame(width: 88, height: 28)
             .contentShape(Rectangle())
             .offset(y: -22)
-            .gesture(DragGesture(minimumDistance: 2)
+            .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .global)
                 .updating($moving) { value, state, _ in state = value.translation }
                 .onEnded { value in
                     let base = frame ?? defaultFrame
@@ -80,7 +83,7 @@ struct MovablePanel<Content: View>: View {
         .frame(width: handleHitSize, height: handleHitSize, alignment: .topLeading)
         .contentShape(Rectangle())
         .offset(x: 18, y: 18)
-        .gesture(DragGesture(minimumDistance: 2)
+        .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .global)
             .updating($resizing) { value, state, _ in state = value.translation }
             .onEnded { value in
                 let base = frame ?? defaultFrame
