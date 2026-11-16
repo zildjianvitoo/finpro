@@ -212,16 +212,10 @@ final class ImportSongViewModel {
         recognized = nil
         recognition?.cancel()
         let recognizes = recognizer != nil && !named
-        if let cached = saved?.lyrics {
-            lyrics = .found(cached)
-            if recognizes { recognize(audio, thenSearchLyrics: false) }
-        } else if recognizes {
-            // Lyrics are searched once the song is named, with the better name.
-            lyrics = .loading
-            recognize(audio, thenSearchLyrics: true)
-        } else {
-            searchLyrics()
-        }
+        // Lyrics are searched right away with the file's name; Shazam runs alongside and, if the
+        // file's name finds nothing, its name is tried as well.
+        if let cached = saved?.lyrics { lyrics = .found(cached) } else { searchLyrics() }
+        if recognizes { recognize(audio) }
         startSelectionPreview()
     }
 
@@ -404,7 +398,7 @@ final class ImportSongViewModel {
 
     /// Asks Shazam for the song's name. A match becomes the lyrics search terms and, once the song
     /// is in the Song List, its name there. When Shazam can't be reached the file's name stays.
-    private func recognize(_ audio: ImportedAudio, thenSearchLyrics: Bool) {
+    private func recognize(_ audio: ImportedAudio) {
         guard let recognizer else { return }
         // Not tied to `generation`: starting the preparation must not drop the answer. Picking
         // another file, closing the sheet or opening another song cancels this task instead.
@@ -415,16 +409,20 @@ final class ImportSongViewModel {
             guard !Task.isCancelled, selectionAudio?.url == audio.url else { return }
             if let outcome {
                 recognized = outcome
-                if let song = outcome {
-                    lyricsTitle = song.title
-                    lyricsArtist = song.artist ?? ""
+                if let song = outcome, case let terms = (song.title, song.artist ?? ""), terms != (lyricsTitle, lyricsArtist) {
+                    lyricsTitle = terms.0
+                    lyricsArtist = terms.1
+                    // The file's name found nothing (or is still searching, see `searchLyrics`).
+                    switch lyrics {
+                    case .notFound, .failed, .idle: searchLyrics()
+                    case .loading, .found: break
+                    }
                 }
                 if let savedSongID, let named = library?.applyRecognition(savedSongID, song: outcome) {
                     // The cover is named after the song when it is being prepared already.
                     if preparingDisplayName != nil { preparingDisplayName = named.title }
                 }
             }
-            if thenSearchLyrics { searchLyrics() }
         }
     }
 
@@ -444,6 +442,12 @@ final class ImportSongViewModel {
                 let found = try await lyricsProvider.lyrics(title: title, artist: artist.isEmpty ? nil : artist,
                                                             duration: audio.duration)
                 try Task.checkCancellation()
+                // Shazam named the song while this search ran: try that name before giving up.
+                let current = (lyricsTitle.trimmingCharacters(in: .whitespaces), lyricsArtist.trimmingCharacters(in: .whitespaces))
+                if found == nil, current != (title, artist), !current.0.isEmpty {
+                    searchLyrics()
+                    return
+                }
                 lyrics = found.map(LyricsState.found) ?? .notFound
                 if !userMovedSelection { useChorusSuggestion() }
             } catch is CancellationError {

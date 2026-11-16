@@ -230,8 +230,9 @@ nonisolated final class LyricsSearchSpy: LyricsProviding, @unchecked Sendable {
         }
         let importing = model()
         importing.picked(.success(file))
-        await waitUntil { search.titles.count == 1 }
-        check(search.titles == ["Malibu Nights"], "Lyrics are searched with the recognized title")
+        await waitUntil { search.titles.contains("Malibu Nights") }
+        check(search.titles.first == "track" && search.titles.last == "Malibu Nights",
+              "Lyrics are searched at once with the file's name, then with the recognized title")
         importing.saveToSongList()
         let saved = library.songs.first
         check(saved?.title == "Malibu Nights" && saved?.displayArtist == "LANY" && saved?.isRecognitionDone == true,
@@ -240,9 +241,10 @@ nonisolated final class LyricsSearchSpy: LyricsProviding, @unchecked Sendable {
         importing.suspend()
 
         // Opening it again does not ask Shazam again.
+        let searches = search.titles.count
         let reopened = model(initialSong: saved)
         reopened.openInitialSong()
-        await waitUntil { search.titles.count == 2 }
+        await waitUntil { search.titles.count == searches + 1 }
         check(shazam.calls == 1 && search.titles.last == "Malibu Nights", "A named song is not recognized twice")
         reopened.suspend()
 

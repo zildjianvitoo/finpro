@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import os
 
 nonisolated final class LRCLibLyricsProvider: LyricsProviding, @unchecked Sendable {
     /// One search record (fields the app uses).
@@ -25,6 +26,7 @@ nonisolated final class LRCLibLyricsProvider: LyricsProviding, @unchecked Sendab
     private static let endpoint = URL(string: "https://lrclib.net/api/search")!
     /// LRCLIB asks clients to identify themselves. Add the repo URL once it exists.
     private static let userAgent = "finpro/1.0 (Apple Developer Academy)"
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Lyrics")
 
     private let session: URLSession
     private let lock = NSLock()
@@ -44,7 +46,12 @@ nonisolated final class LRCLibLyricsProvider: LyricsProviding, @unchecked Sendab
         queries.append([URLQueryItem(name: "q", value: [title, artist].compactMap { $0 }.joined(separator: " "))])
         var result: SongLyrics?
         for query in queries {
-            if let match = Self.bestMatch(try await search(query), duration: duration) {
+            let records: [Record]
+            do { records = try await search(query) } catch {
+                Self.log.error("search \(title, privacy: .public) / \(artist ?? "-", privacy: .public) failed: \(String(describing: error), privacy: .public)")
+                throw error
+            }
+            if let match = Self.bestMatch(records, duration: duration) {
                 let lines = LRCLyricsParser.lines(from: match.syncedLyrics ?? "", duration: duration)
                 result = SongLyrics(lines: lines, chorus: ChorusFinder.chorus(in: lines),
                                     matchedTitle: match.trackName, matchedArtist: match.artistName)
@@ -52,6 +59,11 @@ nonisolated final class LRCLibLyricsProvider: LyricsProviding, @unchecked Sendab
             }
         }
         if result?.lines.isEmpty == true { result = nil }
+        if let result {
+            Self.log.notice("found \(result.matchedArtist ?? "-", privacy: .public) - \(result.matchedTitle ?? "-", privacy: .public) for \(title, privacy: .public) / \(artist ?? "-", privacy: .public)")
+        } else {
+            Self.log.notice("no synced lyrics within \(Int(Self.durationTolerance), privacy: .public) s of \(Int(duration), privacy: .public) s for \(title, privacy: .public) / \(artist ?? "-", privacy: .public)")
+        }
         lock.withLock { cache[key] = result }
         return result
     }

@@ -35,7 +35,6 @@ nonisolated struct ShazamSongRecognizer: SongRecognizing {
     }
 
     private static func match(_ url: URL, duration: TimeInterval) async throws -> RecognizedSong? {
-        var failed = false
         for position in excerptPositions {
             try Task.checkCancellation()
             let start = max(0, min(duration - excerptLength, duration * position))
@@ -54,15 +53,15 @@ nonisolated struct ShazamSongRecognizer: SongRecognizing {
             case .noMatch:
                 continue
             case .error(let error, _):
+                // Not reachable or not allowed (e.g. the ShazamKit App Service is off for this app):
+                // the second excerpt would fail the same way, so stop. It may work another time.
                 log.error("recognition failed: \(String(describing: error), privacy: .public)")
-                failed = true
+                throw SongRecognitionError.unavailable
             @unknown default:
-                failed = true
+                throw SongRecognitionError.unavailable
             }
         }
-        log.notice("no match for \(url.lastPathComponent, privacy: .public)\(failed ? " (errors)" : "", privacy: .public)")
-        // An error (not a plain no-match) means it may work another time.
-        if failed { throw SongRecognitionError.unavailable }
+        log.notice("no match for \(url.lastPathComponent, privacy: .public)")
         return nil
     }
 

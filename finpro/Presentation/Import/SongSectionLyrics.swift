@@ -37,7 +37,15 @@ struct SongSectionLyrics: View {
                     }
                     .onAppear { if let id = viewModel.firstSelectedLineID { proxy.scrollTo(id, anchor: .center) } }
                 }
-            case .loading: Color.clear
+            case .loading:
+                // Searching can take a few seconds (a busy lyrics service is retried).
+                HStack(spacing: AppSpacing.small) {
+                    ProgressView()
+                    Text("Finding lyrics…").font(.appSubheadline)
+                }
+                .foregroundStyle(Color.plumInk.opacity(0.6))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityElement(children: .combine)
             case .idle: Color.clear
             case .notFound: search(.lyricsNotFound)
             case .failed(let error): search(error)
