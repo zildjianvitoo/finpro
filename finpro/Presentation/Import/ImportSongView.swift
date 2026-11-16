@@ -12,8 +12,6 @@ struct ImportSongView: View {
     /// The sheet's current size, kept while the song is prepared.
     @State private var detent: PresentationDetent = .height(AppLayout.importSheetHeight)
     @State private var picking = false
-    /// The preparing screen covers the whole app; the sheet keeps its half height underneath.
-    @State private var showsPreparing = false
     #if DEBUG
     /// `-importFile` opens once per app launch, not every time this sheet opens again.
     private static var openedLaunchFile = false
@@ -71,13 +69,8 @@ struct ImportSongView: View {
         .onChange(of: viewModel.status) { _, status in
             if status == .prepared { viewModel.continueWithPreparedSong() }
         }
-        .onChange(of: viewModel.isPreparing) { _, preparing in
-            // No slide-up: the dark screen appears in place over the whole app.
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) { showsPreparing = preparing }
-        }
-        .fullScreenCover(isPresented: $showsPreparing) { preparingScreen }
+        // The preparing screen covers the whole app (fading in); the sheet keeps its half height underneath.
+        .crossDissolveCover(isPresented: viewModel.isPreparing) { preparingScreen }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { viewModel.stopSelectionPreview() }
         }
@@ -100,8 +93,7 @@ struct ImportSongView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.updatesFrequently)
-        .presentationBackground(Color.black.opacity(0.75))
-        .interactiveDismissDisabled()
+        .background(Color.black.opacity(0.75).ignoresSafeArea())
     }
 
     private var importPrompt: some View {

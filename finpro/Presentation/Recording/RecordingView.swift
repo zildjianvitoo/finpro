@@ -2,7 +2,7 @@
 //  RecordingView.swift
 //  finpro
 //
-//  Recording screen (PRD §5.5): the front camera in its 9:16 frame, a tips card before recording
+//  Recording screen (PRD §5.5): the front camera in its 9:16 frame, a tips alert before recording
 //  starts, then the timer, the lyrics (a card near the camera, or inside the pitch guide), the
 //  pitch guide and the controls: settings, record (start / pause / resume), delete and done.
 //
@@ -15,6 +15,10 @@ struct RecordingView: View {
     @State private var confirmsEnd = false
     @State private var confirmsDeleteLast = false
     @State private var showsSettings = false
+    /// The recording tips, shown as a system alert before the first take.
+    @State private var showsTips = false
+    private static let tipsDelay: Duration = .milliseconds(450)
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
 
     @AppStorage(RecordingDisplaySettings.showsLyricsKey) private var showsLyrics = true
@@ -71,6 +75,7 @@ struct RecordingView: View {
                 content(layout)
                 countdownLayer
             }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: isCountingDown)
             .frame(width: layout.size.width, height: layout.size.height, alignment: .top)
             .ignoresSafeArea()
             // The design is light only; tokens resolve light even when the phone is in dark mode.
@@ -119,6 +124,17 @@ struct RecordingView: View {
                  : "The current segment will start again.")
         }
         .sheet(isPresented: $showsSettings) { RecordingSettingsSheet(viewModel: viewModel) }
+        .alert("Quick Recording Tips", isPresented: $showsTips) {
+            Button("Let’s Record") { Task { await viewModel.beginRecording() } }
+        } message: {
+            Text("Wear wired headphones, keep your camera steady, and find a quiet spot for the best result.")
+        }
+        .task(id: viewModel.status == .ready) {
+            guard viewModel.status == .ready else { showsTips = false; return }
+            // UIKit refuses an alert while the screen is still sliding in; wait for it to settle.
+            try? await Task.sleep(for: Self.tipsDelay)
+            if !Task.isCancelled { showsTips = true }
+        }
     }
 
     // MARK: - Layout
@@ -208,7 +224,7 @@ struct RecordingView: View {
 
     // MARK: - Before and while recording
 
-    /// Top bar, lyrics, pitch guide and controls over the camera frame; the tips card sits on top
+    /// Top bar, lyrics, pitch guide and controls over the camera frame; the tips alert is presented on top
     /// of them until it is dismissed by starting the recording.
     private func sessionOverlay(_ layout: VideoLayout) -> some View {
         VStack(spacing: 0) {
@@ -244,11 +260,6 @@ struct RecordingView: View {
         }
         .padding(.top, layout.top)
         .frame(width: layout.size.width, height: layout.top + layout.videoHeight, alignment: .top)
-        .overlay {
-            if viewModel.status == .ready {
-                tipsCard
-            }
-        }
         .animation(.snappy, value: lyricsInGuide)
         .animation(.snappy, value: showsLyrics)
     }
@@ -426,44 +437,6 @@ struct RecordingView: View {
         .accessibilityLabel("Finish recording")
     }
 
-    // MARK: - Tips
-
-    /// Light alert card over a dimmed screen (Sketch "TestFlight UT" 5.1, "Alerts/Light").
-    private var tipsCard: some View {
-        ZStack {
-            Color.black.opacity(0.25).ignoresSafeArea().allowsHitTesting(false)
-            VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Quick Recording Tips")
-                        .font(.appHeadline)
-                        .foregroundStyle(Color.primaryBrand)
-                        .accessibilityAddTraits(.isHeader)
-                    Text("Wear wired headphones, keep your camera steady, and find a quiet spot for the best result.")
-                        .font(.appBody)
-                        .foregroundStyle(Color.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(EdgeInsets(top: 8, leading: 8, bottom: 24, trailing: 8))
-                Button {
-                    Task { await viewModel.beginRecording() }
-                } label: {
-                    Text("Let’s Record")
-                        .font(.appCTA)
-                        .foregroundStyle(.white)
-                        .frame(maxWidth: .infinity, minHeight: 56)
-                        .background(Capsule().fill(Color.primaryButton))
-                        .contentShape(Capsule())
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(14)
-            .frame(maxWidth: 330)
-            .glassCardBackground(cornerRadius: 34)
-            .environment(\.colorScheme, .light)
-            .padding(.horizontal, AppSpacing.regular)
-        }
-    }
-
     // MARK: - Countdown
 
     /// Dims the screen and shows the number in a white circle, before the first segment and after
@@ -484,7 +457,12 @@ struct RecordingView: View {
                     .accessibilityLabel("Starting in \(remaining)")
             }
             .allowsHitTesting(false)
+            .transition(.opacity)
         }
+    }
+
+    private var isCountingDown: Bool {
+        if case .countdown = viewModel.loop.phase { true } else { false }
     }
 
     @ViewBuilder
