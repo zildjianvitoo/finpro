@@ -41,7 +41,7 @@ struct SongSectionLyrics: View {
                 // Searching can take a few seconds (a busy lyrics service is retried).
                 HStack(spacing: AppSpacing.small) {
                     ProgressView()
-                    Text("Finding lyrics…").font(.appSubheadline)
+                    Text(viewModel.isIdentifyingSong ? "Identifying song…" : "Finding lyrics…").font(.appSubheadline)
                 }
                 .foregroundStyle(Color.plumInk.opacity(0.6))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

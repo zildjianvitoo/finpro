@@ -17,7 +17,10 @@ nonisolated struct ShazamSongRecognizer: SongRecognizing {
     /// Where the excerpts are taken, as a fraction of the song: past the intro, then later on.
     private static let excerptPositions: [Double] = [0.3, 0.6]
     /// The lyrics search waits for the name, so a slow or missing network must not hold it up long.
-    private static let timeout: Duration = .seconds(6)
+    private static let timeout: Duration = .seconds(12)
+    /// The Shazam service sometimes refuses a request (401, "enable the ShazamKit App Service")
+    /// and accepts a later one: retried after these pauses (within `timeout`).
+    private static let retryDelays: [Duration] = [.seconds(1), .seconds(2)]
     private static let sampleRate: Double = 44_100
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Recognition")
 
@@ -43,7 +46,14 @@ nonisolated struct ShazamSongRecognizer: SongRecognizing {
                 log.error("signature failed: \(String(describing: error), privacy: .public)")
                 throw SongRecognitionError.unavailable
             }
-            switch await SHSession().result(from: signature) {
+            var result = await SHSession().result(from: signature)
+            for delay in retryDelays {
+                guard case .error(let error, _) = result else { break }
+                log.notice("recognition failed, retrying: \((error as NSError).domain, privacy: .public) \((error as NSError).code, privacy: .public)")
+                try await Task.sleep(for: delay)
+                result = await SHSession().result(from: signature)
+            }
+            switch result {
             case .match(let match):
                 guard let item = match.mediaItems.first,
                       let title = item.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else { continue }

@@ -44,9 +44,14 @@ actor SelectionPipeline: StemSeparationRepository, AudioAnalysisRepository, Audi
 }
 nonisolated final class RecognitionSpy: SongRecognizing, @unchecked Sendable {
     let answer: RecognizedSong?
+    let delay: Duration
     var calls = 0
-    init(answer: RecognizedSong?) { self.answer = answer }
-    func recognize(fileAt url: URL, duration: TimeInterval) async throws -> RecognizedSong? { calls += 1; return answer }
+    init(answer: RecognizedSong?, delay: Duration = .zero) { self.answer = answer; self.delay = delay }
+    func recognize(fileAt url: URL, duration: TimeInterval) async throws -> RecognizedSong? {
+        calls += 1
+        if delay > .zero { try await Task.sleep(for: delay) }
+        return answer
+    }
 }
 nonisolated final class LyricsSearchSpy: LyricsProviding, @unchecked Sendable {
     var titles: [String] = []
@@ -262,6 +267,22 @@ nonisolated final class LyricsSearchSpy: LyricsProviding, @unchecked Sendable {
         library.applyRecognition(mine.id, song: RecognizedSong(title: "Malibu Nights", artist: "LANY"))
         check(library.songs.first { $0.id == mine.id }?.title == "Lagu kesukaan", "Recognition never replaces the user's name")
 
+        // Shazam still working when the file's name finds nothing: the lyrics keep loading
+        // ("Identifying song…") instead of showing the search form, then use Shazam's name.
+        let slow = RecognitionSpy(answer: RecognizedSong(title: "Malibu Nights", artist: "LANY"), delay: .milliseconds(150))
+        let waiting = try library.save(audio: messy, existingID: nil, start: 0, length: 15, lyrics: nil)
+        let slowModel = model(initialSong: waiting, recognizer: slow)
+        slowModel.openInitialSong()
+        try await Task.sleep(for: .milliseconds(60))
+        check(slowModel.lyrics == .loading && slowModel.isIdentifyingSong,
+              "No lyrics by file name while Shazam works: still loading, not the search form")
+        for _ in 0..<200 where slowModel.isIdentifyingSong || slowModel.lyrics == .loading {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        check(search.titles.last == "Malibu Nights" && slowModel.lyrics == .notFound,
+              "Then lyrics are searched with Shazam's name")
+        slowModel.suspend()
+
         // No match: the cleaned file name stays.
         let unknown = RecognitionSpy(answer: nil)
         let unmatched = try library.save(audio: messy, existingID: nil, start: 0, length: 15, lyrics: nil)
@@ -269,6 +290,8 @@ nonisolated final class LyricsSearchSpy: LyricsProviding, @unchecked Sendable {
         openingUnknown.openInitialSong()
         await waitUntil { library.songs.first { $0.id == unmatched.id }?.isRecognitionDone == true }
         check(library.songs.first { $0.id == unmatched.id }?.title == "track", "Without a match the song keeps its name")
+        for _ in 0..<200 where openingUnknown.lyrics != .notFound { try await Task.sleep(for: .milliseconds(10)) }
+        check(!openingUnknown.isIdentifyingSong, "Without a match the search form shows")
         openingUnknown.suspend()
     }
 }

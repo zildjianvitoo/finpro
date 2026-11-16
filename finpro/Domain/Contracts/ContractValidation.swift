@@ -34,8 +34,9 @@ extension PreparedSong {
         var violations: [ContractViolation] = []
         func fail(_ message: String) { violations.append(ContractViolation(contract: name, message: message)) }
 
-        if duration < 15 - ContractTolerance.timeline || duration > 60 + ContractTolerance.timeline {
-            fail("duration \(duration)s is outside 15...60s")
+        // At least 15 s; it may be as long as the whole song (no upper limit since 2026-11-16).
+        if duration < 15 - ContractTolerance.timeline {
+            fail("duration \(duration)s is shorter than 15s")
         }
         if !TranspositionPlan.semitoneRange.contains(transposition.semitoneShift) {
             fail("semitoneShift \(transposition.semitoneShift) is outside \(TranspositionPlan.semitoneRange)")

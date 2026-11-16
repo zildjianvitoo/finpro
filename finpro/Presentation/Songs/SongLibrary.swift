@@ -46,7 +46,6 @@ final class SongLibrary {
               length: TimeInterval, lyrics: SongLyrics?) throws -> SavedSong {
         guard !loadFailed, start.isFinite, length.isFinite, start >= 0,
               length >= ImportSongViewModel.minimumLength,
-              length <= ImportSongViewModel.maximumLength,
               start + length <= audio.duration + 0.001 else {
             error = .songLibraryFailed
             throw UserFacingError.songLibraryFailed

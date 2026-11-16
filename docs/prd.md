@@ -6,7 +6,7 @@
 Build an iOS 18+ Proof of Concept (PoC) application in Swift & SwiftUI for independent Gen Z song cover creators.
 The app eliminates repetitive trial-and-error recording (retaking the entire song from the beginning when making a single pitch mistake) through 5 core mechanisms:
 1. **Vocal Range Test & Auto-Transpose:** The user's comfortable vocal range is measured once. The reference song (guide notes, earphone audio, and backing music) is transposed by semitones to fit that range.
-2. **Reference Separation, Audio-to-MIDI & Auto-Segmentation:** Importing a full reference song (full mix with the original vocals, trimmed to 15–60 s), separating it into a vocal stem and an instrumental stem (see §3 for the two-track strategy), extracting the vocal melody into target MIDI notes, and slicing the song into phrase segments based on breathing pauses/silences.
+2. **Reference Separation, Audio-to-MIDI & Auto-Segmentation:** Importing a full reference song (full mix with the original vocals, trimmed to at least 15 s, up to the whole song), separating it into a vocal stem and an instrumental stem (see §3 for the two-track strategy), extracting the vocal melody into target MIDI notes, and slicing the song into phrase segments based on breathing pauses/silences.
 3. **Continuous Camera Recording + Synced Reference Playback + Live Piano Roll:** Recording a single, uninterrupted 9:16 vertical video (`RawMasterVideo.mov`) while playing the reference audio through earphones and rendering a semi-transparent real-time Piano Roll overlay in the center of the screen.
 4. **Segment Evaluation (no repeat) *(changed 2026-11-12)*:** Evaluating pitch accuracy at the end of each phrase segment. A segment is never repeated: whatever its score, the valid video `CMTimeRange` is logged (status `completed`, the measured score is kept) and playback continues straight into the next segment. The piano roll shows hits in green and misses in red as the notes go by. The earlier auto-rewind (TRY AGAIN below 75% → missed notes, `3.. 2.. 1..`, replay of the segment) was removed.
 5. **Automated Comping & Mixdown (Auto-Cut, Stitch & Mix):** When all segments are sung — or the user ends the session early — slice `RawMasterVideo.mov` using the logged `CMTimeRange`s, place each passed take at its exact position on the song timeline, dissolve the video and crossfade the vocal takes (150 ms) at each cut, mix the user's vocal with the **instrumental (no original vocals)**, and export a single `FinalCoverVideo.mp4` ready for social media upload.
@@ -17,7 +17,7 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
 
 ### 2.1 In Scope (PoC)
 * Vocal range test, auto-transpose (semitone level).
-* Import (Files / Photos / bundled demo), trim 15–60 s with synced lyrics of the chosen part (§5.2), stem separation, guide extraction, segmentation.
+* Import (Files / Photos / bundled demo), trim (at least 15 s, up to the whole song) with synced lyrics of the chosen part (§5.2), stem separation, guide extraction, segmentation.
 * Continuous recording session with live piano roll, evaluation loop, early end with partial export.
 * Comping, vocal + instrumental mixdown, export, preview, share, save to Photos.
 * Debug settings screen for tuning thresholds (§8).
@@ -54,7 +54,7 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
 
 ## 4. End-to-End User & System Workflow
 0. **Step 0 (Vocal Range Test — once, re-testable from Settings):** User reads a speaking baseline, then hums their lowest comfortable note and sings their highest, each held ~1 s. These are exactly three test prompts; no repeated-note screens. The stable pitch is stored as `VocalRange`.
-1. **Step 1 (Import & Trim):** User picks a reference song (full mix) from Files/Photos or loads the bundled demo, then trims it to 15–60 s. The Phase 1 disclaimer (§5.2) is shown.
+1. **Step 1 (Import & Trim):** User picks a reference song (full mix) from Files/Photos or loads the bundled demo, then trims it to at least 15 s (up to the whole song). The Phase 1 disclaimer (§5.2) is shown.
 2. **Step 2 (Offline Preparation):** Stem separation → guide extraction from the vocal stem → segmentation → transposition plan → offline render of transposed earphone mix and transposed instrumental. Progress shown step by step.
 3. **Step 3 (Ready Screen):** Shows segment count, chosen transposition (e.g. "−3 semitones"), and an earphone check. Record is disabled when audio output is the built-in speaker/receiver.
 4. **Step 4 (Uninterrupted Session):** User taps Record. Front camera (9:16) + headset microphone record continuously into `RawMasterVideo.mov`. Pre-roll then Segment 1 plays in the earphones; the piano roll scrolls and the user's live pitch trail is drawn (green = within ±50 cents, red = off).
@@ -73,12 +73,12 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
 
 ### 5.2 Import, Trim & Disclaimer
 * Formats: `.mp3`, `.m4a`, `.wav`, `.mov` (audio track extracted). DRM-protected files must show a clear error.
-* Waveform trimmer, min 15 s, max 60 s.
+* Waveform trimmer, min 15 s, no maximum (up to the whole song). The waveform zooms out after a drag so a long selection still fits.
 * **Synced lyrics (v3.2):** right after import the app looks up time-synced lyrics on **LRCLIB** (`lrclib.net`, free, no key) using the file's title/artist tags, or a guess from the file name ("Artist - Title (Lyric Video)"). The version whose duration is within ±5 s of the file is used, so its line times fit this recording; otherwise "No lyrics found" with a manual title/artist search. Offline or busy service: "Lyrics unavailable", trimming still works.
   * Lines inside the chosen part are lit, the rest dimmed, and the list scrolls to the selection start.
   * **Play Selection** previews the chosen part: the current line is bold and its words fill in karaoke-style. LRC times whole lines only, so word times are estimated from syllable counts (capped so words don't stretch into instrumental breaks).
   * Credit line under the lyrics: matched title/artist, "from LRCLIB", timing may be slightly off.
-  * **Chorus suggestion (v3.3):** the most repeated block of 2+ lyric lines (case, punctuation, accents and vocal fillers ignored) is the chorus. When lyrics arrive and the user hasn't moved a slider, the selection jumps to its first occurrence (1 s lead-in and tail, clamped to 15–60 s) with a "Suggested" label; after manual changes a "Back to Chorus" button restores it. No lyrics → no suggestion (an audio-based fallback is not built).
+  * **Chorus suggestion (v3.3):** the most repeated block of 2+ lyric lines (case, punctuation, accents and vocal fillers ignored) is the chorus. When lyrics arrive and the user hasn't moved a slider, the selection jumps to its first occurrence (1 s lead-in and tail, at least 15 s) with a "Suggested" label; after manual changes a "Back to Chorus" button restores it. No lyrics → no suggestion (an audio-based fallback is not built).
   * No ASR model: the on-device Whisper spike (`docs/test-reports/lyrics-whisper-spike-2026-11-03.md`) needed a 550 MB model to reach 27 % WER on Indonesian.
 * Disclaimer (processing screen + small badge on the recording screen):
   > **Experimental (Phase 1):** The pitch guide is extracted from the original song and may be inaccurate, especially in busy sections.

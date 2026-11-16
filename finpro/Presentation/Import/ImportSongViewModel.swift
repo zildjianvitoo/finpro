@@ -2,7 +2,8 @@
 //  ImportSongViewModel.swift
 //  finpro
 //
-//  Import → trim → prepare (PRD §5.2–5.4): the user picks a song they own, chooses 15–60 s
+//  Import → trim → prepare (PRD §5.2–5.4): the user picks a song they own, chooses a part (15 s up
+//  to the whole song)
 //  while seeing (and hearing) the synced lyrics of that part, and PrepareSongUseCase separates
 //  it, extracts the guide, slices segments and renders the recommended keys to choose from.
 //
@@ -43,10 +44,13 @@ final class ImportSongViewModel {
         case failed(UserFacingError)
     }
 
-    /// PRD §5.2: the trimmed selection is 15–60 s.
+    /// The trimmed selection is at least 15 s; it may be as long as the whole song.
     static let minimumLength: TimeInterval = 15
-    static let maximumLength: TimeInterval = 60
     private static let defaultLength: TimeInterval = 30
+    /// Waveform zoom: at least this much song is in view (less for shorter songs, see below).
+    private static let waveformMinimumVisible: TimeInterval = 90
+    /// …and the selection fills at most this share of the width, so both edges stay reachable.
+    private static let waveformSelectionShare = 0.7
 
     /// How often the karaoke highlight follows the selection preview (30 fps).
     private static let playbackRefresh: Duration = .milliseconds(33)
@@ -83,6 +87,12 @@ final class ImportSongViewModel {
     @ObservationIgnored private var recognition: Task<Void, Never>?
     /// Shazam's answer for the open song: nil until it answers, `.some(nil)` when it had no match.
     @ObservationIgnored private var recognized: RecognizedSong??
+    /// Shazam is still naming the open song (the lyrics area says so while it waits).
+    private(set) var isIdentifyingSong = false
+    @ObservationIgnored private var recognitionToken = UUID()
+    /// The file's name found no lyrics while Shazam was still working: the lyrics area keeps
+    /// loading until Shazam answers, instead of showing the manual search form in between.
+    @ObservationIgnored private var lyricsAwaitRecognition = false
     @ObservationIgnored private let previewer: any AudioPreviewing
     @ObservationIgnored private let prepare: PrepareSongUseCase
     @ObservationIgnored private let vocalRange: () -> VocalRange?
@@ -100,6 +110,7 @@ final class ImportSongViewModel {
     /// The song being prepared, to return to its trimmer when going back.
     @ObservationIgnored private var preparingDisplayName: String?
     @ObservationIgnored private var preparingAudio: ImportedAudio?
+    @ObservationIgnored private var preparingLength: TimeInterval = 30
     /// Key choices kept until the user continues from the "audio is ready" screen.
     @ObservationIgnored private var preparedChoices: PrepareSongUseCase.Choices?
     /// Lyrics of the part being prepared, on the prepared song's timeline (0 = start of the part).
@@ -134,11 +145,15 @@ final class ImportSongViewModel {
     }
 
     var selectionAudio: ImportedAudio? { audio ?? preparingAudio }
-    /// Seconds of song across the waveform's width. The scale stays fixed while the user scrolls,
-    /// and the longest selection still fits with room around it.
+    /// Seconds of song across the waveform's width. It zooms out to fit a longer selection, but
+    /// only once a drag ends: while the user drags, the scale stays fixed so nothing jumps.
     var waveformVisibleSeconds: TimeInterval {
-        min(Self.maximumLength * 1.5, max(Self.maximumLength, selectionAudio?.duration ?? 0))
+        if let frozenVisibleSeconds { return frozenVisibleSeconds }
+        let duration = selectionAudio?.duration ?? 0
+        let base = min(Self.waveformMinimumVisible, max(Self.waveformMinimumVisible * 2 / 3, duration))
+        return max(base, selectionLength / Self.waveformSelectionShare)
     }
+    @ObservationIgnored private var frozenVisibleSeconds: TimeInterval?
 
     /// The part of the song in view: the selection sits in the middle (the waveform scrolls under it).
     var waveformInterval: ClosedRange<TimeInterval> {
@@ -156,7 +171,7 @@ final class ImportSongViewModel {
     }
 
     var maximumLengthForStart: TimeInterval {
-        min(Self.maximumLength, (audio?.duration ?? 0) - selectionStart)
+        (audio?.duration ?? 0) - selectionStart
     }
 
     func openInitialSong() {
@@ -211,6 +226,8 @@ final class ImportSongViewModel {
         actionError = nil
         recognized = nil
         recognition?.cancel()
+        isIdentifyingSong = false
+        lyricsAwaitRecognition = false
         let recognizes = recognizer != nil && !named
         // Lyrics are searched right away with the file's name; Shazam runs alongside and, if the
         // file's name finds nothing, its name is tried as well.
@@ -252,6 +269,7 @@ final class ImportSongViewModel {
         generation = UUID()
         let trim = selectionStart...(selectionStart + selectionLength)
         preparingAudio = audio
+        preparingLength = selectionLength
         let lyrics = lyricsOnPreparedTimeline(trim)
         preparedLyrics = lyrics
         // The parser spread each line's words by syllable count, so their lengths are the weights.
@@ -345,7 +363,9 @@ final class ImportSongViewModel {
             let current = index.map { Self.progressSteps[$0] } ?? Self.progressSteps[0]
             let next = index.flatMap { Self.progressSteps.dropFirst($0 + 1).first { $0.fraction > current.fraction } }?.fraction ?? 1
             let elapsed = stepStarted.map { (now - $0.at) / .seconds(1) } ?? 0
-            let easing = current.separating ? Self.separatingEasing : Self.stepEasing
+            // Separation and analysis take about as long as the part is; the easings are for 30 s.
+            let lengthFactor = max(1, preparingLength / Self.defaultLength)
+            let easing = (current.separating ? Self.separatingEasing : Self.stepEasing) * lengthFactor
             let fraction = current.fraction + (next - current.fraction) * Self.stepFillLimit * (1 - exp(-max(0, elapsed) / easing))
             let stem: PreparationProgress.StemState = current.separating ? .processing : .done
             return PreparationProgress(fraction: fraction, vocals: stem, instrumental: stem)
@@ -356,6 +376,8 @@ final class ImportSongViewModel {
 
     func reset() {
         recognition?.cancel()
+        isIdentifyingSong = false
+        lyricsAwaitRecognition = false
         cancelPreparation()
         importTask?.cancel()
         importTask = nil
@@ -400,24 +422,35 @@ final class ImportSongViewModel {
     /// is in the Song List, its name there. When Shazam can't be reached the file's name stays.
     private func recognize(_ audio: ImportedAudio) {
         guard let recognizer else { return }
+        let token = UUID()
+        recognitionToken = token
+        isIdentifyingSong = true
         // Not tied to `generation`: starting the preparation must not drop the answer. Picking
         // another file, closing the sheet or opening another song cancels this task instead.
         recognition = Task { [recognizer] in
             let outcome: RecognizedSong??
             do { outcome = .some(try await recognizer.recognize(fileAt: audio.url, duration: audio.duration)) }
             catch { outcome = nil }
-            guard !Task.isCancelled, selectionAudio?.url == audio.url else { return }
+            guard !Task.isCancelled, recognitionToken == token, selectionAudio?.url == audio.url else { return }
+            isIdentifyingSong = false
+            let waited = lyricsAwaitRecognition
+            lyricsAwaitRecognition = false
+            var renamed = false
             if let outcome {
                 recognized = outcome
                 if let song = outcome, case let terms = (song.title, song.artist ?? ""), terms != (lyricsTitle, lyricsArtist) {
                     lyricsTitle = terms.0
                     lyricsArtist = terms.1
-                    // The file's name found nothing (or is still searching, see `searchLyrics`).
-                    switch lyrics {
-                    case .notFound, .failed, .idle: searchLyrics()
-                    case .loading, .found: break
-                    }
+                    renamed = true
                 }
+            }
+            // The file's name found nothing: search again with Shazam's name, or give up now.
+            switch lyrics {
+            case .notFound, .failed, .idle: if renamed { searchLyrics() }
+            case .loading: if waited { if renamed { searchLyrics() } else { lyrics = .notFound } }
+            case .found: break
+            }
+            if let outcome {
                 if let savedSongID, let named = library?.applyRecognition(savedSongID, song: outcome) {
                     // The cover is named after the song when it is being prepared already.
                     if preparingDisplayName != nil { preparingDisplayName = named.title }
@@ -448,6 +481,11 @@ final class ImportSongViewModel {
                     searchLyrics()
                     return
                 }
+                if found == nil, isIdentifyingSong {
+                    // Shazam may still name the song; keep loading until it answers (see `recognize`).
+                    lyricsAwaitRecognition = true
+                    return
+                }
                 lyrics = found.map(LyricsState.found) ?? .notFound
                 if !userMovedSelection { useChorusSuggestion() }
             } catch is CancellationError {
@@ -457,13 +495,13 @@ final class ImportSongViewModel {
         }
     }
 
-    /// The chorus' first occurrence as a 15–60 s selection, if the lyrics have a repeated block.
+    /// The chorus' first occurrence as a selection of at least 15 s, if the lyrics have a repeated block.
     var chorusSuggestion: (start: TimeInterval, length: TimeInterval)? {
         guard let audio, case .found(let song) = lyrics, let chorus = song.chorus else { return nil }
         let first = song.lines[chorus.lowerBound], last = song.lines[chorus.upperBound - 1]
         let start = max(0, first.start - Self.chorusLeadIn)
         let end = min(audio.duration, (last.words.last?.end ?? last.end) + Self.chorusTail)
-        let length = min(Self.maximumLength, max(Self.minimumLength, end - start))
+        let length = max(Self.minimumLength, end - start)
         // A chorus near the end of a song may need to start earlier to fit the minimum length.
         return (min(start, max(0, audio.duration - length)), length)
     }
@@ -546,17 +584,21 @@ final class ImportSongViewModel {
     func beginSelectionEditing() {
         guard !editingSelection else { return }
         editingSelection = true
+        frozenVisibleSeconds = waveformVisibleSeconds
         restartingPreview?.cancel()
         stopSelectionPreview()
     }
 
     func endSelectionEditing() {
         editingSelection = false
+        frozenVisibleSeconds = nil
         startSelectionPreview()
     }
 
     func suspend() {
         recognition?.cancel()
+        isIdentifyingSong = false
+        lyricsAwaitRecognition = false
         stopSelectionPreview()
         restartingPreview?.cancel()
         lyricsLookup?.cancel()
@@ -583,7 +625,7 @@ final class ImportSongViewModel {
     private func clampSelection() {
         guard let audio else { return }
         let start = min(max(0, selectionStart), max(0, audio.duration - Self.minimumLength))
-        let length = min(max(Self.minimumLength, selectionLength), min(Self.maximumLength, audio.duration - start))
+        let length = min(max(Self.minimumLength, selectionLength), audio.duration - start)
         if start != selectionStart { selectionStart = start }
         if length != selectionLength { selectionLength = length }
     }

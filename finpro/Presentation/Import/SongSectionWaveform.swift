@@ -56,6 +56,8 @@ struct SongSectionWaveform: View {
             // A tick each time a bar passes (scrolling) or the clip length changes by a second
             // (resizing); only while a finger drags, not when a lyric tap moves the selection.
             .sensoryFeedback(.selection, trigger: hapticStep) { _, _ in origin != nil }
+            // Zooming out to fit a longer selection (after a drag ends) is animated.
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.3), value: visibleSeconds)
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Song waveform, \(Int(viewModel.selectionLength)) seconds selected")
@@ -158,17 +160,17 @@ struct SongSectionWaveform: View {
             }
     }
 
-    /// Moves one edge, keeping the length within 15–60 s and the clip inside the song.
+    /// Moves one edge, keeping the clip at least 15 s long and inside the song.
     private func resize(from initial: (start: TimeInterval, length: TimeInterval), by delta: TimeInterval, leading: Bool) {
         if leading {
             let finish = initial.start + initial.length
-            let start = min(max(max(0, finish - ImportSongViewModel.maximumLength), initial.start + delta),
+            let start = min(max(0, initial.start + delta),
                             finish - ImportSongViewModel.minimumLength)
             viewModel.selectionStart = start
             viewModel.selectionLength = finish - start
         } else {
             viewModel.selectionLength = min(max(ImportSongViewModel.minimumLength, initial.length + delta),
-                                            min(ImportSongViewModel.maximumLength, audio.duration - initial.start))
+                                            audio.duration - initial.start)
         }
     }
 }
