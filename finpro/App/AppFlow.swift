@@ -10,6 +10,7 @@
 import CoreMedia
 import Foundation
 import Observation
+import os
 
 @Observable
 final class AppFlow {
@@ -27,7 +28,10 @@ final class AppFlow {
     private static let hasCompletedOnboardingKey = "hasCompletedOnboarding"
 
     let container: AppContainer
-    private(set) var step: Step
+    private(set) var step: Step {
+        didSet { if step != oldValue { Self.log.notice("step: \(String(describing: oldValue), privacy: .public) → \(String(describing: self.step), privacy: .public)") } }
+    }
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Flow")
     private(set) var importOrigin: Step = .home
     private(set) var selectedLibrarySongID: UUID?
     var selectedLibrarySong: SavedSong? { container.songLibrary.songs.first { $0.id == selectedLibrarySongID } }

@@ -68,16 +68,8 @@ struct RootView: View {
         }
         .animation(.default, value: flow.step)
         #if DEBUG
-        .overlay(alignment: .bottomTrailing) {
-            // Debug builds only, and only on Home: the designed screens have no button for it.
-            if flow.step == .home {
-                Button("Debug Settings", systemImage: "slider.horizontal.3") {
-                    showsDebugSettings = true
-                }
-                .labelStyle(.iconOnly)
-                .padding()
-            }
-        }
+        // Debug Settings has no button (the designed screens have none): launch with
+        // `-startScreen debugSettings` to open it.
         .onAppear {
             if DebugOptions.launchScreen == "debugSettings" { showsDebugSettings = true }
         }

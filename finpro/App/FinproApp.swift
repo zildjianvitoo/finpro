@@ -10,9 +10,13 @@ import TipKit
 
 @main
 struct FinproApp: App {
-    @State private var flow = AppFlow(container: .makeDefault())
+    @State private var flow: AppFlow
+    @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        // Before anything else logs, so the launch marker comes first in the file.
+        AppEventLog.shared.start()
+        _flow = State(initialValue: AppFlow(container: .makeDefault()))
         // TipKit stores which tips were shown or dismissed; a failure only means no tips.
         try? Tips.configure()
     }
@@ -28,6 +32,10 @@ struct FinproApp: App {
             #else
             RootView(flow: flow)
             #endif
+        }
+        // Leaving the app copies the newest messages right away (it may not come back).
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { AppEventLog.shared.flush() }
         }
     }
 }
