@@ -19,6 +19,7 @@ struct RecordingSettingsSheet: View {
     @AppStorage(RecordingDisplaySettings.showsLyricsKey) private var showsLyrics = true
     @AppStorage(RecordingDisplaySettings.lyricsInGuideKey) private var lyricsInGuide = RecordingDisplaySettings.defaultLyricsInGuide
     @AppStorage(RecordingDisplaySettings.pitchGuideScaleKey) private var pitchGuideScale = RecordingDisplaySettings.defaultPitchGuideScale
+    @AppStorage(RecordingDisplaySettings.guideFrameWidthKey) private var guideFrameWidth = 0.0
 
     private let horizontalInset: CGFloat = 24
     private let rowHeight: CGFloat = 50
@@ -88,6 +89,15 @@ struct RecordingSettingsSheet: View {
                 Image(systemName: "textformat.size.larger")
             }
             .foregroundStyle(.white.opacity(0.5))
+            // Shown once the user moved or resized the panel on the recording screen.
+            if guideFrameWidth > 0 {
+                Button("Reset position and size") {
+                    withAnimation(.snappy) { guideFrameWidth = 0 }
+                }
+                .font(.appFootnote.weight(.semibold))
+                .foregroundStyle(Color.secBrand)
+                .padding(.top, 6)
+            }
         }
         .padding(.horizontal, 18)
         .padding(.vertical, 14)

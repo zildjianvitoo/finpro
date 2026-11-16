@@ -21,6 +21,9 @@ struct PianoRollView: View {
     }
 
     static let visibleDuration: TimeInterval = 4
+    /// The voice dot while no voice is heard (resting on the next note): still visible, but
+    /// clearly not "you are singing this".
+    static let restingDotOpacity = 0.55
     static let playheadPosition = 0.25
     /// Distance between two lines (natural notes) in the design.
     static let rowPitch: CGFloat = 22
@@ -80,6 +83,8 @@ struct PianoRollView: View {
     let trail: [RecordingViewModel.TrailPoint]
     /// Where the lime voice dot sits (smoothed, see VoiceDotFilter); nil hides it.
     var voiceDot: RecordingViewModel.VoiceDot?
+    /// How each note was sung so far; decides its colour (see NoteTally).
+    var noteTallies: [UUID: NoteTally] = [:]
     /// Notes of the current segment, used to centre the vertical range.
     let focusMIDI: [Int]
     let songTime: () -> TimeInterval?
@@ -93,6 +98,10 @@ struct PianoRollView: View {
     var lyricsHeight: CGFloat = 0
     /// Size of the notes, lines and voice dot (a display setting, see `scaled`).
     var scale = RecordingDisplaySettings.defaultPitchGuideScale
+    /// The user resized the panel: this many lines always fill its height (instead of as many as
+    /// fit), and notes, dot and labels grow or shrink by `contentZoom` with it.
+    var fixedRows: Double?
+    var contentZoom: CGFloat = 1
 
     /// Extra lines the view may add when the notes on screen do not fit (at most 8 in all with
     /// the design's 6).
@@ -102,6 +111,7 @@ struct PianoRollView: View {
     /// Notes ahead used to place the lines while none is on screen.
     static let upcomingNoteCount = 4
     @State private var viewport = PianoRollViewport()
+    @State private var dotMotion = VoiceDotMotion()
 
     private let cornerRadius: CGFloat = 16
     private let labelWidth: CGFloat = 35
@@ -144,29 +154,31 @@ struct PianoRollView: View {
         static let word = Color.secondaryButton
     }
 
-    private var noteHeight: CGFloat { Self.scaled(scale, low: 5, mid: 8, high: 16) }
-    private var lineWidth: CGFloat { Self.scaled(scale, low: 1, mid: 2, high: 4) }
-    private var dotSize: CGFloat { Self.scaled(scale, low: 8, mid: 12, high: 22) }
+    private var noteHeight: CGFloat { Self.scaled(scale, low: 5, mid: 8, high: 16) * contentZoom }
+    private var lineWidth: CGFloat { Self.scaled(scale, low: 1, mid: 2, high: 4) * min(contentZoom, 1.5) }
+    private var dotSize: CGFloat { Self.scaled(scale, low: 8, mid: 12, high: 22) * contentZoom }
 
     // MARK: - Drawing
 
-    /// Colours the part of a note the playhead has passed, as it is sung (design review): each
-    /// stretch green where the voice was within tolerance, red where it was not. The rest stays grey.
+    /// Colours a note as a whole (user decision 2026-11-16, replacing per-moment stripes): while
+    /// it is sung, the part the playhead has passed takes the colour of the result so far; once
+    /// it is over, the whole note is green (≥65% in tune) or red. Grey until enough is heard.
     private func fillSung(_ note: Note, shape: Path, upTo current: TimeInterval,
                           in context: inout GraphicsContext, x: (TimeInterval) -> CGFloat) {
-        let end = min(note.end, current)
-        let samples = trail.filter { $0.songTime >= note.start && $0.songTime < end }
-        guard !samples.isEmpty else { return }
+        guard let tally = noteTallies[note.id] else { return }
+        let finished = current >= note.end
+        let color: Color
+        switch tally.verdict(finished: finished) {
+        case .undecided: return
+        case .good: color = .pitchHit
+        case .bad: color = .noteMiss
+        }
+        let end = finished ? note.end : current
         var clipped = context
         clipped.clip(to: shape)
-        for (index, sample) in samples.enumerated() {
-            // A sample colours from where the previous stretch ended up to the next sample.
-            let from = index == 0 ? note.start : sample.songTime
-            let to = index + 1 < samples.count ? samples[index + 1].songTime : end
-            guard to > from else { continue }
-            let stretch = CGRect(x: x(from), y: shape.boundingRect.minY, width: x(to) - x(from), height: shape.boundingRect.height)
-            clipped.fill(Path(stretch), with: .color(sample.isHit ? .pitchHit : .noteMiss))
-        }
+        let bounds = shape.boundingRect
+        let sung = CGRect(x: bounds.minX, y: bounds.minY, width: max(0, x(end) - bounds.minX), height: bounds.height)
+        clipped.fill(Path(finished ? bounds : sung), with: .color(color))
     }
 
     /// Centre and number of lines that show the notes on screen (or the segment's notes before
@@ -203,8 +215,12 @@ struct PianoRollView: View {
 
         // The lines in view: as many as fit (6 in the design), centred on the notes on screen and
         // gliding as the song moves, so a wide segment or a stray note never squeezes the rows.
-        let target = targetLines(at: current, fitting: rowsHeight / Self.rowPitch)
-        let (center, span) = viewport.update(center: target.center, span: target.span)
+        let target = targetLines(at: current, fitting: fixedRows ?? rowsHeight / Self.rowPitch)
+        // Lines sit in the middle of their rows (half a row free above the top line and below
+        // the bottom one): with the lowest edge on a whole line, a 7th and 8th line peeked in
+        // half-cut at the top and bottom edges.
+        let alignedCenter = (target.center - target.span / 2 - 0.5).rounded() + target.span / 2 + 0.5
+        let (center, span) = viewport.update(center: alignedCenter, span: target.span)
         let pitch = rowsHeight / span
         let lowLine = center - span / 2
         func x(_ time: TimeInterval) -> CGFloat {
@@ -221,7 +237,7 @@ struct PianoRollView: View {
         for line in Int(lowLine.rounded(.down))...Int((lowLine + span).rounded(.up)) {
             let midi = Self.midi(onLine: line)
             let rowY = y(Double(midi))
-            lineContext.draw(Text(PitchMath.noteName(midi: midi)).font(.system(size: 11, weight: .medium)).foregroundStyle(Palette.label),
+            lineContext.draw(Text(PitchMath.noteName(midi: midi)).font(.system(size: 11 * min(contentZoom, 1.5), weight: .medium)).foregroundStyle(Palette.label),
                          at: CGPoint(x: labelWidth / 2 - 2, y: rowY))
             var path = Path()
             path.move(to: CGPoint(x: labelWidth, y: rowY))
@@ -247,30 +263,50 @@ struct PianoRollView: View {
             context.fill(shape, with: .color(isPrevious ? Palette.previousNote : Palette.note))
             if !isPrevious { fillSung(note, shape: shape, upTo: current, in: &context, x: x) }
             if let word = wordLabels[note.id] {
-                context.draw(Text(word).font(.system(size: 8, weight: .medium)).foregroundStyle(Palette.word),
+                context.draw(Text(word).font(.system(size: 8 * min(contentZoom, 1.5), weight: .medium)).foregroundStyle(Palette.word),
                              at: CGPoint(x: rect.minX + 2, y: rect.maxY + 2), anchor: .topLeading)
             }
         }
 
         // The voice is shown only as a dot at the playhead, no trail line (design review); the
-        // notes it sang turn green or red. The pitch pipeline lags the song clock by ~0.1 s, so
-        // the dot is held a little longer than that and then fades out once the voice stops,
-        // instead of blinking whenever one frame arrives late or has no pitch.
-        let dotHold = 0.3, dotFade = 0.15
+        // notes it sang turn green or red. The pitch pipeline lags the song clock by ~0.1 s, so a
+        // voice heard within this long still counts as singing now.
+        let dotHold = 0.3
 
         // Playhead, with a dot where the voice is now.
         var playhead = Path()
         playhead.move(to: CGPoint(x: playheadX, y: rowsTop))
         playhead.addLine(to: CGPoint(x: playheadX, y: rowsTop + rowsHeight))
         context.stroke(playhead, with: .color(Palette.playhead), lineWidth: Self.playheadWidth)
-        if let voiceDot, case let age = current - voiceDot.songTime, age >= -dotHold, age < dotHold + dotFade {
+        // The dot never disappears (user decision 2026-11-16). It is drawn like a magnet:
+        // - silent: it rests on the note being sung now, or else the next one, a little faded;
+        // - singing within the green tolerance of that note: it sits exactly on the note;
+        // - singing further off: it shows the voice's real pitch.
+        // Every move glides (VoiceDotMotion) instead of jumping.
+        let magnet = notes.first { $0.start <= current && current < $0.end }
+            ?? notes.filter { $0.start > current }.min { $0.start < $1.start }
+        let singing = voiceDot.map { current - $0.songTime < dotHold } ?? false
+        var dotTarget: Double?
+        if singing, let voiceDot {
+            let sung = Double(voiceDot.midi)
+            if let magnet, abs(sung - Double(magnet.midi)) * 100 <= Double(NoteTally.toleranceCents) {
+                dotTarget = Double(magnet.midi)
+            } else {
+                dotTarget = sung
+            }
+        } else if let magnet {
+            dotTarget = Double(magnet.midi)
+        } else if let voiceDot {
+            dotTarget = Double(voiceDot.midi)
+        }
+        if let dotTarget {
+            let midi = dotMotion.update(target: dotTarget)
             let radius = dotSize / 2
             // Pinned to the top or bottom line when the voice is outside the lines in view.
-            let dotY = min(max(y(Double(voiceDot.midi)), rowsTop + radius), rowsTop + rowsHeight - radius)
+            let dotY = min(max(y(midi), rowsTop + radius), rowsTop + rowsHeight - radius)
             // On the playhead: the dot is "now"; drawing it at the sample's time made it shake sideways.
             let dot = CGRect(x: playheadX - radius, y: dotY - radius, width: dotSize, height: dotSize)
-            let opacity = age <= dotHold ? 1 : max(0, 1 - (age - dotHold) / dotFade)
-            context.fill(Path(ellipseIn: dot), with: .color(Palette.dot.opacity(opacity)))
+            context.fill(Path(ellipseIn: dot), with: .color(Palette.dot.opacity(singing ? 1 : Self.restingDotOpacity)))
         }
     }
 }

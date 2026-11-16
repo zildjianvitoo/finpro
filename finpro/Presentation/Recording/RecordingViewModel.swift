@@ -81,6 +81,14 @@ final class RecordingViewModel {
     private(set) var trail: [TrailPoint] = []
     /// Display only (see VoiceDotFilter); colours and scores use the raw samples.
     private(set) var voiceDot: VoiceDot?
+    /// How each guide note was sung so far, for its colour (see NoteTally; display only).
+    private(set) var noteTallies: [UUID: NoteTally] = [:]
+    /// Start of each guide note, to leave out its attack like the score does.
+    @ObservationIgnored private var noteStarts: [UUID: TimeInterval] = [:]
+    /// Singing time shown by the timer (see `elapsedRecordingTime`), and the tick it was last
+    /// brought up to date (nil outside singing).
+    @ObservationIgnored private var singingTime: TimeInterval = 0
+    @ObservationIgnored private var lastTimerTick: TimeInterval?
     @ObservationIgnored private var voiceDotFilter = VoiceDotFilter()
     /// Song time at which the part being sung starts (the segment a start or a resume began with);
     /// notes before it are previous material.
@@ -147,6 +155,8 @@ final class RecordingViewModel {
         self.allowsSpeaker = allowsSpeaker
         trailDisplay = StabilizePitchDisplayUseCase(configuration: configuration)
         noteDisplay = StabilizePitchDisplayUseCase(configuration: configuration)
+        noteStarts = Dictionary(song.segments.flatMap(\.targetNotes).map { ($0.id, $0.startTime) },
+                                uniquingKeysWith: { first, _ in first })
         loop = LoopStateController(segments: song.segments, configuration: configuration,
                                    range: pass.segmentRange(segmentCount: song.segments.count))
         route = routeMonitor.currentRoute
@@ -228,11 +238,16 @@ final class RecordingViewModel {
     }
     var canPause: Bool { status == .recording && (loop.canPause || isPaused) }
 
-    /// Time since recording started, on the capture clock (display only; cuts never use it).
+    /// Time spent singing, on the capture clock (display only; cuts never use it). It starts when
+    /// a countdown ends and stands still during countdowns and pauses: the camera already runs then
+    /// (one continuous raw file), but those moments are never part of the cover.
     func elapsedRecordingTime() -> TimeInterval {
         guard status == .recording || status == .finishing else { return 0 }
-        return max(0, capture.currentCaptureTime().seconds - sessionStart)
+        guard isSingingPhase, let lastTimerTick else { return singingTime }
+        return singingTime + max(0, capture.currentCaptureTime().seconds - lastTimerTick)
     }
+
+    private var isSingingPhase: Bool { loop.phase == .preRoll || loop.phase == .singing }
 
     // MARK: - Session
 
@@ -309,6 +324,8 @@ final class RecordingViewModel {
             guard status == .starting else { return }
             sessionStart = capture.currentCaptureTime().seconds
             lastStorageCheck = sessionStart
+            singingTime = 0
+            lastTimerTick = nil
             status = .recording
             perform(loop.begin(now: capture.currentCaptureTime().seconds))
             startTicking()
@@ -475,7 +492,10 @@ final class RecordingViewModel {
                 return
             }
         }
+        // The timer counts the interval since the last tick if it was spent singing.
+        if isSingingPhase, let lastTimerTick { singingTime += max(0, seconds - lastTimerTick) }
         perform(loop.tick(now: seconds, songTime: anchor.map { (now - $0).seconds }))
+        lastTimerTick = isSingingPhase ? seconds : nil
     }
 
     private func perform(_ action: LoopStateController.Action) {
@@ -595,6 +615,7 @@ final class RecordingViewModel {
     private func resetVoiceDot() {
         voiceDotFilter.reset()
         voiceDot = nil
+        noteTallies = [:]
     }
 
     private func handle(_ sample: PitchSample) {
@@ -608,9 +629,13 @@ final class RecordingViewModel {
             displayTargetID = evaluation.targetNoteID
         }
         let midi = trailDisplay.execute(midi: evaluation.detectedMIDINote, time: evaluation.referenceTime)
-        // Colour and scoring must report the same measured result; visual smoothing must
-        // never turn an out-of-tune sample green or conceal a genuine note transition.
         trail.append(TrailPoint(songTime: evaluation.referenceTime, midi: midi, isHit: evaluation.isHit))
+        // Note colours (user decision 2026-11-16): a whole note is green or red by NoteTally's
+        // looser rule; the clip score still uses every raw sample with its own tolerance.
+        if let id = evaluation.targetNoteID, let start = noteStarts[id],
+           evaluation.referenceTime >= start + configuration.attackIgnore {
+            noteTallies[id, default: NoteTally()].add(centDeviation: evaluation.centDeviation)
+        }
         voiceDotFilter.update(midi: evaluation.detectedMIDINote, time: evaluation.referenceTime,
                               foldToDot: evaluation.targetNoteID == nil)
         if let dotMIDI = voiceDotFilter.midi, let heard = voiceDotFilter.lastVoicedTime {

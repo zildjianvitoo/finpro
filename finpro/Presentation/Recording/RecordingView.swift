@@ -26,6 +26,13 @@ struct RecordingView: View {
     @AppStorage(RecordingDisplaySettings.lyricsInGuideKey) private var lyricsInGuide = RecordingDisplaySettings.defaultLyricsInGuide
     @AppStorage(RecordingDisplaySettings.pitchGuideScaleKey) private var pitchGuideScale = RecordingDisplaySettings.defaultPitchGuideScale
     @AppStorage(RecordingDisplaySettings.lyricsTextStepKey) private var lyricsTextStep = RecordingDisplaySettings.defaultLyricsTextStep
+    // Where the user moved / how big they made the pitch guide (width 0 = default place).
+    @AppStorage(RecordingDisplaySettings.guideFrameXKey) private var guideFrameX = 0.0
+    @AppStorage(RecordingDisplaySettings.guideFrameYKey) private var guideFrameY = 0.0
+    @AppStorage(RecordingDisplaySettings.guideFrameWidthKey) private var guideFrameWidth = 0.0
+    @AppStorage(RecordingDisplaySettings.guideFrameHeightKey) private var guideFrameHeight = 0.0
+    /// The pitch guide's default place (under the camera, above the controls), measured.
+    @State private var defaultGuideFrame = CGRect.zero
 
     /// Measurements of the design (iPhone 17 Pro, 402 × 874 pt).
     private let backButtonSize: CGFloat = 44
@@ -251,9 +258,13 @@ struct RecordingView: View {
             bluetoothWarning
 
             if showsPitchGuide {
-                pitchGuide
+                // Holds the default place; the guide itself floats above (movable, see below).
+                Color.clear
                     .frame(maxWidth: pitchGuideMaxWidth)
                     .frame(height: guideHeight)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.overlaySpace)) } action: {
+                        defaultGuideFrame = $0
+                    }
                     .padding(.bottom, guideControlsGap)
             }
 
@@ -262,21 +273,53 @@ struct RecordingView: View {
         }
         .padding(.top, layout.top)
         .frame(width: layout.size.width, height: layout.top + layout.videoHeight, alignment: .top)
+        .coordinateSpace(.named(Self.overlaySpace))
+        .overlay(alignment: .topLeading) {
+            if showsPitchGuide, defaultGuideFrame.width > 0 {
+                // Between the top bar and the controls, so it never covers a button.
+                let top = layout.top + topBarInset + backButtonSize + lyricsCardGap
+                let bounds = CGRect(x: 0, y: top, width: layout.size.width,
+                                    height: max(defaultGuideFrame.height, defaultGuideFrame.maxY - top))
+                MovablePanel(defaultFrame: defaultGuideFrame, bounds: bounds,
+                             minimumSize: CGSize(width: Self.guideMinimumWidth, height: defaultGuideFrame.height * 0.6),
+                             frame: guideFrameBinding) { size in
+                    pitchGuide(zoom: guideFrameWidth > 0 ? size.height / defaultGuideFrame.height : 1)
+                }
+            }
+        }
         .animation(.snappy, value: lyricsInGuide)
         .animation(.snappy, value: showsLyrics)
     }
 
-    private var pitchGuide: some View {
+    private static let overlaySpace = "recordingOverlay"
+    private static let guideMinimumWidth: CGFloat = 200
+
+    /// The user's pitch guide frame, nil while it is in its default place.
+    private var guideFrameBinding: Binding<CGRect?> {
+        Binding(
+            get: { guideFrameWidth > 0 ? CGRect(x: guideFrameX, y: guideFrameY, width: guideFrameWidth, height: guideFrameHeight) : nil },
+            set: { rect in
+                guideFrameX = Double(rect?.minX ?? 0)
+                guideFrameY = Double(rect?.minY ?? 0)
+                guideFrameWidth = Double(rect?.width ?? 0)
+                guideFrameHeight = Double(rect?.height ?? 0)
+            })
+    }
+
+    private func pitchGuide(zoom: CGFloat) -> some View {
         PianoRollView(notes: pianoRollNotes,
                       trail: viewModel.trail,
                       voiceDot: viewModel.voiceDot,
+                      noteTallies: viewModel.noteTallies,
                       focusMIDI: focusMIDI,
                       songTime: viewModel.displaySongTime,
                       dimmedBefore: viewModel.singingFrom,
                       isPaused: confirmsEnd || confirmsDeleteLast || showsSettings,
                       wordLabels: wordLabels,
                       lyricsHeight: lyricsInPanel ? RecordingDisplaySettings.guideLyricsHeight : 0,
-                      scale: pitchGuideScale)
+                      scale: pitchGuideScale,
+                      fixedRows: Double(RecordingDisplaySettings.guideRows),
+                      contentZoom: min(max(zoom, 0.6), 2.5))
             .overlay(alignment: .bottom) {
                 if lyricsInPanel {
                     RecordingGuideLyricsView(lines: viewModel.lyrics, songTime: viewModel.displaySongTime)
