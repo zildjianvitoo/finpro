@@ -206,6 +206,9 @@ struct VocalRangeTestView: View {
                     .padding(.top, AppSpacing.spacious * 2)
             }
         }
+        // Full width and leading, so the text lines up with the title (a scroll view centres
+        // content narrower than itself).
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func microphone(diameter: CGFloat) -> some View {
