@@ -178,6 +178,7 @@ final class KeySelectionViewModel {
     }
 
     func stop() {
+        Self.log.notice("stop (rendering \(self.isRendering, privacy: .public), previewing \(self.isManualPreviewPlaying, privacy: .public))")
         rendering?.cancel(); rendering = nil
         request = UUID(); isRendering = false
         stopPreview()

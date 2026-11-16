@@ -7,6 +7,7 @@
 //
 
 import AVFoundation
+import os
 
 nonisolated final class AudioPreviewPlayer: NSObject, AudioPreviewing, AVAudioPlayerDelegate, @unchecked Sendable {
     private let lock = NSLock()
@@ -14,6 +15,7 @@ nonisolated final class AudioPreviewPlayer: NSObject, AudioPreviewing, AVAudioPl
     private var excerptURL: URL?
     private var completion: (@Sendable () -> Void)?
     private var generation = UUID()
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Preview")
 
     func play(_ url: URL, from start: TimeInterval) throws {
         stop()
@@ -52,6 +54,7 @@ nonisolated final class AudioPreviewPlayer: NSObject, AudioPreviewing, AVAudioPl
                 excerptURL = clip
                 completion = onCompletion
             }
+            Self.log.notice("playing \(url.lastPathComponent, privacy: .public) \(excerpt.lowerBound, privacy: .public)-\(excerpt.upperBound, privacy: .public)")
         } catch {
             try? FileManager.default.removeItem(at: clip)
             throw error
@@ -65,6 +68,7 @@ nonisolated final class AudioPreviewPlayer: NSObject, AudioPreviewing, AVAudioPl
     func stop() {
         let stopped = lock.withLock { () -> (AVAudioPlayer?, URL?) in
             generation = UUID()
+            if player != nil { Self.log.notice("stopped") }
             defer { player = nil; excerptURL = nil; completion = nil }
             return (player, excerptURL)
         }
