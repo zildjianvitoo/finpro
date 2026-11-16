@@ -12,6 +12,8 @@ struct ImportSongView: View {
     /// The sheet's current size, kept while the song is prepared.
     @State private var detent: PresentationDetent = .height(AppLayout.importSheetHeight)
     @State private var picking = false
+    /// The preparing screen covers the whole app; the sheet keeps its half height underneath.
+    @State private var showsPreparing = false
     #if DEBUG
     /// `-importFile` opens once per app launch, not every time this sheet opens again.
     private static var openedLaunchFile = false
@@ -42,23 +44,6 @@ struct ImportSongView: View {
                 }
             }
             .padding(.horizontal, AppSpacing.large).padding(.top, AppSpacing.large).padding(.bottom, AppSpacing.large)
-            if viewModel.isPreparing {
-                Color.black.opacity(0.75).ignoresSafeArea()
-                VStack(spacing: AppSpacing.regular) {
-                    Image(systemName: "film.stack")
-                        .font(.system(size: AppLayout.loadingIcon, weight: .regular))
-                        .accessibilityHidden(true)
-                    // Redrawn a few times a second: the progress moves with time inside a step.
-                    TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-                        Text("Preparing your song… \(Int(((viewModel.preparationProgress?.fraction ?? 0) * 100).rounded()))%")
-                            .font(.appHeadline).monospacedDigit()
-                            .contentTransition(.numericText())
-                    }
-                }
-                .foregroundStyle(.white)
-                .accessibilityElement(children: .combine)
-                .accessibilityAddTraits(.updatesFrequently)
-            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .presentationBackground(.ultraThinMaterial)
@@ -86,10 +71,37 @@ struct ImportSongView: View {
         .onChange(of: viewModel.status) { _, status in
             if status == .prepared { viewModel.continueWithPreparedSong() }
         }
+        .onChange(of: viewModel.isPreparing) { _, preparing in
+            // No slide-up: the dark screen appears in place over the whole app.
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { showsPreparing = preparing }
+        }
+        .fullScreenCover(isPresented: $showsPreparing) { preparingScreen }
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { viewModel.stopSelectionPreview() }
         }
         .onDisappear { viewModel.suspend() }
+    }
+
+    private var preparingScreen: some View {
+        VStack(spacing: AppSpacing.regular) {
+            Image(systemName: "film.stack")
+                .font(.system(size: AppLayout.loadingIcon, weight: .regular))
+                .accessibilityHidden(true)
+            // Redrawn a few times a second: the progress moves with time inside a step.
+            TimelineView(.periodic(from: .now, by: 0.25)) { _ in
+                Text("Preparing your song… \(Int(((viewModel.preparationProgress?.fraction ?? 0) * 100).rounded()))%")
+                    .font(.appHeadline).monospacedDigit()
+                    .contentTransition(.numericText())
+            }
+        }
+        .foregroundStyle(.white)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.updatesFrequently)
+        .presentationBackground(Color.black.opacity(0.75))
+        .interactiveDismissDisabled()
     }
 
     private var importPrompt: some View {
@@ -126,7 +138,7 @@ struct ImportSongView: View {
     private func sectionPicker(_ audio: ImportedAudio) -> some View {
         VStack(spacing: AppSpacing.regular) {
             Text(isEditingSavedSong ? "Choose Song Section" : "Select Clip")
-                .font(.appHeadline).foregroundStyle(Color.primaryBrand)
+                .font(.appHeadline).foregroundStyle(.primary)
                 .frame(maxWidth: .infinity, minHeight: AppLayout.iconButton)
                 .overlay(alignment: .trailing) {
                     if isEditingSavedSong {
@@ -136,9 +148,10 @@ struct ImportSongView: View {
                     }
                 }
             SongSectionLyrics(viewModel: viewModel)
-            Spacer(minLength: AppSpacing.regular)
+                .padding(.top, 20)
+            Spacer(minLength: 0)
             SongSectionWaveform(viewModel: viewModel, audio: audio)
-                .frame(height: isEditingSavedSong ? 72 : 86)
+                .frame(height: isEditingSavedSong ? 76 : 86)
                 // The waveform scrolls off the sheet's edges (design 4.3).
                 .padding(.horizontal, -AppSpacing.large)
             HStack {
@@ -151,7 +164,7 @@ struct ImportSongView: View {
                 Label(error.title, systemImage: error.systemImage)
                     .font(.appCaption).foregroundStyle(Color.primaryBrand)
             }
-            Spacer(minLength: AppSpacing.large)
+            Spacer(minLength: isEditingSavedSong ? AppSpacing.regular : AppSpacing.large)
             if !isEditingSavedSong {
                 Button("Start Recording", action: viewModel.prepareSelection).buttonStyle(.appPrimary)
                 Button("Save to Song List", action: viewModel.saveToSongList).buttonStyle(.appSecondary)

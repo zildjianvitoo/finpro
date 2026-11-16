@@ -6,6 +6,7 @@
 import SwiftUI
 
 struct SongSectionLyrics: View {
+    static let lineHeight: CGFloat = 24
     @Bindable var viewModel: ImportSongViewModel
     var body: some View {
         Group {
@@ -13,13 +14,13 @@ struct SongSectionLyrics: View {
             case .found(let song):
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(spacing: 12) {
+                        // Lines sit close together and three show at once (design 4.3).
+                        LazyVStack(spacing: 0) {
                             ForEach(song.lines) { line in
                                 Button { viewModel.selectLyric(line) } label: {
                                     Text(text(line)).font(.appHeadline)
-                                        .multilineTextAlignment(.center)
-                                        .frame(maxWidth: .infinity)
-                                        .padding(.vertical, 4)
+                                        .lineLimit(1).minimumScaleFactor(0.75)
+                                        .frame(maxWidth: .infinity, minHeight: Self.lineHeight)
                                 }
                                 .buttonStyle(.plain).id(line.id)
                                 .contextMenu {
@@ -28,7 +29,7 @@ struct SongSectionLyrics: View {
                                 }
                             }
                         }
-                        .padding(.vertical, 32)
+                        .padding(.vertical, Self.lineHeight)
                     }
                     .scrollIndicators(.hidden)
                     .onChange(of: viewModel.activeLineID) { _, id in
@@ -42,13 +43,20 @@ struct SongSectionLyrics: View {
             case .failed(let error): search(error)
             }
         }
-        .frame(maxWidth: .infinity).frame(height: 120)
+        .frame(maxWidth: .infinity).frame(height: showsSearch ? 120 : Self.lineHeight * 3)
+    }
+
+    private var showsSearch: Bool {
+        switch viewModel.lyrics {
+        case .notFound, .failed: true
+        default: false
+        }
     }
 
     private func text(_ line: LyricLine) -> AttributedString {
         var text = AttributedString(line.text)
         text.foregroundColor = line.id == (viewModel.activeLineID ?? viewModel.firstSelectedLineID)
-            ? .primaryBrand : .secondaryText.opacity(0.65)
+            ? .plumInk : .plumInk.opacity(0.28)
         return text
     }
     private func search(_ error: UserFacingError) -> some View {

@@ -23,6 +23,9 @@ struct SongSectionWaveform: View {
     private var visibleSeconds: TimeInterval { viewModel.waveformVisibleSeconds }
     private var barSeconds: TimeInterval { visibleSeconds / Double(barCount) }
     private var selectionEnd: TimeInterval { viewModel.selectionStart + viewModel.selectionLength }
+    private var hapticStep: [Int] {
+        [Int((viewModel.selectionStart / barSeconds).rounded(.down)), Int(viewModel.selectionLength.rounded(.down))]
+    }
 
     var body: some View {
         GeometryReader { proxy in
@@ -50,6 +53,9 @@ struct SongSectionWaveform: View {
             .clipped()
             .contentShape(Rectangle())
             .gesture(scroll(scale: scale))
+            // A tick each time a bar passes (scrolling) or the clip length changes by a second
+            // (resizing); only while a finger drags, not when a lyric tap moves the selection.
+            .sensoryFeedback(.selection, trigger: hapticStep) { _, _ in origin != nil }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Song waveform, \(Int(viewModel.selectionLength)) seconds selected")
@@ -81,7 +87,7 @@ struct SongSectionWaveform: View {
                 let time = (Double(index) + 0.5) * barSeconds
                 let inside = time >= viewModel.selectionStart && time <= selectionEnd
                 Capsule()
-                    .fill(inside ? Color.primaryBrand : Color.primary300)
+                    .fill(inside ? Color.primaryBrand : Color.primary200)
                     .frame(width: barWidth, height: max(4, CGFloat(level(at: time)) * height * 0.85))
                     .offset(x: x(time, width: width, scale: scale) - barWidth / 2)
             }
