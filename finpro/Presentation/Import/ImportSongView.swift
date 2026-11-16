@@ -71,6 +71,8 @@ struct ImportSongView: View {
         }
         // The preparing screen covers the whole app (fading in); the sheet keeps its half height underneath.
         .crossDissolveCover(isPresented: viewModel.isPreparing) { preparingScreen }
+        // Preparing a song can take a minute or more; locking would pause it.
+        .keepsScreenAwake(viewModel.isPreparing)
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { viewModel.stopSelectionPreview() }
         }
@@ -147,7 +149,8 @@ struct ImportSongView: View {
                 // The waveform scrolls off the sheet's edges (design 4.3).
                 .padding(.horizontal, -AppSpacing.large)
             HStack {
-                Text("\(Int(viewModel.selectionLength.rounded()))s selected")
+                Text(viewModel.selectionLength < 60 ? "\(Int(viewModel.selectionLength.rounded()))s selected"
+                     : "\(time(viewModel.selectionLength)) selected")
                 Spacer()
                 Text("\(time(viewModel.playbackTime ?? viewModel.selectionStart)) / \(time(audio.duration))")
             }

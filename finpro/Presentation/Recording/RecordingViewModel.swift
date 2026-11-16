@@ -28,6 +28,12 @@ final class RecordingViewModel {
         case failed(UserFacingError)
     }
 
+    /// The lime dot on the pitch guide: the smoothed voice pitch and when it was last heard.
+    struct VoiceDot: Equatable {
+        let midi: Float
+        let songTime: TimeInterval
+    }
+
     /// One point of the user's pitch trail on the song timeline.
     struct TrailPoint {
         let songTime: TimeInterval
@@ -73,6 +79,9 @@ final class RecordingViewModel {
     private(set) var status: Status = .starting
     private(set) var loop: LoopStateController
     private(set) var trail: [TrailPoint] = []
+    /// Display only (see VoiceDotFilter); colours and scores use the raw samples.
+    private(set) var voiceDot: VoiceDot?
+    @ObservationIgnored private var voiceDotFilter = VoiceDotFilter()
     /// Song time at which the part being sung starts (the segment a start or a resume began with);
     /// notes before it are previous material.
     private(set) var singingFrom: TimeInterval?
@@ -339,6 +348,7 @@ final class RecordingViewModel {
         anchor = nil
         evaluations = []
         trail = []
+        resetVoiceDot()
     }
 
     /// Resumes with a countdown and restarts the current segment.
@@ -368,6 +378,7 @@ final class RecordingViewModel {
         anchor = nil
         evaluations = []
         trail = []
+        resetVoiceDot()
         perform(loop.goBackOneSegment(now: capture.currentCaptureTime().seconds))
     }
 
@@ -475,6 +486,8 @@ final class RecordingViewModel {
             singingFrom = loop.currentSegment?.audioStartTime
             evaluations = []
             trail = []
+        resetVoiceDot()
+            resetVoiceDot()
             trailDisplay.reset()
             noteDisplay.reset()
             displayTargetID = nil
@@ -579,6 +592,11 @@ final class RecordingViewModel {
         tasks.removeAll()
     }
 
+    private func resetVoiceDot() {
+        voiceDotFilter.reset()
+        voiceDot = nil
+    }
+
     private func handle(_ sample: PitchSample) {
         updatePitchStats(sample)
         guard let anchor, loop.phase == .preRoll || loop.phase == .singing else { return }
@@ -593,6 +611,12 @@ final class RecordingViewModel {
         // Colour and scoring must report the same measured result; visual smoothing must
         // never turn an out-of-tune sample green or conceal a genuine note transition.
         trail.append(TrailPoint(songTime: evaluation.referenceTime, midi: midi, isHit: evaluation.isHit))
+        voiceDotFilter.update(midi: evaluation.detectedMIDINote, time: evaluation.referenceTime,
+                              foldToDot: evaluation.targetNoteID == nil)
+        if let dotMIDI = voiceDotFilter.midi, let heard = voiceDotFilter.lastVoicedTime {
+            let dot = VoiceDot(midi: dotMIDI, songTime: heard)
+            if dot != voiceDot { voiceDot = dot }
+        }
         trail.removeAll { $0.songTime < evaluation.referenceTime - Self.trailLength }
     }
 }

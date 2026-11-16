@@ -78,6 +78,8 @@ struct PianoRollView: View {
 
     let notes: [Note]
     let trail: [RecordingViewModel.TrailPoint]
+    /// Where the lime voice dot sits (smoothed, see VoiceDotFilter); nil hides it.
+    var voiceDot: RecordingViewModel.VoiceDot?
     /// Notes of the current segment, used to centre the vertical range.
     let focusMIDI: [Int]
     let songTime: () -> TimeInterval?
@@ -251,20 +253,24 @@ struct PianoRollView: View {
         }
 
         // The voice is shown only as a dot at the playhead, no trail line (design review); the
-        // notes it sang turn green or red. A dot older than this means the voice stopped.
-        let maxJoin = 0.12
+        // notes it sang turn green or red. The pitch pipeline lags the song clock by ~0.1 s, so
+        // the dot is held a little longer than that and then fades out once the voice stops,
+        // instead of blinking whenever one frame arrives late or has no pitch.
+        let dotHold = 0.3, dotFade = 0.15
 
         // Playhead, with a dot where the voice is now.
         var playhead = Path()
         playhead.move(to: CGPoint(x: playheadX, y: rowsTop))
         playhead.addLine(to: CGPoint(x: playheadX, y: rowsTop + rowsHeight))
         context.stroke(playhead, with: .color(Palette.playhead), lineWidth: Self.playheadWidth)
-        if let last = trail.last, let midi = last.midi, current - last.songTime < maxJoin {
+        if let voiceDot, case let age = current - voiceDot.songTime, age >= -dotHold, age < dotHold + dotFade {
             let radius = dotSize / 2
             // Pinned to the top or bottom line when the voice is outside the lines in view.
-            let dotY = min(max(y(Double(midi)), rowsTop + radius), rowsTop + rowsHeight - radius)
-            let dot = CGRect(x: x(last.songTime) - radius, y: dotY - radius, width: dotSize, height: dotSize)
-            context.fill(Path(ellipseIn: dot), with: .color(Palette.dot))
+            let dotY = min(max(y(Double(voiceDot.midi)), rowsTop + radius), rowsTop + rowsHeight - radius)
+            // On the playhead: the dot is "now"; drawing it at the sample's time made it shake sideways.
+            let dot = CGRect(x: playheadX - radius, y: dotY - radius, width: dotSize, height: dotSize)
+            let opacity = age <= dotHold ? 1 : max(0, 1 - (age - dotHold) / dotFade)
+            context.fill(Path(ellipseIn: dot), with: .color(Palette.dot.opacity(opacity)))
         }
     }
 }

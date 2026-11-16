@@ -98,6 +98,8 @@ struct ExportPreviewView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.screenBackground.ignoresSafeArea())
         .overlay { if isMerging { merging } }
+        // A locked phone interrupts the export (AVFoundation -11847).
+        .keepsScreenAwake(isMerging)
         .animation(.default, value: page)
         .animation(.default, value: isMerging)
         .task {

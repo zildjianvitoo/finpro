@@ -82,6 +82,8 @@ struct RecordingView: View {
             .environment(\.colorScheme, .light)
         }
         .preferredColorScheme(.dark)
+        // The user sings without touching the phone: the screen must not dim or lock mid-take.
+        .keepsScreenAwake()
         .task {
             // Right after the camera and microphone prompts the app is not active yet, and a
             // camera or audio session started then may not run (first launch after install).
@@ -267,6 +269,7 @@ struct RecordingView: View {
     private var pitchGuide: some View {
         PianoRollView(notes: pianoRollNotes,
                       trail: viewModel.trail,
+                      voiceDot: viewModel.voiceDot,
                       focusMIDI: focusMIDI,
                       songTime: viewModel.displaySongTime,
                       dimmedBefore: viewModel.singingFrom,
