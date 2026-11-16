@@ -13,6 +13,8 @@ struct CurvedPitchDial: View, Animatable {
     var hasSignal = true
     var highlightsPitch = false
     var label: (Double) -> String
+    /// Distance between two semitones, as a fraction of the dial's width.
+    static let noteSpacingRatio: CGFloat = 0.26
 
     var animatableData: AnimatablePair<Double, Double> {
         get { AnimatablePair(value, center) }
@@ -26,7 +28,7 @@ struct CurvedPitchDial: View, Animatable {
     var body: some View {
         GeometryReader { proxy in
             let width = proxy.size.width
-            let noteSpacing = width * 0.26
+            let noteSpacing = width * Self.noteSpacingRatio
             ZStack(alignment: .topLeading) {
                 Canvas { context, size in
                     for tick in (visibleNotes.lowerBound * 6)...(visibleNotes.upperBound * 6) {
@@ -35,7 +37,9 @@ struct CurvedPitchDial: View, Animatable {
                         guard x >= -20, x <= size.width + 20 else { continue }
                         let fraction = (x - size.width / 2) / max(1, size.width / 2)
                         let major = tick.isMultiple(of: 6)
-                        let selected = major && tick / 6 == Int(value.rounded())
+                        // Only the tick under the center marker is drawn tall, so a dial between two notes
+                        // (while dragged) shows one marker instead of two bars side by side.
+                        let selected = major && abs(note - value) < 0.05
                         let y = 48 + fraction * fraction * 28
                         let height: Double = selected ? 112 : major ? 88 : 64
                         var local = context
