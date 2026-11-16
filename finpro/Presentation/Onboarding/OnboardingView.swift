@@ -64,6 +64,9 @@ struct OnboardingView: View {
         }
     }
 
+    private var isLastPage: Bool { currentStep == 2 }
+    private var pageAnimation: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.25) }
+
     private var walkthrough: some View {
         VStack(spacing: 0) {
             HStack {
@@ -73,11 +76,15 @@ struct OnboardingView: View {
                 .buttonStyle(.appIcon(.glass))
                 .accessibilityLabel("Back")
                 Spacer()
-                if currentStep < 2 {
-                    Button("Skip", action: onFinish)
-                        .font(.appSubheadline).foregroundStyle(Color.primary)
-                        .glassCapsuleButtonStyle()
-                }
+                // Kept in the layout on the last page (only faded out), so the header height and
+                // with it the pages don't jump when the last page is reached.
+                Button("Skip", action: onFinish)
+                    .font(.appSubheadline).foregroundStyle(Color.primary)
+                    .glassCapsuleButtonStyle()
+                    .opacity(isLastPage ? 0 : 1)
+                    .disabled(isLastPage)
+                    .accessibilityHidden(isLastPage)
+                    .animation(pageAnimation, value: isLastPage)
             }
             .padding(.horizontal, 16)
 
@@ -116,19 +123,20 @@ struct OnboardingView: View {
                         .frame(width: index == currentStep ? 18 : 6, height: 6)
                 }
             }
+            .animation(pageAnimation, value: currentStep)
             .padding(.horizontal, 12).padding(.vertical, 8)
             .background(.white, in: Capsule())
             .accessibilityLabel("Page \(currentStep + 1) of 3")
             .padding(.top, 12)
 
-            Group {
-                if currentStep == 2 {
-                    Button("Find my vocal range", action: onFinish).buttonStyle(.appPrimary)
-                } else {
-                    Color.clear.frame(height: 56).accessibilityHidden(true)
-                }
-            }
-            .padding(.horizontal, 24).padding(.top, 24).padding(.bottom, 12)
+            // Always laid out (faded in on the last page), so nothing moves when it appears.
+            Button("Find my vocal range", action: onFinish).buttonStyle(.appPrimary)
+                .opacity(isLastPage ? 1 : 0)
+                .offset(y: isLastPage || reduceMotion ? 0 : 8)
+                .disabled(!isLastPage)
+                .accessibilityHidden(!isLastPage)
+                .animation(pageAnimation, value: isLastPage)
+                .padding(.horizontal, 24).padding(.top, 24).padding(.bottom, 12)
         }
     }
 }
