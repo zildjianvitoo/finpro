@@ -139,16 +139,16 @@ struct PianoRollView: View {
 
     // MARK: - Colors
 
-    /// The frosted panel of the design: a blurred dark material under a light tint at 20%, plum lines, grey
-    /// notes, light labels, a dark playhead and a lime dot where the voice is.
+    /// The frosted panel of the design: a blurred dark material under a light tint at 20%, plum lines, light
+    /// notes (3rd Iteration), light labels, a dark playhead and a lime dot where the voice is.
     private enum Palette {
         static let panel = Color.secondaryButton.opacity(0.2)
         static let line = Color.tertiaryText.opacity(0.6)
         static let label = Color.secondaryButton
         /// A note not passed yet; it turns green or red once the playhead is past it.
-        static let note = Color.gray
+        static let note = Color.secondaryButton
         /// Notes of the segments before the one being sung.
-        static let previousNote = Color.gray.opacity(0.45)
+        static let previousNote = Color.secondaryButton.opacity(0.45)
         static let playhead = Color.primary800
         static let dot = Color.secBrand
         static let word = Color.secondaryButton
