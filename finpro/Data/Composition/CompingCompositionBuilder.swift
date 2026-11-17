@@ -26,7 +26,7 @@ nonisolated enum CompingError: Error, CustomStringConvertible {
         case .invalidPlan(let violations): "Invalid comping plan:\n" + violations.map(\.description).joined(separator: "\n")
         case .missingTrack(let name): "Missing track: \(name)"
         case .exportUnavailable: "Export session could not be created"
-        case .exportInterrupted: "The export was interrupted. Keep EasySing open and tap Try Again."
+        case .exportInterrupted: "The export was interrupted. Keep verca open and tap Try Again."
         }
     }
 }

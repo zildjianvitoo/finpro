@@ -13,14 +13,14 @@ struct OnboardingView: View {
     private let titles = ["Stay on pitch,\nas you sing.", "Retake less.\nCreate more.", "Find a key that fits\nyour voice."]
     private let subtitles = [
         "Follow visual pitch and timing cues while recording your cover.",
-        "Redo a phrase and keep your best take in one seamless cover.",
-        "We'll transpose songs to match your voice, so you can sing comfortably."
+        "We’ll highlight clips that need a retake, so you can re-record just that section.",
+        "We'll transpose songs to match your voice, so you can sing with confidence."
     ]
 
     var body: some View {
         Group {
             if currentStep == -2 {
-                EasySingLogoView()
+                BrandLogoView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .task {
                         try? await Task.sleep(for: .seconds(1))
@@ -38,29 +38,26 @@ struct OnboardingView: View {
     }
 
     private var welcome: some View {
+        // Logo in the upper part, as in the 1.2 Welcome Screen design (top at ~23% of the safe area).
         GeometryReader { proxy in
             VStack(spacing: 0) {
-                EasySingLogoView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                VStack(spacing: 10) {
-                    Text("Record covers effortlessly.").font(.appTitle2)
+                BrandLogoView()
+                    .padding(.top, proxy.size.height * 0.23)
+                Spacer(minLength: 24)
+                VStack(spacing: 0) {
+                    Text("Record covers effortlessly").font(.appTitle2).fontWeight(.bold)
                         .foregroundStyle(Color.primaryBrand)
-                    Text("A smoother way to create your singing covers.")
-                        .font(.appSubheadline).foregroundStyle(Color.secondaryText)
+                    Text("A smoother way to create\nyour singing covers.")
+                        .font(.appBody).foregroundStyle(Color.primary300)
                 }
                 .multilineTextAlignment(.center)
-                Button { currentStep = 0 } label: {
-                    HStack(spacing: AppSpacing.small) {
-                        Text("Get Started")
-                        Image(systemName: "chevron.right")
-                    }
-                }
-                .buttonStyle(.appPrimary)
-                .frame(maxWidth: 246)
-                .padding(.top, 32)
-                .padding(.bottom, proxy.size.height * 0.12)
+                Button("Get Started") { currentStep = 0 }
+                    .buttonStyle(.appPrimary)
+                    .padding(.top, 65)
+                    .padding(.bottom, 16)
             }
-            .padding(.horizontal, 24)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 25)
         }
     }
 
@@ -79,7 +76,7 @@ struct OnboardingView: View {
                 // Kept in the layout on the last page (only faded out), so the header height and
                 // with it the pages don't jump when the last page is reached.
                 Button("Skip", action: onFinish)
-                    .font(.appSubheadline).foregroundStyle(Color.primary)
+                    .font(.appBody).fontWeight(.medium).foregroundStyle(Color.primary)
                     .glassCapsuleButtonStyle()
                     .opacity(isLastPage ? 0 : 1)
                     .disabled(isLastPage)
@@ -97,14 +94,14 @@ struct OnboardingView: View {
                                     .foregroundStyle(Color.primaryBrand)
                                     .accessibilityAddTraits(.isHeader)
                                 Text(subtitles[index]).font(.appBody)
-                                    .foregroundStyle(Color.secondaryText)
+                                    .foregroundStyle(Color.primary300)
                                     .frame(maxWidth: 335, alignment: .leading)
-                                    .padding(.top, 10)
-                                    .frame(minHeight: 54, alignment: .topLeading)
+                                    .padding(.top, 8)
+                                    .frame(minHeight: 52, alignment: .topLeading)
                                 RoundedRectangle(cornerRadius: AppRadius.medium)
-                                    .fill(Color.primary800)
-                                    .frame(height: max(220, proxy.size.height - 214))
-                                    .padding(.top, 24)
+                                    .fill(Color.primaryBrand)
+                                    .frame(height: max(220, proxy.size.height - 212))
+                                    .padding(.top, 34)
                                     .accessibilityLabel("Illustration placeholder")
                             }
                             .padding(.horizontal, 24)
@@ -120,14 +117,14 @@ struct OnboardingView: View {
             HStack(spacing: 8) {
                 ForEach(0..<3) { index in
                     Capsule().fill(index == currentStep ? Color.primary800 : Color.gray.opacity(0.4))
-                        .frame(width: index == currentStep ? 18 : 6, height: 6)
+                        .frame(width: index == currentStep ? 20 : 8, height: 8)
                 }
             }
             .animation(pageAnimation, value: currentStep)
             .padding(.horizontal, 12).padding(.vertical, 8)
             .background(.white, in: Capsule())
             .accessibilityLabel("Page \(currentStep + 1) of 3")
-            .padding(.top, 12)
+            .padding(.top, 15)
 
             // Always laid out (faded in on the last page), so nothing moves when it appears.
             Button("Find my vocal range", action: onFinish).buttonStyle(.appPrimary)
@@ -136,7 +133,7 @@ struct OnboardingView: View {
                 .disabled(!isLastPage)
                 .accessibilityHidden(!isLastPage)
                 .animation(pageAnimation, value: isLastPage)
-                .padding(.horizontal, 24).padding(.top, 24).padding(.bottom, 12)
+                .padding(.horizontal, 25).padding(.top, 16).padding(.bottom, 16)
         }
     }
 }
