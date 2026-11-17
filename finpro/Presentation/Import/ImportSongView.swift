@@ -141,7 +141,9 @@ struct ImportSongView: View {
                             .accessibilityLabel("Use selected section and find key")
                     }
                 }
-            SongSectionLyrics(viewModel: viewModel)
+            SongSectionLyrics(viewModel: viewModel,
+                              tint: isEditingSavedSong ? .plumInk : .primaryBrand,
+                              dimmedOpacity: isEditingSavedSong ? 0.28 : 0.5)
                 .padding(.top, 20)
             Spacer(minLength: 0)
             SongSectionWaveform(viewModel: viewModel, audio: audio)
@@ -154,7 +156,7 @@ struct ImportSongView: View {
                 Spacer()
                 Text("\(time(viewModel.playbackTime ?? viewModel.selectionStart)) / \(time(audio.duration))")
             }
-            .font(.appCaption).foregroundStyle(Color.primaryDark).monospacedDigit()
+            .font(.appFootnote.weight(.medium)).foregroundStyle(Color.primaryBrand).monospacedDigit()
             // The sheet keeps its height: an error takes the gap above the buttons instead of adding a row.
             Group {
                 if let error = viewModel.actionError {

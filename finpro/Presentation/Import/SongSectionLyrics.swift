@@ -8,6 +8,10 @@ import SwiftUI
 struct SongSectionLyrics: View {
     static let lineHeight: CGFloat = 24
     @Bindable var viewModel: ImportSongViewModel
+    /// Lyric colour: plum when picking a clip on import (design 4.3), dark ink on a saved song (3.2c).
+    var tint: Color = .plumInk
+    /// How strongly the lines around the current one show.
+    var dimmedOpacity: Double = 0.28
     var body: some View {
         Group {
             switch viewModel.lyrics {
@@ -57,7 +61,7 @@ struct SongSectionLyrics: View {
     private func text(_ line: LyricLine) -> AttributedString {
         var text = AttributedString(line.text)
         text.foregroundColor = line.id == (viewModel.activeLineID ?? viewModel.firstSelectedLineID)
-            ? .plumInk : .plumInk.opacity(0.28)
+            ? tint : tint.opacity(dimmedOpacity)
         return text
     }
     /// Fits the three-line lyrics area, so the sheet keeps its height when no lyrics are found.

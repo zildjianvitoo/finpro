@@ -29,7 +29,8 @@ struct KeySelectionView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     Text("Find Your Key").font(.appLargeTitle).foregroundStyle(Color.primaryBrand)
                     Text("Listen to each version and choose what feels comfortable to sing.")
-                        .font(.appSubheadline).foregroundStyle(Color.secondaryText)
+                        .font(.appSubheadline).foregroundStyle(Color.primary300)
+                        .padding(.top, -AppSpacing.medium)
                     if viewModel.choices.options.isEmpty {
                         ContentUnavailableView("No key fits this range", systemImage: "music.note.list",
                             description: Text("Try a shorter section or test your comfortable vocal range again."))
@@ -40,7 +41,7 @@ struct KeySelectionView: View {
                         if let notes = viewModel.selectedNotes {
                             Button(action: viewModel.previewSelected) {
                                 Text("Vocal notes: \(PitchMath.noteName(midi: notes.low)) – \(PitchMath.noteName(midi: notes.high))")
-                                    .font(.appSubheadline).foregroundStyle(Color.secondaryText)
+                                    .font(.appSubheadline).foregroundStyle(Color.primary300)
                                     .frame(maxWidth: .infinity, minHeight: 44)
                             }
                             .buttonStyle(.plain).padding(.top, AppSpacing.section)
@@ -93,7 +94,7 @@ struct KeySelectionView: View {
                     Button {
                         withAnimation(reduceMotion ? nil : .spring(duration: 0.3, bounce: 0.15)) { viewModel.chooseShift(recommendation) }
                     } label: {
-                        Text("Recommended").font(.appCaption2).foregroundStyle(Color.primary800)
+                        Text("Recommended").font(.appCaption2.weight(.bold)).foregroundStyle(Color.primaryBrand)
                             .padding(.horizontal, AppSpacing.small).padding(.vertical, AppSpacing.tiny)
                             .background(Color.secBrand, in: Capsule())
                             .fixedSize()
