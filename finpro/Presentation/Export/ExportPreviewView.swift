@@ -399,8 +399,8 @@ struct ExportPreviewView: View {
                     }
                     .overlay(alignment: .bottom) {
                         if clip.needsRetake && !isMerging {
-                            Text("Needs Retake")
-                                .font(.system(size: 9, weight: .semibold))
+                            Text("Off-pitch")
+                                .font(.caption2)
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
@@ -423,14 +423,14 @@ struct ExportPreviewView: View {
                 Text(viewModel.timeRange(of: clip))
                     .font(.caption2)
                     .monospacedDigit()
-                    .foregroundStyle(Color.secondaryText)
+                    .foregroundStyle(Color.primary300)
                     .lineLimit(1)
                     .fixedSize()
             }
         }
         .frame(width: clipWidth)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Clip \(clip.id + 1), \(viewModel.timeRange(of: clip))\(clip.needsRetake ? ", needs retake" : "")")
+        .accessibilityLabel("Clip \(clip.id + 1), \(viewModel.timeRange(of: clip))\(clip.needsRetake ? ", off pitch" : "")")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityHint(isSelected ? "Double-tap to sing this clip again" : "Double-tap to select")
     }
@@ -499,7 +499,7 @@ struct ExportPreviewView: View {
                 Text("Please don’t close the app or lock your screen.")
                     .font(.footnote)
             }
-            .foregroundStyle(Color.primary800)
+            .foregroundStyle(Color.primaryBrand)
             .multilineTextAlignment(.center)
             .padding(.top, -12)
             .padding(.horizontal, screenInset)

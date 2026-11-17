@@ -32,7 +32,7 @@ final class CompingViewModel {
         let id: Int
         let start: TimeInterval
         let end: TimeInterval
-        /// Sung below the pass threshold: marked "Needs Retake".
+        /// Sung below the pass threshold: marked "Off-pitch".
         let needsRetake: Bool
     }
 
