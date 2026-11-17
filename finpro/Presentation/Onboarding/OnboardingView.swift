@@ -61,12 +61,14 @@ struct OnboardingView: View {
         }
     }
 
-    /// Page illustrations (asset catalog); a page without one yet keeps the plum placeholder.
+    /// Page illustrations (asset catalog); page 3 is animated from its layers.
     private let illustrations: [String?] = ["onboarding-1", "onboarding-2", nil]
     private let illustrationLabels = ["The pitch guide while singing", "Choosing a clip to retake", ""]
 
     @ViewBuilder private func illustration(_ index: Int) -> some View {
-        if let name = illustrations[index] {
+        if index == 2 {
+            VocalRangeIllustration(isActive: currentStep == 2)
+        } else if let name = illustrations[index] {
             Image(name)
                 .resizable()
                 .scaledToFit()
