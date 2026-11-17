@@ -224,8 +224,7 @@ struct VocalRangeTestView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, AppSpacing.spacious + AppSpacing.section)
             } else {
-                VocalPitchDial(midi: displayMIDI, referenceMIDI: viewModel.baselineMIDI ?? 57,
-                               bandColor: isLowest ? .secondary200 : .secBrand)
+                VocalPitchDial(midi: displayMIDI, referenceMIDI: viewModel.baselineMIDI ?? 57, bandColor: .primary100)
                     .id(viewModel.prompt)
                     .frame(maxWidth: .infinity)
                     .padding(.top, AppSpacing.large)
@@ -252,7 +251,7 @@ struct VocalRangeTestView: View {
 
     private var passage: AttributedString {
         var text = AttributedString(viewModel.instructions)
-        text.foregroundColor = Color.gray
+        text.foregroundColor = Color.passageUnread
         // Highlight only complete words. Time advances while the microphone hears speech (short pauses included).
         let words = viewModel.instructions.split(whereSeparator: \.isWhitespace)
         let count = Int(Double(words.count) * viewModel.holdProgress)

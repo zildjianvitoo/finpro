@@ -89,7 +89,7 @@ struct SongSectionWaveform: View {
                 let time = (Double(index) + 0.5) * barSeconds
                 let inside = time >= viewModel.selectionStart && time <= selectionEnd
                 Capsule()
-                    .fill(inside ? Color.primaryBrand : Color.primary200)
+                    .fill(inside ? Color.primary500 : Color.primary200)
                     .frame(width: barWidth, height: max(4, CGFloat(level(at: time)) * height * 0.85))
                     .offset(x: x(time, width: width, scale: scale) - barWidth / 2)
             }

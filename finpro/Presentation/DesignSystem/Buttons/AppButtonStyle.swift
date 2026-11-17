@@ -34,7 +34,13 @@ struct AppButtonStyle: ButtonStyle {
 
     private var textColor: Color {
         guard isEnabled else { return .secText }
-        return kind == .primary ? .white : .primary800
+        switch kind {
+        case .primary: return .white
+        // On lime: dark in both modes.
+        case .accent: return .primary800
+        // On the pale surface, which turns dark plum in dark mode.
+        case .secondary: return .plumNight
+        }
     }
 
     private func fill(isPressed: Bool) -> Color {

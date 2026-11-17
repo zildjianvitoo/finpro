@@ -13,22 +13,22 @@
       "idiom": "universal"
     },
     {
-      "color": {
-        "color-space": "srgb",
-        "components": {
-          "alpha": "1.000",
-          "blue": "0x9F",
-          "green": "0x7C",
-          "red": "0xB0"
-        }
-      },
-      "idiom": "universal",
       "appearances": [
         {
           "appearance": "luminosity",
           "value": "dark"
         }
-      ]
+      ],
+      "color": {
+        "color-space": "srgb",
+        "components": {
+          "alpha": "1.000",
+          "red": "0xA8",
+          "green": "0x93",
+          "blue": "0x9F"
+        }
+      },
+      "idiom": "universal"
     }
   ],
   "info": {

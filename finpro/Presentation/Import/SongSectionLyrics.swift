@@ -75,7 +75,7 @@ struct SongSectionLyrics: View {
                     .font(.appSubheadline).submitLabel(.search)
                     .onSubmit { viewModel.searchLyrics() }
                     .padding(.horizontal, AppSpacing.medium).frame(height: 36)
-                    .background(.white.opacity(0.8), in: Capsule())
+                    .background(Color.searchField.opacity(0.8), in: Capsule())
                 Button { viewModel.searchLyrics() } label: { Image(systemName: "magnifyingglass") }
                     .foregroundStyle(Color.primaryBrand)
                     .accessibilityLabel("Search lyrics")

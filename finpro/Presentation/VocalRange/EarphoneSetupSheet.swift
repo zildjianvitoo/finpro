@@ -23,7 +23,7 @@ struct EarphoneSetupSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, AppSpacing.small)
             RoundedRectangle(cornerRadius: AppRadius.medium)
-                .fill(Color.primaryBrand)
+                .fill(Color.primaryButton)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(.top, AppSpacing.section)
                 .accessibilityLabel("Illustration placeholder")

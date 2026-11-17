@@ -99,7 +99,7 @@ struct OnboardingView: View {
                                     .padding(.top, 8)
                                     .frame(minHeight: 52, alignment: .topLeading)
                                 RoundedRectangle(cornerRadius: AppRadius.medium)
-                                    .fill(Color.primaryBrand)
+                                    .fill(Color.primaryButton)
                                     .frame(height: max(220, proxy.size.height - 212))
                                     .padding(.top, 34)
                                     .accessibilityLabel("Illustration placeholder")
@@ -116,13 +116,13 @@ struct OnboardingView: View {
 
             HStack(spacing: 8) {
                 ForEach(0..<3) { index in
-                    Capsule().fill(index == currentStep ? Color.primary800 : Color.gray.opacity(0.4))
+                    Capsule().fill(index == currentStep ? Color.plumNight : Color.gray.opacity(0.4))
                         .frame(width: index == currentStep ? 20 : 8, height: 8)
                 }
             }
             .animation(pageAnimation, value: currentStep)
             .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(.white, in: Capsule())
+            .background(Color.searchField, in: Capsule())
             .accessibilityLabel("Page \(currentStep + 1) of 3")
             .padding(.top, 15)
 

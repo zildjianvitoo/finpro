@@ -34,7 +34,7 @@ struct CoverGridView: View {
                     if cover.status == .draft && !selecting {
                         Text("Draft").font(.appFootnote).foregroundStyle(.white)
                             .padding(.vertical, 2).padding(.horizontal, 6)
-                            .background(Color.primary400, in: Capsule()).padding(10)
+                            .background(Color.primary400.lightResolved, in: Capsule()).padding(10)
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {

@@ -12,7 +12,7 @@ import SwiftUI
 struct VocalPitchDial: View {
     let midi: Float?
     let referenceMIDI: Float
-    /// The curved band behind the ticks (light lime on the lowest step, lime on the highest).
+    /// The curved band behind the ticks (light purple, Sketch 2.5a).
     let bandColor: Color
     @State private var lastHeardMIDI: Double?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -56,6 +56,9 @@ private struct PitchArcScale: View, Animatable {
     private static let semitoneAngle = 21.0
     private static let ticksPerSemitone = 5
     private static let maxAngle = 72.0
+    /// Ticks sit on the lime band, so they keep their light-mode colours in dark mode.
+    private static let majorTick = Color.primary300.lightResolved
+    private static let minorTick = Color.tertiaryText.lightResolved
 
     var animatableData: Double {
         get { center }
@@ -75,10 +78,10 @@ private struct PitchArcScale: View, Animatable {
                 // The marker covers the tick under it.
                 if major, abs(angle) < Self.semitoneAngle / 2 { continue }
                 drawTick(in: context, angle: angle, width: major ? 6 : 3, length: major ? 34 : 24,
-                         color: major ? .primary300 : .tertiaryText)
+                         color: major ? Self.majorTick : Self.minorTick)
                 if major, abs(angle) <= Self.semitoneAngle * 2.2 { drawSideLabel(in: context, note: Int(note.rounded()), angle: angle) }
             }
-            drawTick(in: context, angle: 0, width: 6, length: 36, color: .primaryBrand)
+            drawTick(in: context, angle: 0, width: 6, length: 36, color: .primary500)
             drawCenterLabel(in: context)
         }
     }

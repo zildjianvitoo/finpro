@@ -22,7 +22,7 @@ struct VocalRangeRing: View {
             ZStack {
                 Circle().fill(Color.primary200.opacity(0.6))
                     .scaleEffect(pulse)
-                Circle().fill(Color.primaryBrand).padding(16)
+                Circle().fill(Color.primaryButton).padding(16)
                 Circle().stroke(Color.primary800.opacity(0.5), lineWidth: 6).padding(18)
                 if !showsMicrophoneIcon {
                     Circle().trim(from: 0, to: min(1, max(0, progress)))

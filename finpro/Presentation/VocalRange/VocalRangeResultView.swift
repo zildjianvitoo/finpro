@@ -55,7 +55,7 @@ struct VocalRangeResultView: View {
                         Spacer(minLength: 8)
                         Text(note(range.lowestMIDI))
                     }
-                    .font(.appSubheadline.weight(.bold)).foregroundStyle(Color.primaryBrand)
+                    .font(.appSubheadline.weight(.bold)).foregroundStyle(Color.primary500)
                     .padding(.vertical, 4).frame(width: 44, height: max(56, height))
                     .background(Color.secBrand, in: Capsule())
                     .offset(x: proxy.size.width * 0.58, y: top)

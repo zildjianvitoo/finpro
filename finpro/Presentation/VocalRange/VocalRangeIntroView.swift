@@ -40,7 +40,7 @@ struct VocalRangeIntroView: View {
                 Spacer(minLength: 16)
 
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("Your").foregroundStyle(Color.screenBackground)
+                    Text("Your").foregroundStyle(Color.white)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(height: lineAdvance, alignment: .topLeading)
                     Text("vocal").foregroundStyle(Color.secBrand)
@@ -64,7 +64,7 @@ struct VocalRangeIntroView: View {
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
             .background(alignment: .topLeading) {
-                VocalIntroBackground().fill(Color.primaryBrand)
+                VocalIntroBackground().fill(Color.primaryButton)
                     .frame(width: proxy.size.width, height: shapeHeight)
                     .offset(y: shapeTop)
                     .allowsHitTesting(false)

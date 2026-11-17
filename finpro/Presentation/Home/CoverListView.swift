@@ -69,7 +69,7 @@ struct CoverListView: View {
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background {
                                 if filter == item {
-                                    Capsule().fill(Color.primaryBrand).matchedGeometryEffect(id: "thumb", in: filterThumb)
+                                    Capsule().fill(Color.primaryButton).matchedGeometryEffect(id: "thumb", in: filterThumb)
                                 }
                             }
                             .contentShape(Capsule())

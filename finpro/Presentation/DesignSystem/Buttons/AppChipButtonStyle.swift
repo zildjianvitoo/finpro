@@ -14,7 +14,7 @@ struct AppChipButtonStyle: ButtonStyle {
             .padding(.horizontal, AppSpacing.regular)
             .frame(minHeight: 36)
             .background {
-                if selected { Capsule().fill(Color.primaryBrand) }
+                if selected { Capsule().fill(Color.primaryButton) }
                 else { Capsule().fill(.regularMaterial) }
             }
             .overlay { Capsule().strokeBorder(.white.opacity(0.8), lineWidth: 1) }

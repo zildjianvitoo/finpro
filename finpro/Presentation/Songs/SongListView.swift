@@ -71,7 +71,7 @@ struct SongListView: View {
                 }
                 .font(.appBody).foregroundStyle(Color.secondary)
                 .padding(.horizontal, 16).frame(height: 48)
-                .background(.white.opacity(0.8), in: Capsule())
+                .background(Color.searchField.opacity(0.8), in: Capsule())
                 .shadow(color: .black.opacity(0.08), radius: 12, y: 2)
                 .padding(.horizontal, 16).padding(.bottom, 12)
             }
@@ -128,7 +128,7 @@ struct SongListView: View {
                         Spacer()
                         Text(Duration.seconds(song.duration), format: .time(pattern: .minuteSecond))
                     }
-                    .font(.appSubheadline).foregroundStyle(Color.primary400)
+                    .font(.appSubheadline).foregroundStyle(expanded ? Color.primary400.lightResolved : Color.primary400)
                 }
             }
             .contentShape(Rectangle())
@@ -140,8 +140,8 @@ struct SongListView: View {
                 let progress = viewModel.playingID == song.id ? viewModel.playbackTime / max(1, song.duration) : 0
                 GeometryReader { proxy in
                     ZStack(alignment: .leading) {
-                        Capsule().fill(Color.plumNight.opacity(0.55))
-                        Capsule().fill(Color.primaryBrand)
+                        Capsule().fill(Color.primary800.opacity(0.55))
+                        Capsule().fill(Color.primary500)
                             .frame(width: max(8, proxy.size.width * min(1, max(0, progress))))
                     }
                 }
@@ -166,7 +166,8 @@ struct SongListView: View {
             }
         }
         .buttonStyle(.plain)
-        .foregroundStyle(Color.primaryBrand)
+        // Text on the lime row stays deep plum in dark mode too.
+        .foregroundStyle(expanded ? Color.primary500 : Color.primaryBrand)
         .padding(12)
         .background(expanded ? Color.secBrand : Color.secondaryButton, in: RoundedRectangle(cornerRadius: 12))
         // Keeps the player inside the row while it grows or shrinks.

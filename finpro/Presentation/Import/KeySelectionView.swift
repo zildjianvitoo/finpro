@@ -94,7 +94,7 @@ struct KeySelectionView: View {
                     Button {
                         withAnimation(reduceMotion ? nil : .spring(duration: 0.3, bounce: 0.15)) { viewModel.chooseShift(recommendation) }
                     } label: {
-                        Text("Recommended").font(.appCaption2.weight(.bold)).foregroundStyle(Color.primaryBrand)
+                        Text("Recommended").font(.appCaption2.weight(.bold)).foregroundStyle(Color.primary500)
                             .padding(.horizontal, AppSpacing.small).padding(.vertical, AppSpacing.tiny)
                             .background(Color.secBrand, in: Capsule())
                             .fixedSize()
