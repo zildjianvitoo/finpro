@@ -51,14 +51,7 @@ struct SongSectionLyrics: View {
             case .failed(let error): search(error)
             }
         }
-        .frame(maxWidth: .infinity).frame(height: showsSearch ? 120 : Self.lineHeight * 3)
-    }
-
-    private var showsSearch: Bool {
-        switch viewModel.lyrics {
-        case .notFound, .failed: true
-        default: false
-        }
+        .frame(maxWidth: .infinity).frame(height: Self.lineHeight * 3)
     }
 
     private func text(_ line: LyricLine) -> AttributedString {
@@ -67,18 +60,22 @@ struct SongSectionLyrics: View {
             ? .plumInk : .plumInk.opacity(0.28)
         return text
     }
+    /// Fits the three-line lyrics area, so the sheet keeps its height when no lyrics are found.
     private func search(_ error: UserFacingError) -> some View {
-        VStack(spacing: 6) {
-            Text(error.title).font(.appCaption).foregroundStyle(Color.secondaryText)
-            HStack {
+        VStack(spacing: AppSpacing.tiny) {
+            Text("\(error.title). Search by title, or pick a part on the waveform.")
+                .font(.appCaption2).foregroundStyle(Color.secondaryText)
+                .lineLimit(1).minimumScaleFactor(0.8)
+            HStack(spacing: AppSpacing.small) {
                 TextField("Song title", text: $viewModel.lyricsTitle)
-                    .textFieldStyle(.roundedBorder).submitLabel(.search)
+                    .font(.appSubheadline).submitLabel(.search)
                     .onSubmit { viewModel.searchLyrics() }
+                    .padding(.horizontal, AppSpacing.medium).frame(height: 36)
+                    .background(.white.opacity(0.8), in: Capsule())
                 Button { viewModel.searchLyrics() } label: { Image(systemName: "magnifyingglass") }
+                    .foregroundStyle(Color.primaryBrand)
                     .accessibilityLabel("Search lyrics")
             }
-            Text("You can still choose a part with the waveform.")
-                .font(.appCaption2).foregroundStyle(Color.secondaryText)
         }
     }
 }

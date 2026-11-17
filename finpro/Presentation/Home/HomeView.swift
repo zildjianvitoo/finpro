@@ -17,7 +17,7 @@ struct HomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 12) {
-                    Text("Covers").font(.appLargeTitle).foregroundStyle(Color.primaryBrand)
+                    Text("Covers").font(.appLargeTitle).foregroundStyle(Color.plumNight)
                         .lineLimit(1).minimumScaleFactor(0.7)
                     Spacer(minLength: 0)
                     Button(action: viewModel.vocalRangeTapped) {
@@ -26,10 +26,10 @@ struct HomeView: View {
                             Text(viewModel.vocalRangeText).lineLimit(1).minimumScaleFactor(0.7)
                             Image(systemName: "chevron.right")
                         }
-                        .font(.appSubheadline.weight(.semibold))
-                        .foregroundStyle(Color.primaryDark)
-                        .padding(.horizontal, 12).padding(.vertical, 10)
-                        .background(Color.secBrand, in: Capsule())
+                        .font(.appTitle3.weight(.semibold))
+                        .foregroundStyle(Color.primaryBrand)
+                        .padding(.horizontal, 10).frame(height: 44)
+                        .background(Color.primary100, in: Capsule())
                     }
                     .accessibilityLabel("Your vocal range, \(viewModel.vocalRangeText). Retake test")
                     Button {
@@ -41,11 +41,11 @@ struct HomeView: View {
                         .tipViewStyle(CreateCoverTipStyle())
                 }
                 .padding(.horizontal, 16)
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 6) {
                     sectionButton("Songs", action: viewModel.songsTapped)
                     if viewModel.songLibrary.songs.isEmpty {
                         Text("Tap + to add a song and\nstart creating your cover.")
-                            .font(.appSubheadline).foregroundStyle(Color.secondaryText)
+                            .font(.appBody).foregroundStyle(Color.plumNight)
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: .infinity, minHeight: 116)
                     } else {
@@ -56,14 +56,15 @@ struct HomeView: View {
                                         VStack(alignment: .leading, spacing: 2) {
                                             Image(systemName: "play.fill").font(.appTitle1)
                                                 .foregroundStyle(Color.tertiaryText)
-                                                .frame(width: 86, height: 86)
-                                                .background(Color.secondaryButton, in: RoundedRectangle(cornerRadius: 8))
+                                                .frame(width: 87, height: 87)
+                                                .background(Color.primary100, in: RoundedRectangle(cornerRadius: 8))
                                                 .padding(.bottom, 4)
                                             Text(song.title).font(.appSubheadline.weight(.semibold)).lineLimit(1)
+                                                .foregroundStyle(Color.primary)
                                             Text(Duration.seconds(song.duration), format: .time(pattern: .minuteSecond))
-                                                .font(.appCaption2).foregroundStyle(Color.secondaryText)
+                                                .font(.appCaption2).foregroundStyle(Color.primary300)
                                         }
-                                        .foregroundStyle(Color.primaryBrand).frame(width: 86, alignment: .leading)
+                                        .frame(width: 87, alignment: .leading)
                                     }
                                     .buttonStyle(.plain)
                                 }
@@ -74,26 +75,25 @@ struct HomeView: View {
                         .scrollIndicators(.hidden)
                     }
                 }
-                .padding(16)
-                .background(sectionPanel)
-                VStack(alignment: .leading, spacing: 12) {
+                .padding(.horizontal, 16)
+                .padding(.top, 22)
+                VStack(alignment: .leading, spacing: 6) {
                     sectionButton("Your covers") { showsCovers = true }
                     if viewModel.recentCovers.isEmpty {
                         Text("Your cover projects will appear here.")
-                            .font(.appSubheadline).foregroundStyle(Color.secondaryText)
-                            .frame(maxWidth: .infinity).padding(.top, 24)
+                            .font(.appBody).foregroundStyle(Color.plumNight)
+                            .frame(maxWidth: .infinity).padding(.top, 42)
                     } else { CoverGridView(covers: viewModel.recentCovers, onTap: open) }
                 }
-                .padding(16)
-                .frame(maxWidth: .infinity, minHeight: 600, alignment: .top)
-                .background(sectionPanel)
-                .padding(.top, -12)
+                .padding(.horizontal, 16)
+                .padding(.top, 24)
+                .frame(maxWidth: .infinity, alignment: .top)
                 if let error = viewModel.songLibrary.error ?? viewModel.coverLibrary?.error {
                     Text(error.title).font(.appCaption).foregroundStyle(Color.primaryBrand)
                         .padding(.horizontal, 16)
                 }
             }
-            .padding(.top, 16)
+            .padding(.top, 10)
         }
         .background(Color.screenBackground.ignoresSafeArea())
         .quickLookPreview($previewURL)
@@ -114,21 +114,13 @@ struct HomeView: View {
         }
     }
 
-    /// Lime panel behind a home section, fading into the screen background (design "Rectangle 3").
-    private var sectionPanel: some View {
-        UnevenRoundedRectangle(topLeadingRadius: 28, topTrailingRadius: 28)
-            .fill(LinearGradient(stops: [.init(color: .secBrand, location: 0),
-                                         .init(color: .screenBackground, location: 0.62)],
-                                 startPoint: .top, endPoint: .bottom))
-    }
-
     private func sectionButton(_ title: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 8) {
                 Text(title).font(.appTitle3.weight(.bold))
                 Image(systemName: "chevron.right").font(.appSubheadline.weight(.semibold))
             }
-            .foregroundStyle(Color.primaryBrand)
+            .foregroundStyle(Color.plumNight)
         }
         .buttonStyle(.plain)
     }

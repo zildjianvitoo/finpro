@@ -21,6 +21,7 @@ struct CoverListView: View {
     @State private var selecting = false
     @State private var selectedIDs: Set<UUID> = []
     @State private var confirmsDelete = false
+    @Namespace private var filterThumb
 
     private var covers: [HomeViewModel.RecentCoverItem] {
         viewModel.recentCovers.filter {
@@ -42,7 +43,8 @@ struct CoverListView: View {
                     selecting.toggle()
                     selectedIDs = []
                 }
-                .buttonStyle(AppChipButtonStyle(selected: selecting))
+                .font(.appBody.weight(.medium)).foregroundStyle(Color.primaryBrand)
+                .glassCapsuleButtonStyle()
                 .disabled(viewModel.recentCovers.isEmpty)
                 if selecting {
                     Button(role: .destructive) { confirmsDelete = true } label: {
@@ -57,17 +59,29 @@ struct CoverListView: View {
                 }
             }
             .padding(.horizontal, AppSpacing.regular)
-            HStack(spacing: AppSpacing.small) {
+            // Segmented control (design "Segmented Controls/Dark/3 Segments"): plum thumb on a grey track.
+            HStack(spacing: 0) {
                 ForEach(Filter.allCases) { item in
-                    Button(item.rawValue) { filter = item }
-                        .font(.appBody)
-                        .foregroundStyle(filter == item ? Color.primaryBrand : Color.secBrand)
-                        .frame(width: 102, height: 42)
-                        .background(filter == item ? Color.secBrand : Color.primaryBrand, in: Capsule())
-                        .accessibilityAddTraits(filter == item ? .isSelected : [])
+                    Button { filter = item } label: {
+                        Text(item.rawValue)
+                            .font(.appFootnote.weight(filter == item ? .semibold : .regular))
+                            .foregroundStyle(filter == item ? Color.white : Color.secondary)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .background {
+                                if filter == item {
+                                    Capsule().fill(Color.primaryBrand).matchedGeometryEffect(id: "thumb", in: filterThumb)
+                                }
+                            }
+                            .contentShape(Capsule())
+                    }
+                    .accessibilityAddTraits(filter == item ? .isSelected : [])
                 }
             }
             .buttonStyle(.plain)
+            .padding(2)
+            .frame(height: 32)
+            .background(Color(.systemGray5), in: Capsule())
+            .padding(.horizontal, AppSpacing.regular)
             ScrollView {
                 if covers.isEmpty {
                     Text(filter == .all ? "Your cover projects will appear here." : "No \(filter.rawValue.lowercased()) covers yet.")

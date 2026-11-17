@@ -14,6 +14,7 @@ struct SongListView: View {
     @State private var name = ""
     @FocusState private var nameFocused: Bool
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
@@ -21,8 +22,9 @@ struct SongListView: View {
                 Button(action: onBack) { Image(systemName: "chevron.left") }
                     .buttonStyle(.appIcon(.glass)).accessibilityLabel("Back")
                 Spacer()
-                Button(viewModel.selecting ? "Cancel" : "Select", action: viewModel.toggleSelectionMode)
-                    .buttonStyle(AppChipButtonStyle(selected: viewModel.selecting))
+                Button(viewModel.selecting ? "Cancel" : "Select") { withRowAnimation(viewModel.toggleSelectionMode) }
+                    .font(.appBody.weight(.medium)).foregroundStyle(Color.primaryBrand)
+                    .glassCapsuleButtonStyle()
                     .disabled(viewModel.library.songs.isEmpty)
                 if viewModel.selecting {
                     Button(role: .destructive) { viewModel.delete(viewModel.selectedIDs) } label: {
@@ -36,26 +38,24 @@ struct SongListView: View {
                 }
             }
             .padding(.horizontal, 16)
-            Text("Song List").font(.appTitle1.weight(.bold)).foregroundStyle(Color.primaryDark)
+            Text("Song List").font(.appLargeTitle).foregroundStyle(Color.plumNight)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 8)
+                .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 12)
             if viewModel.songs.isEmpty {
                 ContentUnavailableView(viewModel.query.isEmpty ? "No songs yet" : "No matching songs",
                                        systemImage: "music.note.list",
                                        description: Text(viewModel.query.isEmpty ? "Tap + to add your first song." : "Try a different song name."))
             } else {
-                List {
-                    ForEach(viewModel.songs) { song in
-                        row(song)
-                            .listRowSeparator(.hidden)
-                            .listRowBackground(Color.clear)
-                            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                                Button("Delete", role: .destructive) { viewModel.delete([song.id]) }
-                            }
+                // A scroll view, not a List: a List cross-fades a row while it grows, so opening a
+                // row could not animate smoothly. Delete stays in Select mode and the context menu.
+                ScrollView {
+                    LazyVStack(spacing: 8) {
+                        ForEach(viewModel.songs) { song in
+                            row(song)
+                        }
                     }
+                    .padding(.horizontal, 16).padding(.vertical, 4)
                 }
-                .listStyle(.plain).scrollContentBackground(.hidden)
             }
             if let error = viewModel.library.error ?? viewModel.error {
                 Text(error.title).font(.appCaption).foregroundStyle(Color.primaryBrand).padding(12)
@@ -69,8 +69,10 @@ struct SongListView: View {
                             .accessibilityLabel("Clear search")
                     }
                 }
-                .font(.appSubheadline).foregroundStyle(Color.secondaryText)
-                .padding(12).background(.white.opacity(0.8), in: Capsule())
+                .font(.appBody).foregroundStyle(Color.secondary)
+                .padding(.horizontal, 16).frame(height: 48)
+                .background(.white.opacity(0.8), in: Capsule())
+                .shadow(color: .black.opacity(0.08), radius: 12, y: 2)
                 .padding(.horizontal, 16).padding(.bottom, 12)
             }
         }
@@ -80,6 +82,11 @@ struct SongListView: View {
         .onChange(of: nameFocused) { _, focused in
             if !focused { finishRename() }
         }
+    }
+
+    /// Opening or closing a row grows it and fades its player in, instead of jumping.
+    private func withRowAnimation(_ change: () -> Void) {
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.3), change)
     }
 
     private func beginRename(_ song: SavedSong) {
@@ -121,25 +128,26 @@ struct SongListView: View {
                         Spacer()
                         Text(Duration.seconds(song.duration), format: .time(pattern: .minuteSecond))
                     }
-                    .font(.appSubheadline).foregroundStyle(Color.secondaryText)
+                    .font(.appSubheadline).foregroundStyle(Color.primary400)
                 }
             }
             .contentShape(Rectangle())
             .onTapGesture {
                 if viewModel.selecting { viewModel.select(song.id) }
-                else { viewModel.play(song) }
+                else { withRowAnimation { viewModel.play(song) } }
             }
             if expanded {
                 let progress = viewModel.playingID == song.id ? viewModel.playbackTime / max(1, song.duration) : 0
                 GeometryReader { proxy in
                     ZStack(alignment: .leading) {
-                        Capsule().fill(Color.primaryBrand.opacity(0.35))
+                        Capsule().fill(Color.plumNight.opacity(0.55))
                         Capsule().fill(Color.primaryBrand)
                             .frame(width: max(8, proxy.size.width * min(1, max(0, progress))))
                     }
                 }
                 .frame(height: 8)
                 .padding(.vertical, AppSpacing.tiny)
+                .transition(.opacity)
                 .accessibilityElement()
                 .accessibilityLabel("Playback position")
                 .accessibilityValue(Text(min(1, max(0, progress)), format: .percent.precision(.fractionLength(0))))
@@ -154,12 +162,15 @@ struct SongListView: View {
                     Button { viewModel.stop(); onOpen(song) } label: { Image(systemName: "waveform").font(.appTitle2) }
                         .accessibilityLabel("Choose song section")
                 }
+                .transition(.opacity)
             }
         }
         .buttonStyle(.plain)
         .foregroundStyle(Color.primaryBrand)
         .padding(12)
         .background(expanded ? Color.secBrand : Color.secondaryButton, in: RoundedRectangle(cornerRadius: 12))
+        // Keeps the player inside the row while it grows or shrinks.
+        .clipShape(RoundedRectangle(cornerRadius: 12))
         .accessibilityAddTraits(viewModel.selecting && viewModel.selectedIDs.contains(song.id) ? .isSelected : [])
         .contextMenu {
             Button("Select") { viewModel.beginSelecting(song.id) }

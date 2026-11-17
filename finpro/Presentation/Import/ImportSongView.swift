@@ -155,11 +155,16 @@ struct ImportSongView: View {
                 Text("\(time(viewModel.playbackTime ?? viewModel.selectionStart)) / \(time(audio.duration))")
             }
             .font(.appCaption).foregroundStyle(Color.primaryDark).monospacedDigit()
-            if let error = viewModel.actionError {
-                Label(error.title, systemImage: error.systemImage)
-                    .font(.appCaption).foregroundStyle(Color.primaryBrand)
+            // The sheet keeps its height: an error takes the gap above the buttons instead of adding a row.
+            Group {
+                if let error = viewModel.actionError {
+                    Label(error.title, systemImage: error.systemImage)
+                        .font(.appCaption).foregroundStyle(Color.primaryBrand)
+                        .lineLimit(1).minimumScaleFactor(0.8)
+                }
             }
-            Spacer(minLength: isEditingSavedSong ? AppSpacing.regular : AppSpacing.large)
+            .frame(maxWidth: .infinity, minHeight: isEditingSavedSong ? AppSpacing.regular : AppSpacing.large)
+            Spacer(minLength: 0)
             if !isEditingSavedSong {
                 Button("Start Recording", action: viewModel.prepareSelection).buttonStyle(.appPrimary)
                 Button("Save to Song List", action: viewModel.saveToSongList).buttonStyle(.appSecondary)

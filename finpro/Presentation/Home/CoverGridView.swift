@@ -15,7 +15,7 @@ struct CoverGridView: View {
     let onTap: (HomeViewModel.RecentCoverItem) -> Void
 
     var body: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 20), count: 2), spacing: 16) {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 21), count: 2), spacing: 21) {
             ForEach(covers) { cover in
                 Button { onTap(cover) } label: { cell(cover) }
                     .buttonStyle(.plain)
@@ -32,7 +32,7 @@ struct CoverGridView: View {
                 .clipShape(RoundedRectangle(cornerRadius: AppRadius.medium))
                 .overlay(alignment: .bottomLeading) {
                     if cover.status == .draft && !selecting {
-                        Text("Draft").font(.appCaption).foregroundStyle(.white)
+                        Text("Draft").font(.appFootnote).foregroundStyle(.white)
                             .padding(.vertical, 2).padding(.horizontal, 6)
                             .background(Color.primary400, in: Capsule()).padding(10)
                     }
@@ -42,7 +42,6 @@ struct CoverGridView: View {
                         Image(systemName: selectedIDs.contains(cover.id) ? "checkmark.circle.fill" : "circle")
                             .font(.appTitle2.weight(.regular))
                             .foregroundStyle(Color.primaryBrand)
-                            .background(Circle().fill(.white.opacity(selectedIDs.contains(cover.id) ? 1 : 0)).padding(3))
                             .padding(10)
                             .accessibilityHidden(true)
                     }
