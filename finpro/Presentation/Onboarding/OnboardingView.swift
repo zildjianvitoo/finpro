@@ -61,6 +61,23 @@ struct OnboardingView: View {
         }
     }
 
+    /// Page illustrations (asset catalog); a page without one yet keeps the plum placeholder.
+    private let illustrations: [String?] = ["onboarding-1", "onboarding-2", nil]
+    private let illustrationLabels = ["The pitch guide while singing", "Choosing a clip to retake", ""]
+
+    @ViewBuilder private func illustration(_ index: Int) -> some View {
+        if let name = illustrations[index] {
+            Image(name)
+                .resizable()
+                .scaledToFit()
+                .accessibilityLabel(illustrationLabels[index])
+        } else {
+            RoundedRectangle(cornerRadius: AppRadius.medium)
+                .fill(Color.primaryButton)
+                .accessibilityLabel("Illustration placeholder")
+        }
+    }
+
     private var isLastPage: Bool { currentStep == 2 }
     private var pageAnimation: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.25) }
 
@@ -98,11 +115,10 @@ struct OnboardingView: View {
                                     .frame(maxWidth: 335, alignment: .leading)
                                     .padding(.top, 8)
                                     .frame(minHeight: 52, alignment: .topLeading)
-                                RoundedRectangle(cornerRadius: AppRadius.medium)
-                                    .fill(Color.primaryButton)
+                                illustration(index)
+                                    .frame(maxWidth: .infinity)
                                     .frame(height: max(220, proxy.size.height - 212))
                                     .padding(.top, 34)
-                                    .accessibilityLabel("Illustration placeholder")
                             }
                             .padding(.horizontal, 24)
                             .padding(.top, 44)
