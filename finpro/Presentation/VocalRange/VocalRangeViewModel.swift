@@ -63,7 +63,7 @@ final class VocalRangeViewModel {
     var instructions: String {
         switch prompt {
         case .speaking:
-            "The sky looks so beautiful this morning, with soft clouds floating across the blue sky.\nA gentle breeze comes through the trees, and the air feels cool and refreshing."
+            "When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a division of white light into many beautiful colors."
         case .lowest:
             "Start near your speaking note and gently hum downward. Hold a comfortable low note for 1 second."
         case .highest:

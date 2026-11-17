@@ -64,7 +64,7 @@ struct VocalRangeIntroView: View {
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
             .background(alignment: .topLeading) {
-                VocalIntroBackground().fill(Color.primary400)
+                VocalIntroBackground().fill(Color.primaryBrand)
                     .frame(width: proxy.size.width, height: shapeHeight)
                     .offset(y: shapeTop)
                     .allowsHitTesting(false)

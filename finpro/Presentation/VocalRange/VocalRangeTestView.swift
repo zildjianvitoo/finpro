@@ -16,6 +16,9 @@ struct VocalRangeTestView: View {
     @State private var outputRoute: AudioOutputRoute?
     /// A failed listen (e.g. no headset microphone), shown as a system alert.
     @State private var showsFailure = false
+    /// "Get your setup ready", offered once per visit to the warm-up when no earphones are connected.
+    @State private var showsEarphoneSetup = false
+    @State private var offeredEarphoneSetup = false
 
     init(viewModel: VocalRangeViewModel, routeMonitor: (any AudioRouteMonitor)? = nil, onDismiss: (() -> Void)? = nil) {
         _viewModel = State(initialValue: viewModel)
@@ -55,6 +58,17 @@ struct VocalRangeTestView: View {
             Text(error.message)
         }
         .onChange(of: failure) { _, error in showsFailure = error != nil }
+        .sheet(isPresented: $showsEarphoneSetup) {
+            EarphoneSetupSheet { showsEarphoneSetup = false }
+        }
+        .onChange(of: stage) { _, stage in
+            if stage == .intro { offeredEarphoneSetup = false }
+            offerEarphoneSetupIfNeeded()
+        }
+        .onChange(of: outputRoute) { _, _ in
+            if !showsEarphoneHint { showsEarphoneSetup = false }
+            offerEarphoneSetupIfNeeded()
+        }
         .task {
             guard let routeMonitor else { return }
             outputRoute = routeMonitor.currentRoute
@@ -69,6 +83,12 @@ struct VocalRangeTestView: View {
 
     @Environment(\.scenePhase) private var scenePhase
 
+    private func offerEarphoneSetupIfNeeded() {
+        guard isWarmup, showsEarphoneHint, !offeredEarphoneSetup else { return }
+        offeredEarphoneSetup = true
+        showsEarphoneSetup = true
+    }
+
     private var failure: UserFacingError? {
         if case .failed(let error) = viewModel.status { error } else { nil }
     }
@@ -81,7 +101,6 @@ struct VocalRangeTestView: View {
     private var isWarmup: Bool { stage == .warmup }
     private var isHumming: Bool { stage == .hummingGuide }
     private var isLowest: Bool { stage == .lowest }
-    private var foreground: Color { isWarmup ? .secBrand : .primaryBrand }
     private var displayMIDI: Float? {
         if case .captured(let note) = viewModel.status { return note }
         return viewModel.liveMIDI
@@ -116,7 +135,7 @@ struct VocalRangeTestView: View {
         GeometryReader { proxy in
             let diameter = min(AppLayout.microphoneDiameter, max(120, proxy.size.height * 0.224))
             let micCenter = proxy.size.height * 0.76
-            let headerHeight = proxy.size.height * ((isWarmup || isHumming) ? 0.28 : 0.25)
+            let headerHeight = proxy.size.height * (isWarmup ? 0.31 : 0.25)
             let hintHeight: CGFloat = showsEarphoneHint ? 32 : 0
             let contentHeight = max(40, micCenter - diameter / 2 - headerHeight - AppSpacing.regular - hintHeight)
             ZStack(alignment: .topLeading) {
@@ -164,11 +183,11 @@ struct VocalRangeTestView: View {
                 .buttonStyle(.appIcon(.glass)).accessibilityLabel("Back")
                 .padding(.horizontal, AppSpacing.regular)
             VStack(alignment: .leading, spacing: AppSpacing.small) {
-                Text(title).font(.appLargeTitle).foregroundStyle(foreground)
+                Text(title).font(.appLargeTitle).foregroundStyle(Color.primaryBrand)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityAddTraits(.isHeader)
-                Text(subtitle).font(isWarmup ? .appSubheadline : .appBody)
-                    .foregroundStyle(isWarmup ? Color.secBrand : isHumming ? Color.primaryBrand : Color.secondaryText)
+                Text(subtitle).font(.appBody)
+                    .foregroundStyle(Color.primary300)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: subtitleWidth, alignment: .leading)
             }
@@ -177,8 +196,8 @@ struct VocalRangeTestView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading).frame(height: height)
         .background {
-            if isWarmup || isHumming {
-                SpeechBubbleShape().fill(isWarmup ? Color.primary400 : Color.secBrand)
+            if isWarmup {
+                SpeechBubbleShape().fill(Color.primary100)
                     .ignoresSafeArea(edges: .top)
             }
         }
@@ -191,19 +210,25 @@ struct VocalRangeTestView: View {
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: 294, alignment: .leading)
                     .accessibilityLabel(viewModel.instructions)
-                    .padding(.top, AppSpacing.large)
+                    .padding(.top, AppSpacing.medium)
             } else if isHumming {
-                Text("“Hummmmmm…”").font(.appTitle2.weight(.bold)).foregroundStyle(Color.secBrand)
-                    .frame(maxWidth: .infinity, minHeight: 80)
-                    .background(Color.primary400, in: RoundedRectangle(cornerRadius: AppRadius.medium))
-                    .padding(.top, AppSpacing.section)
-                Text("Tip: Keep your voice steady. Stop before your voice feels strained or turns into vocal fry.")
-                    .font(.appFootnote).foregroundStyle(Color.secondaryText)
-                    .frame(maxWidth: 295, alignment: .leading)
+                VStack(spacing: AppSpacing.small) {
+                    Text("“Hummmmmm…”").font(.appDisplay(size: 24)).foregroundStyle(Color.primary)
+                        .frame(maxWidth: .infinity, minHeight: 80)
+                        .background(Color.primary100, in: RoundedRectangle(cornerRadius: AppRadius.medium))
+                    Text("Tip: Keep your voice steady. Stop before your voice feels strained or turns into vocal fry.")
+                        .font(.appFootnote).foregroundStyle(Color.primary300)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 289)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, AppSpacing.spacious + AppSpacing.section)
             } else {
-                VocalPitchBar(midi: displayMIDI, referenceMIDI: viewModel.baselineMIDI ?? 57)
+                VocalPitchDial(midi: displayMIDI, referenceMIDI: viewModel.baselineMIDI ?? 57,
+                               bandColor: isLowest ? .secondary200 : .secBrand)
                     .id(viewModel.prompt)
-                    .padding(.top, AppSpacing.spacious * 2)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, AppSpacing.large)
             }
         }
         // Full width and leading, so the text lines up with the title (a scroll view centres
@@ -227,7 +252,7 @@ struct VocalRangeTestView: View {
 
     private var passage: AttributedString {
         var text = AttributedString(viewModel.instructions)
-        text.foregroundColor = Color.secondaryText.opacity(0.65)
+        text.foregroundColor = Color.gray
         // Highlight only complete words. Time advances while the microphone hears speech (short pauses included).
         let words = viewModel.instructions.split(whereSeparator: \.isWhitespace)
         let count = Int(Double(words.count) * viewModel.holdProgress)
@@ -235,7 +260,7 @@ struct VocalRangeTestView: View {
             viewModel.instructions.distance(from: viewModel.instructions.startIndex, to: $0.endIndex)
         } ?? 0
         let end = text.index(text.startIndex, offsetByCharacters: readCount)
-        text[text.startIndex..<end].foregroundColor = .primaryBrand
+        text[text.startIndex..<end].foregroundColor = .primary
         return text
     }
 
