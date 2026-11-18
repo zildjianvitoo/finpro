@@ -12,7 +12,8 @@ struct BrandLogoView: View {
         VStack(spacing: 27) {
             Image("BrandMascot")
                 .resizable()
-                .frame(width: 100, height: 100)
+                .scaledToFit()
+                .frame(height: 100)
                 .accessibilityHidden(true)
 
             Text("verca")
