@@ -41,7 +41,7 @@
         "DEVELOPMENT_TEAM": "YU8G545MR2",
         "ENABLE_PREVIEWS": "YES",
         "GENERATE_INFOPLIST_FILE": "YES",
-        "INFOPLIST_KEY_CFBundleDisplayName": "verca",
+        "INFOPLIST_KEY_CFBundleDisplayName": "Verca",
         "INFOPLIST_KEY_ITSAppUsesNonExemptEncryption": "NO",
         "INFOPLIST_KEY_NSCameraUsageDescription": "Record your cover video with the front camera.",
         "INFOPLIST_KEY_NSMicrophoneUsageDescription": "Hear your voice to check your pitch and record your cover.",

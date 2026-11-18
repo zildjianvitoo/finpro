@@ -16,8 +16,9 @@ struct VocalRangeRing: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 24, paused: (!isListening && !showsMicrophoneIcon) || reduceMotion)) { context in
-            let pulse = (isListening || showsMicrophoneIcon) && !reduceMotion
+        TimelineView(.animation(minimumInterval: 1.0 / 24, paused: !isListening || reduceMotion)) { context in
+            // The halo breathes only while the microphone listens.
+            let pulse = isListening && !reduceMotion
                 ? 1 + 0.035 * sin(context.date.timeIntervalSinceReferenceDate * 4) : 1
             ZStack {
                 Circle().fill(Color.primary200.opacity(0.6))

@@ -86,7 +86,7 @@ struct OnboardingView: View {
                 // with it the pages don't jump when the last page is reached.
                 Button("Skip", action: onFinish)
                     .font(.appBody).fontWeight(.medium).foregroundStyle(Color.primary)
-                    .glassCapsuleButtonStyle()
+                    .glassPillButtonStyle()
                     .opacity(isLastPage ? 0 : 1)
                     .disabled(isLastPage)
                     .accessibilityHidden(isLastPage)

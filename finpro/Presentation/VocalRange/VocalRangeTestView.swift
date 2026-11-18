@@ -16,7 +16,8 @@ struct VocalRangeTestView: View {
     @State private var outputRoute: AudioOutputRoute?
     /// A failed listen (e.g. no headset microphone), shown as a system alert.
     @State private var showsFailure = false
-    /// "Get your setup ready", offered once per visit to the warm-up when no earphones are connected.
+    /// "Get your setup ready" (a system alert), offered once per visit to the warm-up when sound
+    /// still plays through the speaker; it closes on its own once earphones are connected.
     @State private var showsEarphoneSetup = false
     @State private var offeredEarphoneSetup = false
 
@@ -58,8 +59,10 @@ struct VocalRangeTestView: View {
             Text(error.message)
         }
         .onChange(of: failure) { _, error in showsFailure = error != nil }
-        .sheet(isPresented: $showsEarphoneSetup) {
-            EarphoneSetupSheet { showsEarphoneSetup = false }
+        .alert("Get your setup ready", isPresented: $showsEarphoneSetup) {
+            Button("Got It", role: .cancel) {}
+        } message: {
+            Text("Use wired earphones or headphones for more synchronized audio. Bluetooth may cause recording delays.")
         }
         .onChange(of: stage) { _, stage in
             if stage == .intro { offeredEarphoneSetup = false }
@@ -97,6 +100,9 @@ struct VocalRangeTestView: View {
     private var showsEarphoneHint: Bool {
         outputRoute == .speaker && !DebugOptions.allowsSpeakerRecording
     }
+
+    /// The small "Connect earphones" pill: not on the warm-up, where the setup alert says it.
+    private var showsEarphonePill: Bool { showsEarphoneHint && !isWarmup }
 
     private var isWarmup: Bool { stage == .warmup }
     private var isHumming: Bool { stage == .hummingGuide }
@@ -136,7 +142,7 @@ struct VocalRangeTestView: View {
             let diameter = min(AppLayout.microphoneDiameter, max(120, proxy.size.height * 0.224))
             let micCenter = proxy.size.height * 0.76
             let headerHeight = proxy.size.height * (isWarmup ? 0.31 : 0.25)
-            let hintHeight: CGFloat = showsEarphoneHint ? 32 : 0
+            let hintHeight: CGFloat = showsEarphonePill ? 32 : 0
             let contentHeight = max(40, micCenter - diameter / 2 - headerHeight - AppSpacing.regular - hintHeight)
             ZStack(alignment: .topLeading) {
                 header(height: headerHeight)
@@ -147,7 +153,7 @@ struct VocalRangeTestView: View {
                 .frame(width: max(1, proxy.size.width - AppSpacing.textInset * 2), height: contentHeight)
                 .position(x: proxy.size.width / 2, y: headerHeight + contentHeight / 2)
 
-                if showsEarphoneHint {
+                if showsEarphonePill {
                     earphoneHint
                         .position(x: proxy.size.width / 2, y: micCenter - diameter / 2 - AppSpacing.regular)
                         .transition(.opacity)
@@ -165,7 +171,7 @@ struct VocalRangeTestView: View {
                 .frame(width: proxy.size.width, height: proxy.size.height)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: showsEarphoneHint)
+            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: showsEarphonePill)
         }
     }
 
