@@ -17,6 +17,8 @@ struct RecordingView: View {
     @State private var showsSettings = false
     /// The recording tips, shown as a system alert before the first take.
     @State private var showsTips = false
+    /// A stopped session (no earphones, interrupted, failed) as a system alert.
+    @State private var showsStopped = false
     private static let tipsDelay: Duration = .milliseconds(450)
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
@@ -138,6 +140,38 @@ struct RecordingView: View {
         } message: {
             Text("Wear wired headphones, keep your camera steady, and find a quiet spot for the best result.")
         }
+        .alert(stoppedError?.title ?? "", isPresented: $showsStopped, presenting: stoppedError) { _ in
+            // The way forward takes the cancel role, so iOS adds no extra Cancel that would leave
+            // an empty screen behind the alert.
+            if case .blocked = viewModel.status {
+                Button("Try Again", role: .cancel) { Task { await viewModel.start() } }
+                Button("Start Over", role: .destructive) { Task { await viewModel.discard() } }
+            } else if viewModel.completedCount > 0 {
+                Button("Export \(viewModel.completedCount) of \(viewModel.segmentCount)", role: .cancel) {
+                    viewModel.exportAfterInterruption()
+                }
+                Button("Start Over", role: .destructive) { Task { await viewModel.discard() } }
+            } else {
+                Button("Start Over", role: .cancel) { Task { await viewModel.discard() } }
+            }
+        } message: { error in
+            Text(error.message)
+        }
+        .task(id: stoppedError) {
+            guard stoppedError != nil else { showsStopped = false; return }
+            // Like the tips: UIKit refuses an alert while the screen is still sliding in.
+            try? await Task.sleep(for: Self.tipsDelay)
+            if !Task.isCancelled { showsStopped = true }
+        }
+        .onChange(of: showsStopped) { _, shown in
+            // Try Again that is blocked again (still no earphones) ends in the same state, which the
+            // task above does not see as a change: ask again once the alert has gone.
+            guard !shown else { return }
+            Task {
+                try? await Task.sleep(for: Self.tipsDelay)
+                if stoppedError != nil, !showsStopped { showsStopped = true }
+            }
+        }
         .task(id: viewModel.status == .ready) {
             guard viewModel.status == .ready else { showsTips = false; return }
             // UIKit refuses an alert while the screen is still sliding in; wait for it to settle.
@@ -220,14 +254,9 @@ struct RecordingView: View {
                 .tint(.white)
                 .foregroundStyle(.white)
                 .frame(maxHeight: .infinity)
-        case .blocked(let error):
-            stoppedState(error, primary: ("Try Again", { Task { await viewModel.start() } }))
-                .frame(maxHeight: .infinity)
-        case .interrupted(let error), .failed(let error):
-            stoppedState(error, primary: viewModel.completedCount > 0
-                         ? ("Export \(viewModel.completedCount) of \(viewModel.segmentCount)", { viewModel.exportAfterInterruption() })
-                         : nil)
-                .frame(maxHeight: .infinity)
+        case .blocked, .interrupted, .failed:
+            // Shown as a system alert (see `stoppedAlert`); the camera stays visible behind it.
+            Color.clear
         }
     }
 
@@ -520,17 +549,11 @@ struct RecordingView: View {
         }
     }
 
-    private func stoppedState(_ error: UserFacingError, primary: (String, () -> Void)?) -> some View {
-        VStack(spacing: 16) {
-            ErrorStateView(error: error, actionTitle: primary?.0, action: primary?.1)
-            Button("Start Over", role: .destructive) {
-                Task { await viewModel.discard() }
-            }
+    private var stoppedError: UserFacingError? {
+        switch viewModel.status {
+        case .blocked(let error), .interrupted(let error), .failed(let error): error
+        default: nil
         }
-        .foregroundStyle(.white)
-        .padding()
-        .background(.black.opacity(0.7), in: .rect(cornerRadius: 20))
-        .padding()
     }
 
     // MARK: - Data for the pitch guide
