@@ -36,11 +36,9 @@ struct SongSectionWaveform: View {
             let played = x(viewModel.playbackTime ?? viewModel.selectionStart, width: width, scale: scale)
             ZStack(alignment: .leading) {
                 Color.clear.contentShape(Rectangle())
+                // Only the part already played is tinted (Sketch 3.2c); the rest of the box is open.
                 RoundedRectangle(cornerRadius: AppRadius.extraSmall)
-                    .fill(Color.secondary300.opacity(0.6))
-                    .frame(width: max(0, end - start)).offset(x: start)
-                RoundedRectangle(cornerRadius: AppRadius.extraSmall)
-                    .fill(Color.secBrand)
+                    .fill(Color.secondary200)
                     .frame(width: max(0, min(end, played) - start)).offset(x: start)
                 bars(width: width, height: proxy.size.height, scale: scale)
                 RoundedRectangle(cornerRadius: AppRadius.extraSmall)

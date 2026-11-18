@@ -169,7 +169,7 @@ struct SongListView: View {
         // Text on the lime row stays deep plum in dark mode too.
         .foregroundStyle(expanded ? Color.primary500 : Color.primaryBrand)
         .padding(12)
-        .background(expanded ? Color.secBrand : Color.secondaryButton, in: RoundedRectangle(cornerRadius: 12))
+        .background(expanded ? Color.secondary200 : Color.secondaryButton, in: RoundedRectangle(cornerRadius: 12))
         // Keeps the player inside the row while it grows or shrinks.
         .clipShape(RoundedRectangle(cornerRadius: 12))
         .accessibilityAddTraits(viewModel.selecting && viewModel.selectedIDs.contains(song.id) ? .isSelected : [])
