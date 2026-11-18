@@ -61,22 +61,12 @@ struct OnboardingView: View {
         }
     }
 
-    /// Page illustrations (asset catalog); page 3 is animated from its layers.
-    private let illustrations: [String?] = ["onboarding-1", "onboarding-2", nil]
-    private let illustrationLabels = ["The pitch guide while singing", "Choosing a clip to retake", ""]
-
+    /// Page illustrations, each animated from its layers while its page is shown.
     @ViewBuilder private func illustration(_ index: Int) -> some View {
-        if index == 2 {
-            VocalRangeIllustration(isActive: currentStep == 2)
-        } else if let name = illustrations[index] {
-            Image(name)
-                .resizable()
-                .scaledToFit()
-                .accessibilityLabel(illustrationLabels[index])
-        } else {
-            RoundedRectangle(cornerRadius: AppRadius.medium)
-                .fill(Color.primaryButton)
-                .accessibilityLabel("Illustration placeholder")
+        switch index {
+        case 0: PitchGuideIllustration(isActive: currentStep == 0)
+        case 1: RetakeIllustration(isActive: currentStep == 1)
+        default: VocalRangeIllustration(isActive: currentStep == 2)
         }
     }
 
