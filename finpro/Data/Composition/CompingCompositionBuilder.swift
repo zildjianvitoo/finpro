@@ -33,6 +33,7 @@ nonisolated enum CompingError: Error, CustomStringConvertible {
 
 nonisolated struct CompingCompositionBuilder {
     struct Output {
+        let preparedTracks: [PreparedMixTrack]
         let composition: AVMutableComposition
         let audioMix: AVMutableAudioMix
         let videoComposition: AVMutableVideoComposition
@@ -97,12 +98,7 @@ nonisolated struct CompingCompositionBuilder {
         let transform = Self.anchored(rawTransform, naturalSize: naturalSize)
         let videoTracks = [videoA, videoB]
         let vocalTracks = [vocalA, vocalB]
-        let vocalParameters = vocalTracks.map { track in
-            let parameters = AVMutableAudioMixInputParameters(track: track)
-            parameters.setVolume(0, at: .zero)
-            return parameters
-        }
-
+        var prepared: [PreparedMixTrack] = []
         let handle = plan.crossfadeDuration.seconds
         let halfFade = handle / 2
         let lastIndex = plan.validTakes.count - 1
@@ -118,17 +114,34 @@ nonisolated struct CompingCompositionBuilder {
             let tail = position == lastIndex ? 0 : handle
             let range = CMTimeRange(start: time(segmentStartInRaw - lead), duration: time(segment.audioDuration + lead + tail))
             try videoTracks[position % 2].insertTimeRange(range, of: source.video, at: time(segment.audioStartTime - lead))
-            try vocalTracks[position % 2].insertTimeRange(range, of: source.audio, at: time(segment.audioStartTime - lead))
+            let core = CMTimeRange(start: time(segmentStartInRaw), duration: time(segment.audioDuration))
+            let audio = try await PreparedMixTrack(asset: source.asset, track: source.audio, range: range, core: core)
+            prepared.append(audio)
+            try vocalTracks[position % 2].insertTimeRange(CMTimeRange(start: .zero, duration: range.duration),
+                                                        of: audio.track, at: time(segment.audioStartTime - lead))
+        }
 
+        let levels = prepared.map(\.level).filter { $0 > 0 }.sorted()
+        let reference = levels.isEmpty ? 0 : levels[levels.count / 2]
+        let corrections = prepared.map { $0.level > 0 ? min(4, max(0.25, reference / $0.level)) : 1 }
+        let vocalParameters = vocalTracks.map { track in
+            let parameters = AVMutableAudioMixInputParameters(track: track)
+            parameters.setVolume(0, at: .zero)
+            return parameters
+        }
+
+        for (position, take) in plan.validTakes.enumerated() {
+            let segment = plan.segments[take.segmentIndex]
+            let gain = min(plan.vocalGain * corrections[position], 0.97 / max(0.001, prepared[position].peak)) / PreparedMixTrack.reserve
             // Crossfade window is centered on each boundary.
             let parameters = vocalParameters[position % 2]
             if position == 0 {
-                parameters.setVolume(plan.vocalGain, at: .zero)
+                parameters.setVolume(gain, at: .zero)
             } else {
-                fade(parameters, in: true, gain: plan.vocalGain, from: segment.audioStartTime - halfFade, duration: handle)
+                fade(parameters, in: true, gain: gain, from: segment.audioStartTime - halfFade, duration: handle)
             }
             if position < lastIndex {
-                fade(parameters, in: false, gain: plan.vocalGain, from: segment.audioEndTime - halfFade, duration: handle)
+                fade(parameters, in: false, gain: gain, from: segment.audioEndTime - halfFade, duration: handle)
             }
         }
 
@@ -148,10 +161,10 @@ nonisolated struct CompingCompositionBuilder {
         audioMix.inputParameters = vocalParameters + [instrumentalParameters]
         let rendered = CGRect(origin: .zero, size: naturalSize).applying(transform)
         let renderSize = CGSize(width: abs(rendered.width), height: abs(rendered.height))
-        let corrections = await aligner.corrections(plan: plan, renderSize: renderSize)
+        let alignments = await aligner.corrections(plan: plan, renderSize: renderSize)
         let videoComposition = dissolves(plan, tracks: videoTracks, duration: composition.duration,
                                          transform: transform, renderSize: renderSize, frameRate: frameRate,
-                                         corrections: corrections)
+                                         corrections: alignments)
         // Keep the recording's own colour space (camera files are tagged, e.g. BT.709 or HLG), so the
         // dissolve doesn't convert every frame on export.
         if let extensions = formats.first.flatMap({ CMFormatDescriptionGetExtensions($0) as? [String: Any] }) {
@@ -159,7 +172,7 @@ nonisolated struct CompingCompositionBuilder {
             videoComposition.colorTransferFunction = extensions[kCVImageBufferTransferFunctionKey as String] as? String
             videoComposition.colorYCbCrMatrix = extensions[kCVImageBufferYCbCrMatrixKey as String] as? String
         }
-        return Output(composition: composition, audioMix: audioMix, videoComposition: videoComposition)
+        return Output(preparedTracks: prepared, composition: composition, audioMix: audioMix, videoComposition: videoComposition)
     }
 
     /// One take at a time, and a dissolve (outgoing take fading out over the incoming one) centred on
