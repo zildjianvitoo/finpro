@@ -41,18 +41,32 @@ final class CompingViewModel {
     var vocals: Float
     var music: Float
 
-    func prepareMixer() async throws -> AVPlayerItem {
+    var hasVolumeEdits: Bool { vocals != plan.vocalGain || music != plan.instrumentalGain }
+
+    func prepareMixer() async throws {
         if editable == nil { editable = try await CompingCompositionBuilder().build(plan) }
-        guard let editable else { throw CompingError.exportUnavailable }
+    }
+
+    func makeMixerItem() -> AVPlayerItem? {
+        guard let editable else { return nil }
         let item = AVPlayerItem(asset: editable.composition)
         item.videoComposition = editable.videoComposition
-        item.audioMix = editable.makeMix(vocals, music)
+        updateMix(on: item)
         item.forwardPlaybackEndTime = CMTime(seconds: plan.endTime, preferredTimescale: 48000)
         return item
     }
 
     func updateMix(on item: AVPlayerItem?) {
-        item?.audioMix = editable?.makeMix(vocals, music)
+        guard let item, let editable else { return }
+        item.audioMix = editable.makeMix(vocals, music)
+        for track in item.tracks {
+            guard let id = track.assetTrack?.trackID else { continue }
+            if editable.vocalTrackIDs.contains(id) {
+                track.isEnabled = vocals > 0
+            } else if id == editable.musicTrackID {
+                track.isEnabled = music > 0
+            }
+        }
     }
 
     let plan: CompingCompositionPlan
@@ -215,7 +229,7 @@ final class CompingViewModel {
         guard let url = exportedURL, saveState != .saving else { return }
         saveState = .saving
         do {
-            if var output = editable {
+            if hasVolumeEdits, var output = editable {
                 let mixed = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
                 defer { try? FileManager.default.removeItem(at: mixed) }
                 output.audioMix = output.makeMix(vocals, music)

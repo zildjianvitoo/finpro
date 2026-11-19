@@ -23,6 +23,7 @@ struct ExportPreviewView: View {
     @State private var player: CoverPlayerController?
     @State private var showsSound = false
     @State private var mixerReady = false
+    @State private var isPlayingMixer = false
     @State private var mixerError: String?
     @State private var page = Page.preview
     @State private var confirmsLeave = false
@@ -242,15 +243,8 @@ struct ExportPreviewView: View {
                 .task {
                     guard !mixerReady else { return }
                     do {
-                        let item = try await viewModel.prepareMixer()
+                        try await viewModel.prepareMixer()
                         try Task.checkCancellation()
-                        let position = player?.currentTime ?? 0
-                        let playing = player?.isPlaying == true
-                        player?.pause()
-                        let replacement = CoverPlayerController(item: item)
-                        player = replacement
-                        replacement.seek(to: position)
-                        if playing { replacement.play() }
                         mixerReady = true
                     } catch {
                         guard !Task.isCancelled else { return }
@@ -588,10 +582,34 @@ struct ExportPreviewView: View {
                     .tint(.blue)
                     .accessibilityLabel(title)
                     .accessibilityValue(Double(value.wrappedValue).formatted(.percent))
-                    .onChange(of: value.wrappedValue) { viewModel.updateMix(on: player?.player.currentItem) }
+                    .onChange(of: value.wrappedValue) { updatePreviewVolume() }
                 Image(systemName: icon)
             }
         }
+    }
+
+    private func updatePreviewVolume() {
+        if viewModel.hasVolumeEdits == isPlayingMixer {
+            if isPlayingMixer { viewModel.updateMix(on: player?.player.currentItem) }
+            return
+        }
+
+        let replacement: CoverPlayerController
+        if viewModel.hasVolumeEdits {
+            guard let item = viewModel.makeMixerItem() else { return }
+            replacement = CoverPlayerController(item: item)
+        } else {
+            guard let url = viewModel.exportedURL else { return }
+            replacement = CoverPlayerController(url: url)
+        }
+
+        let position = player?.currentTime ?? 0
+        let wasPlaying = player?.isPlaying == true
+        player?.pause()
+        player = replacement
+        isPlayingMixer = viewModel.hasVolumeEdits
+        replacement.seek(to: position)
+        if wasPlaying { replacement.play() }
     }
 
     private func startExport() {

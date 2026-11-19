@@ -38,6 +38,8 @@ nonisolated struct CompingCompositionBuilder {
         var audioMix: AVMutableAudioMix
         let makeMix: (Float, Float) -> AVMutableAudioMix
         let videoComposition: AVMutableVideoComposition
+        let vocalTrackIDs: Set<CMPersistentTrackID>
+        let musicTrackID: CMPersistentTrackID
     }
 
     static let timescale: CMTimeScale = 48_000
@@ -130,9 +132,12 @@ nonisolated struct CompingCompositionBuilder {
         let music = try await PreparedMixTrack(asset: instrumentalAsset, track: instrumental, range: musicRange, core: musicRange)
         try instrumentalTrack.insertTimeRange(musicRange, of: music.track, at: .zero)
         let vocalPeak = zip(prepared, corrections).map { $0.peak * $1 }.max() ?? 0
+        // Two overlapping equal-power ramps sum to at most sqrt(2).
+        let vocalPeakBound = vocalPeak * (lastIndex > 0 ? sqrt(2) : 1)
+        let defaultPeak = vocalPeakBound * plan.vocalGain + music.peak * plan.instrumentalGain
         func makeMix(_ vocals: Float, _ backing: Float) -> AVMutableAudioMix {
-            // Two overlapping equal-power ramps sum to at most sqrt(2).
-            let peak = vocalPeak * vocals * (lastIndex > 0 ? sqrt(2) : 1) + music.peak * backing
+            // Lowering one slider must not increase the other track's level.
+            let peak = max(defaultPeak, vocalPeakBound * vocals + music.peak * backing)
             let headroom = min(1, 0.97 / max(peak, 0.001)) / PreparedMixTrack.reserve
             let vocalParameters = vocalTracks.map { track in
                 let parameters = AVMutableAudioMixInputParameters(track: track)
@@ -140,7 +145,7 @@ nonisolated struct CompingCompositionBuilder {
                 return parameters
             }
 
-            for (position, take) in plan.validTakes.enumerated() {
+            for (position, take) in plan.validTakes.enumerated() where vocals > 0 {
                 let segment = plan.segments[take.segmentIndex]
                 let gain = vocals * corrections[position] * headroom
                 // Crossfade window is centered on each boundary.
@@ -157,7 +162,7 @@ nonisolated struct CompingCompositionBuilder {
 
             let instrumentalParameters = AVMutableAudioMixInputParameters(track: instrumentalTrack)
             instrumentalParameters.setVolume(backing * headroom, at: .zero)
-            if plan.instrumentalFadeOut > 0 {
+            if backing > 0, plan.instrumentalFadeOut > 0 {
                 let fadeStart = max(0, plan.endTime - plan.instrumentalFadeOut)
                 instrumentalParameters.setVolumeRamp(fromStartVolume: backing * headroom, toEndVolume: 0,
                                                      timeRange: CMTimeRange(start: time(fadeStart), end: time(plan.endTime)))
@@ -180,7 +185,8 @@ nonisolated struct CompingCompositionBuilder {
             videoComposition.colorTransferFunction = extensions[kCVImageBufferTransferFunctionKey as String] as? String
             videoComposition.colorYCbCrMatrix = extensions[kCVImageBufferYCbCrMatrixKey as String] as? String
         }
-        return Output(preparedTracks: prepared + [music], composition: composition, audioMix: makeMix(plan.vocalGain, plan.instrumentalGain), makeMix: makeMix, videoComposition: videoComposition)
+        return Output(preparedTracks: prepared + [music], composition: composition, audioMix: makeMix(plan.vocalGain, plan.instrumentalGain), makeMix: makeMix, videoComposition: videoComposition,
+                      vocalTrackIDs: Set(vocalTracks.map(\.trackID)), musicTrackID: instrumentalTrack.trackID)
     }
 
     /// One take at a time, and a dissolve (outgoing take fading out over the incoming one) centred on
