@@ -7,6 +7,7 @@
 //  (7.2). Owner: Zildjian Vito (ZV-13).
 //
 
+import AVFoundation
 import SwiftUI
 import UIKit
 
