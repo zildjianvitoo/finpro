@@ -39,7 +39,12 @@ nonisolated final class VideoCompositionRepositoryImpl: VideoCompositionReposito
         let violations = plan.validate()
         guard violations.isEmpty else { throw CompingError.invalidPlan(violations) }
 
-        let output = try await CompingCompositionBuilder().build(plan)
+        let prepared = try await CompingCompositionBuilder().build(plan)
+        let output = if plan.vocalGain == 0 || plan.instrumentalGain == 0 {
+            try prepared.applyingVolumes(vocals: plan.vocalGain, music: plan.instrumentalGain)
+        } else {
+            prepared
+        }
         let url = outputURL
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
 

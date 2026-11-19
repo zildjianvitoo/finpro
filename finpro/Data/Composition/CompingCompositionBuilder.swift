@@ -34,12 +34,31 @@ nonisolated enum CompingError: Error, CustomStringConvertible {
 nonisolated struct CompingCompositionBuilder {
     struct Output {
         let preparedTracks: [PreparedMixTrack]
-        let composition: AVMutableComposition
+        var composition: AVMutableComposition
         var audioMix: AVMutableAudioMix
         let makeMix: (Float, Float) -> AVMutableAudioMix
         let videoComposition: AVMutableVideoComposition
         let vocalTrackIDs: Set<CMPersistentTrackID>
         let musicTrackID: CMPersistentTrackID
+
+        /// Build the playback/export asset without muted sources. Track IDs of the remaining
+        /// sources are preserved, so the gain ramps and video instructions still apply.
+        func applyingVolumes(vocals: Float, music: Float) throws -> Output {
+            var output = self
+            output.audioMix = makeMix(vocals, music)
+            guard vocals == 0 || music == 0 else { return output }
+            guard let filtered = composition.mutableCopy() as? AVMutableComposition else {
+                throw CompingError.exportUnavailable
+            }
+            var muted = vocals == 0 ? vocalTrackIDs : []
+            if music == 0 { muted.insert(musicTrackID) }
+            for id in muted {
+                if let track = filtered.track(withTrackID: id) { filtered.removeTrack(track) }
+            }
+            output.audioMix.inputParameters = output.audioMix.inputParameters.filter { !muted.contains($0.trackID) }
+            output.composition = filtered
+            return output
+        }
     }
 
     static let timescale: CMTimeScale = 48_000

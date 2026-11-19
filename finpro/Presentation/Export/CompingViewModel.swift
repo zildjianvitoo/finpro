@@ -47,26 +47,25 @@ final class CompingViewModel {
         if editable == nil { editable = try await CompingCompositionBuilder().build(plan) }
     }
 
-    func makeMixerItem() -> AVPlayerItem? {
-        guard let editable else { return nil }
-        let item = AVPlayerItem(asset: editable.composition)
-        item.videoComposition = editable.videoComposition
-        updateMix(on: item)
+    func makeMixerItem() throws -> AVPlayerItem {
+        guard let editable else { throw CompingError.exportUnavailable }
+        let output = try editable.applyingVolumes(vocals: vocals, music: music)
+        let item = AVPlayerItem(asset: output.composition)
+        item.videoComposition = output.videoComposition
+        item.audioMix = output.audioMix
         item.forwardPlaybackEndTime = CMTime(seconds: plan.endTime, preferredTimescale: 48000)
         return item
     }
 
     func updateMix(on item: AVPlayerItem?) {
         guard let item, let editable else { return }
-        item.audioMix = editable.makeMix(vocals, music)
-        for track in item.tracks {
-            guard let id = track.assetTrack?.trackID else { continue }
-            if editable.vocalTrackIDs.contains(id) {
-                track.isEnabled = vocals > 0
-            } else if id == editable.musicTrackID {
-                track.isEnabled = music > 0
-            }
+        let mix = editable.makeMix(vocals, music)
+        // The current asset may omit a muted source until its slider is raised again.
+        mix.inputParameters = mix.inputParameters.filter {
+            (vocals > 0 || !editable.vocalTrackIDs.contains($0.trackID)) &&
+            (music > 0 || $0.trackID != editable.musicTrackID)
         }
+        item.audioMix = mix
     }
 
     let plan: CompingCompositionPlan
@@ -229,16 +228,19 @@ final class CompingViewModel {
         guard let url = exportedURL, saveState != .saving else { return }
         saveState = .saving
         do {
-            if hasVolumeEdits, var output = editable {
+            if hasVolumeEdits {
+                guard let editable else { throw CompingError.exportUnavailable }
+                let exportVocals = vocals
+                let exportMusic = music
+                let output = try editable.applyingVolumes(vocals: exportVocals, music: exportMusic)
                 let mixed = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
                 defer { try? FileManager.default.removeItem(at: mixed) }
-                output.audioMix = output.makeMix(vocals, music)
                 try await VideoCompositionRepositoryImpl().export(output, plan: plan, to: mixed) { _ in }
                 try await videoLibrary.saveVideo(at: mixed)
                 let savedPlan = CompingCompositionPlan(rawVideoURLs: plan.rawVideoURLs, instrumentalURL: plan.instrumentalURL,
                     segments: plan.segments, validTakes: plan.validTakes, endTime: plan.endTime,
                     crossfadeDuration: plan.crossfadeDuration, instrumentalFadeOut: plan.instrumentalFadeOut,
-                    vocalGain: vocals, instrumentalGain: music)
+                    vocalGain: exportVocals, instrumentalGain: exportMusic)
                 onExported(mixed, savedPlan)
             } else {
                 try await videoLibrary.saveVideo(at: url)
