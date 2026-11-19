@@ -5,6 +5,7 @@
 //  Runs the export and the Save to Photos action for ExportPreviewView. Owner: Zildjian Vito (ZV-13).
 //
 
+import AVFoundation
 import CoreGraphics
 import Foundation
 import Observation
@@ -36,6 +37,24 @@ final class CompingViewModel {
         let needsRetake: Bool
     }
 
+    private var editable: CompingCompositionBuilder.Output?
+    var vocals: Float
+    var music: Float
+
+    func prepareMixer() async throws -> AVPlayerItem {
+        if editable == nil { editable = try await CompingCompositionBuilder().build(plan) }
+        guard let editable else { throw CompingError.exportUnavailable }
+        let item = AVPlayerItem(asset: editable.composition)
+        item.videoComposition = editable.videoComposition
+        item.audioMix = editable.makeMix(vocals, music)
+        item.forwardPlaybackEndTime = CMTime(seconds: plan.endTime, preferredTimescale: 48000)
+        return item
+    }
+
+    func updateMix(on item: AVPlayerItem?) {
+        item?.audioMix = editable?.makeMix(vocals, music)
+    }
+
     let plan: CompingCompositionPlan
     /// "Artist - Title" of the imported song, when known.
     let songName: String?
@@ -53,7 +72,7 @@ final class CompingViewModel {
 
     private let useCase: AutoCompingVideoUseCase
     private let videoLibrary: any VideoLibrarySaving
-    private let onExported: (URL) -> Void
+    private let onExported: (URL, CompingCompositionPlan) -> Void
     /// The cover was saved to Photos (the user's way of finishing it).
     private let onSavedToPhotos: () -> Void
     private let thumbnailProvider: any ClipThumbnailProviding
@@ -66,8 +85,10 @@ final class CompingViewModel {
          videoLibrary: any VideoLibrarySaving,
          thumbnailProvider: any ClipThumbnailProviding = AVClipThumbnailProvider(),
          passThreshold: Float = AppConfiguration().passThreshold,
-         onExported: @escaping (URL) -> Void = { _ in },
+         onExported: @escaping (URL, CompingCompositionPlan) -> Void = { _, _ in },
          onSavedToPhotos: @escaping () -> Void = {}) {
+        vocals = plan.vocalGain
+        music = plan.instrumentalGain
         self.plan = plan
         self.songName = songName
         self.useCase = useCase
@@ -166,7 +187,7 @@ final class CompingViewModel {
                     self.exportState = .exporting(progress: progress)
                 }
             }
-            if FileManager.default.fileExists(atPath: url.path) { onExported(url) }
+            if FileManager.default.fileExists(atPath: url.path) { onExported(url, plan) }
             exportState = .finished(url)
             await loadThumbnails(from: url)
         } catch {
@@ -194,7 +215,20 @@ final class CompingViewModel {
         guard let url = exportedURL, saveState != .saving else { return }
         saveState = .saving
         do {
-            try await videoLibrary.saveVideo(at: url)
+            if var output = editable {
+                let mixed = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
+                defer { try? FileManager.default.removeItem(at: mixed) }
+                output.audioMix = output.makeMix(vocals, music)
+                try await VideoCompositionRepositoryImpl().export(output, plan: plan, to: mixed) { _ in }
+                try await videoLibrary.saveVideo(at: mixed)
+                let savedPlan = CompingCompositionPlan(rawVideoURLs: plan.rawVideoURLs, instrumentalURL: plan.instrumentalURL,
+                    segments: plan.segments, validTakes: plan.validTakes, endTime: plan.endTime,
+                    crossfadeDuration: plan.crossfadeDuration, instrumentalFadeOut: plan.instrumentalFadeOut,
+                    vocalGain: vocals, instrumentalGain: music)
+                onExported(mixed, savedPlan)
+            } else {
+                try await videoLibrary.saveVideo(at: url)
+            }
             saveState = .saved
             onSavedToPhotos()
         } catch VideoLibraryError.accessDenied {

@@ -35,7 +35,8 @@ nonisolated struct CompingCompositionBuilder {
     struct Output {
         let preparedTracks: [PreparedMixTrack]
         let composition: AVMutableComposition
-        let audioMix: AVMutableAudioMix
+        var audioMix: AVMutableAudioMix
+        let makeMix: (Float, Float) -> AVMutableAudioMix
         let videoComposition: AVMutableVideoComposition
     }
 
@@ -124,41 +125,48 @@ nonisolated struct CompingCompositionBuilder {
         let levels = prepared.map(\.level).filter { $0 > 0 }.sorted()
         let reference = levels.isEmpty ? 0 : levels[levels.count / 2]
         let corrections = prepared.map { $0.level > 0 ? min(4, max(0.25, reference / $0.level)) : 1 }
-        let vocalParameters = vocalTracks.map { track in
-            let parameters = AVMutableAudioMixInputParameters(track: track)
-            parameters.setVolume(0, at: .zero)
-            return parameters
-        }
-
-        for (position, take) in plan.validTakes.enumerated() {
-            let segment = plan.segments[take.segmentIndex]
-            let gain = min(plan.vocalGain * corrections[position], 0.97 / max(0.001, prepared[position].peak)) / PreparedMixTrack.reserve
-            // Crossfade window is centered on each boundary.
-            let parameters = vocalParameters[position % 2]
-            if position == 0 {
-                parameters.setVolume(gain, at: .zero)
-            } else {
-                fade(parameters, in: true, gain: gain, from: segment.audioStartTime - halfFade, duration: handle)
+        let musicDuration = try await instrumentalAsset.load(.duration)
+        let musicRange = CMTimeRange(start: .zero, duration: min(time(plan.endTime), musicDuration))
+        let music = try await PreparedMixTrack(asset: instrumentalAsset, track: instrumental, range: musicRange, core: musicRange)
+        try instrumentalTrack.insertTimeRange(musicRange, of: music.track, at: .zero)
+        let vocalPeak = zip(prepared, corrections).map { $0.peak * $1 }.max() ?? 0
+        func makeMix(_ vocals: Float, _ backing: Float) -> AVMutableAudioMix {
+            // Two overlapping equal-power ramps sum to at most sqrt(2).
+            let peak = vocalPeak * vocals * (lastIndex > 0 ? sqrt(2) : 1) + music.peak * backing
+            let headroom = min(1, 0.97 / max(peak, 0.001)) / PreparedMixTrack.reserve
+            let vocalParameters = vocalTracks.map { track in
+                let parameters = AVMutableAudioMixInputParameters(track: track)
+                parameters.setVolume(0, at: .zero)
+                return parameters
             }
-            if position < lastIndex {
-                fade(parameters, in: false, gain: gain, from: segment.audioEndTime - halfFade, duration: handle)
+
+            for (position, take) in plan.validTakes.enumerated() {
+                let segment = plan.segments[take.segmentIndex]
+                let gain = vocals * corrections[position] * headroom
+                // Crossfade window is centered on each boundary.
+                let parameters = vocalParameters[position % 2]
+                if position == 0 {
+                    parameters.setVolume(gain, at: .zero)
+                } else {
+                    fade(parameters, in: true, gain: gain, from: segment.audioStartTime - halfFade, duration: handle)
+                }
+                if position < lastIndex {
+                    fade(parameters, in: false, gain: gain, from: segment.audioEndTime - halfFade, duration: handle)
+                }
             }
-        }
 
-        let instrumentalDuration = try await instrumentalAsset.load(.duration).seconds
-        try instrumentalTrack.insertTimeRange(
-            CMTimeRange(start: .zero, duration: time(min(plan.endTime, instrumentalDuration))),
-            of: instrumental, at: .zero)
-        let instrumentalParameters = AVMutableAudioMixInputParameters(track: instrumentalTrack)
-        instrumentalParameters.setVolume(plan.instrumentalGain, at: .zero)
-        if plan.instrumentalFadeOut > 0 {
-            let fadeStart = max(0, plan.endTime - plan.instrumentalFadeOut)
-            instrumentalParameters.setVolumeRamp(fromStartVolume: plan.instrumentalGain, toEndVolume: 0,
-                                                 timeRange: CMTimeRange(start: time(fadeStart), end: time(plan.endTime)))
-        }
+            let instrumentalParameters = AVMutableAudioMixInputParameters(track: instrumentalTrack)
+            instrumentalParameters.setVolume(backing * headroom, at: .zero)
+            if plan.instrumentalFadeOut > 0 {
+                let fadeStart = max(0, plan.endTime - plan.instrumentalFadeOut)
+                instrumentalParameters.setVolumeRamp(fromStartVolume: backing * headroom, toEndVolume: 0,
+                                                     timeRange: CMTimeRange(start: time(fadeStart), end: time(plan.endTime)))
+            }
 
-        let audioMix = AVMutableAudioMix()
-        audioMix.inputParameters = vocalParameters + [instrumentalParameters]
+            let audioMix = AVMutableAudioMix()
+            audioMix.inputParameters = vocalParameters + [instrumentalParameters]
+            return audioMix
+        }
         let rendered = CGRect(origin: .zero, size: naturalSize).applying(transform)
         let renderSize = CGSize(width: abs(rendered.width), height: abs(rendered.height))
         let alignments = await aligner.corrections(plan: plan, renderSize: renderSize)
@@ -172,7 +180,7 @@ nonisolated struct CompingCompositionBuilder {
             videoComposition.colorTransferFunction = extensions[kCVImageBufferTransferFunctionKey as String] as? String
             videoComposition.colorYCbCrMatrix = extensions[kCVImageBufferYCbCrMatrixKey as String] as? String
         }
-        return Output(preparedTracks: prepared, composition: composition, audioMix: audioMix, videoComposition: videoComposition)
+        return Output(preparedTracks: prepared + [music], composition: composition, audioMix: makeMix(plan.vocalGain, plan.instrumentalGain), makeMix: makeMix, videoComposition: videoComposition)
     }
 
     /// One take at a time, and a dissolve (outgoing take fading out over the incoming one) centred on

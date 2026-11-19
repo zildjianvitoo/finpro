@@ -159,7 +159,7 @@ struct RootView: View {
             useCase: AutoCompingVideoUseCase(takeLog: container.takeLog, videoComposition: container.videoComposition),
             videoLibrary: container.videoLibrary,
             passThreshold: container.configuration.passThreshold,
-            onExported: { flow.coverExported($0, plan: plan) },
+            onExported: { flow.coverExported($0, plan: $1) },
             onSavedToPhotos: flow.coverSavedToPhotos)
     }
 }

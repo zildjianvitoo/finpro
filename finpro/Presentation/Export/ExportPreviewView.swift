@@ -20,6 +20,9 @@ struct ExportPreviewView: View {
 
     @State private var viewModel: CompingViewModel
     @State private var player: CoverPlayerController?
+    @State private var showsSound = false
+    @State private var mixerReady = false
+    @State private var mixerError: String?
     @State private var page = Page.preview
     @State private var confirmsLeave = false
     /// Shown progress of the save to Photos, which reports none: it runs ahead to `saveRunUp`
@@ -205,6 +208,15 @@ struct ExportPreviewView: View {
 
                 Spacer()
 
+                Button {
+                    showsSound.toggle()
+                } label: {
+                    Image(systemName: "speaker.wave.2")
+                }
+                .glassCircleButtonStyle()
+                .accessibilityLabel("Sound")
+                .disabled(!viewModel.hasPlayableFile)
+
                 Button("Export", action: startExport)
                     .buttonStyle(ExportButtonStyle())
                     .disabled(!viewModel.hasPlayableFile)
@@ -216,8 +228,40 @@ struct ExportPreviewView: View {
                 .padding(.vertical, 16)
                 .frame(maxHeight: .infinity)
 
-            clipsSheet
+            if showsSound {
+                VStack(alignment: .leading, spacing: 12) {
+                    if !mixerReady { ProgressView() }
+                    volumeSlider("Vocals", value: $viewModel.vocals, icon: "speaker.wave.2.fill")
+                    Divider()
+                    volumeSlider("Music", value: $viewModel.music, icon: "music.note")
+                }
+                .padding(24)
+                .background(Color.secondaryButton)
+                .disabled(!mixerReady)
+                .task {
+                    guard !mixerReady else { return }
+                    do {
+                        let item = try await viewModel.prepareMixer()
+                        try Task.checkCancellation()
+                        let position = player?.currentTime ?? 0
+                        let playing = player?.isPlaying == true
+                        player?.pause()
+                        let replacement = CoverPlayerController(item: item)
+                        player = replacement
+                        replacement.seek(to: position)
+                        if playing { replacement.play() }
+                        mixerReady = true
+                    } catch {
+                        guard !Task.isCancelled else { return }
+                        showsSound = false
+                        mixerError = error.localizedDescription
+                    }
+                }
+            } else { clipsSheet }
         }
+        .alert("Sound unavailable", isPresented: Binding(get: { mixerError != nil }, set: { if !$0 { mixerError = nil } })) {
+            Button("OK") { mixerError = nil }
+        } message: { Text(mixerError ?? "") }
         .confirmationDialog("Leave recording?", isPresented: $confirmsLeave, titleVisibility: .visible) {
             // Sing on from the first segment not in the cover; a complete cover records again.
             Button("Keep Recording", action: viewModel.canContinueRecording ? onContinue : onRetake)
@@ -532,6 +576,21 @@ struct ExportPreviewView: View {
             }
         }
         .overlay(Color.white.opacity(0.3))
+    }
+
+    private func volumeSlider(_ title: String, value: Binding<Float>, icon: String) -> some View {
+        VStack(alignment: .leading) {
+            Text(title).font(.appSubheadline)
+            HStack {
+                Image(systemName: "speaker.slash.fill")
+                Slider(value: value, in: 0...2)
+                    .tint(.blue)
+                    .accessibilityLabel(title)
+                    .accessibilityValue(Double(value.wrappedValue).formatted(.percent))
+                    .onChange(of: value.wrappedValue) { viewModel.updateMix(on: player?.player.currentItem) }
+                Image(systemName: icon)
+            }
+        }
     }
 
     private func startExport() {

@@ -63,7 +63,7 @@ nonisolated final class VideoCompositionRepositoryImpl: VideoCompositionReposito
     }
 
     /// One export attempt with a new session (a session that failed cannot be restarted).
-    private func export(_ output: CompingCompositionBuilder.Output, plan: CompingCompositionPlan, to url: URL,
+    func export(_ output: CompingCompositionBuilder.Output, plan: CompingCompositionPlan, to url: URL,
                         progress: @escaping @Sendable (Double) -> Void) async throws {
         guard let session = AVAssetExportSession(asset: output.composition, presetName: presetName) else {
             throw CompingError.exportUnavailable
