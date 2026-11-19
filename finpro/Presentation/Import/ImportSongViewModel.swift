@@ -407,15 +407,7 @@ final class ImportSongViewModel {
     /// The lines sung in `trim`, shifted so the part starts at 0 like the prepared song.
     private func lyricsOnPreparedTimeline(_ trim: ClosedRange<TimeInterval>) -> [LyricLine] {
         guard case .found(let song) = lyrics else { return [] }
-        let offset = trim.lowerBound
-        let length = trim.upperBound - trim.lowerBound
-        return song.lines
-            .filter { ($0.words.last?.end ?? $0.end) > trim.lowerBound && $0.start < trim.upperBound }
-            .map { line in
-                LyricLine(id: line.id, text: line.text,
-                          start: line.start - offset, end: min(length, line.end - offset),
-                          words: line.words.map { LyricWord(text: $0.text, start: $0.start - offset, end: $0.end - offset) })
-            }
+        return song.lines.compactMap { $0.clipped(to: trim) }
     }
 
     /// Asks Shazam for the song's name. A match becomes the lyrics search terms and, once the song
