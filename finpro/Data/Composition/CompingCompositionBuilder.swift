@@ -36,6 +36,7 @@ nonisolated struct CompingCompositionBuilder {
         let preparedTracks: [PreparedMixTrack]
         var composition: AVMutableComposition
         var audioMix: AVMutableAudioMix
+        var previewGainScale: (Float, Float) -> Float = { _, _ in 1 }
         let makeMix: (Float, Float) -> AVMutableAudioMix
         let videoComposition: AVMutableVideoComposition
         let vocalTrackIDs: Set<CMPersistentTrackID>
@@ -154,10 +155,12 @@ nonisolated struct CompingCompositionBuilder {
         // Two overlapping equal-power ramps sum to at most sqrt(2).
         let vocalPeakBound = vocalPeak * (lastIndex > 0 ? sqrt(2) : 1)
         let defaultPeak = vocalPeakBound * plan.vocalGain + music.peak * plan.instrumentalGain
-        func makeMix(_ vocals: Float, _ backing: Float) -> AVMutableAudioMix {
-            // Lowering one slider must not increase the other track's level.
+        func scale(_ vocals: Float, _ backing: Float) -> Float {
             let peak = max(defaultPeak, vocalPeakBound * vocals + music.peak * backing)
-            let headroom = min(1, 0.97 / max(peak, 0.001)) / PreparedMixTrack.reserve
+            return min(1, 0.97 / max(peak, 0.001))
+        }
+        func makeMix(_ vocals: Float, _ backing: Float) -> AVMutableAudioMix {
+            let headroom = scale(vocals, backing) / PreparedMixTrack.reserve
             let vocalParameters = vocalTracks.map { track in
                 let parameters = AVMutableAudioMixInputParameters(track: track)
                 parameters.setVolume(0, at: .zero)
@@ -204,7 +207,7 @@ nonisolated struct CompingCompositionBuilder {
             videoComposition.colorTransferFunction = extensions[kCVImageBufferTransferFunctionKey as String] as? String
             videoComposition.colorYCbCrMatrix = extensions[kCVImageBufferYCbCrMatrixKey as String] as? String
         }
-        return Output(preparedTracks: prepared + [music], composition: composition, audioMix: makeMix(plan.vocalGain, plan.instrumentalGain), makeMix: makeMix, videoComposition: videoComposition,
+        return Output(preparedTracks: prepared + [music], composition: composition, audioMix: makeMix(plan.vocalGain, plan.instrumentalGain), previewGainScale: { scale($0, $1) / scale(1, 1) }, makeMix: makeMix, videoComposition: videoComposition,
                       vocalTrackIDs: Set(vocalTracks.map(\.trackID)), musicTrackID: instrumentalTrack.trackID)
     }
 

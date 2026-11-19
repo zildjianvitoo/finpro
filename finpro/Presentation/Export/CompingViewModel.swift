@@ -47,25 +47,37 @@ final class CompingViewModel {
         if editable == nil { editable = try await CompingCompositionBuilder().build(plan) }
     }
 
+    private var previewGains: [(isVocal: Bool, gain: PreviewTrackGain)] = []
+
     func makeMixerItem() throws -> AVPlayerItem {
         guard let editable else { throw CompingError.exportUnavailable }
-        let output = try editable.applyingVolumes(vocals: vocals, music: music)
-        let item = AVPlayerItem(asset: output.composition)
-        item.videoComposition = output.videoComposition
-        item.audioMix = output.audioMix
+        let item = AVPlayerItem(asset: editable.composition)
+        let mix = editable.makeMix(1, 1)
+        let scale = editable.previewGainScale(vocals, music)
+        var gains: [(Bool, PreviewTrackGain)] = []
+        mix.inputParameters = try mix.inputParameters.map { parameter in
+            guard let input = parameter.mutableCopy() as? AVMutableAudioMixInputParameters else {
+                throw CompingError.exportUnavailable
+            }
+            let isVocal = editable.vocalTrackIDs.contains(input.trackID)
+            let gain = PreviewTrackGain((isVocal ? vocals : music) * scale)
+            input.audioTapProcessor = try gain.makeTap()
+            gains.append((isVocal, gain))
+            return input
+        }
+        previewGains = gains
+        item.videoComposition = editable.videoComposition
+        item.audioMix = mix
         item.forwardPlaybackEndTime = CMTime(seconds: plan.endTime, preferredTimescale: 48000)
         return item
     }
 
-    func updateMix(on item: AVPlayerItem?) {
-        guard let item, let editable else { return }
-        let mix = editable.makeMix(vocals, music)
-        // The current asset may omit a muted source until its slider is raised again.
-        mix.inputParameters = mix.inputParameters.filter {
-            (vocals > 0 || !editable.vocalTrackIDs.contains($0.trackID)) &&
-            (music > 0 || $0.trackID != editable.musicTrackID)
+    func updatePreviewVolume() {
+        guard let editable else { return }
+        let scale = editable.previewGainScale(vocals, music)
+        for (isVocal, gain) in previewGains {
+            gain.set((isVocal ? vocals : music) * scale)
         }
-        item.audioMix = mix
     }
 
     let plan: CompingCompositionPlan

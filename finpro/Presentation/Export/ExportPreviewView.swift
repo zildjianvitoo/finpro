@@ -23,12 +23,6 @@ struct ExportPreviewView: View {
     @State private var player: CoverPlayerController?
     @State private var showsSound = false
     @State private var mixerReady = false
-    private struct MixerTracks: Equatable {
-        let vocals: Bool
-        let music: Bool
-    }
-
-    @State private var playingMixerTracks: MixerTracks?
     @State private var mixerError: String?
     @State private var page = Page.preview
     @State private var confirmsLeave = false
@@ -250,6 +244,13 @@ struct ExportPreviewView: View {
                     do {
                         try await viewModel.prepareMixer()
                         try Task.checkCancellation()
+                        let replacement = CoverPlayerController(item: try viewModel.makeMixerItem())
+                        let position = player?.player.currentTime().seconds ?? 0
+                        let wasPlaying = player?.isPlaying == true
+                        player?.pause()
+                        replacement.seek(to: position.isFinite ? position : 0)
+                        player = replacement
+                        if wasPlaying { replacement.play() }
                         mixerReady = true
                     } catch {
                         guard !Task.isCancelled else { return }
@@ -585,7 +586,7 @@ struct ExportPreviewView: View {
                 Image(systemName: "speaker.slash.fill")
                 Slider(value: Binding(get: { value.wrappedValue }, set: {
                     value.wrappedValue = $0
-                    updatePreviewVolume()
+                    viewModel.updatePreviewVolume()
                 }), in: 0...2)
                     .tint(.blue)
                     .accessibilityLabel(title)
@@ -593,38 +594,6 @@ struct ExportPreviewView: View {
                 Image(systemName: icon)
             }
         }
-    }
-
-    private func updatePreviewVolume() {
-        let requestedTracks = viewModel.hasVolumeEdits
-            ? MixerTracks(vocals: viewModel.vocals > 0, music: viewModel.music > 0)
-            : nil
-        if requestedTracks == playingMixerTracks {
-            if requestedTracks != nil { viewModel.updateMix(on: player?.player.currentItem) }
-            return
-        }
-
-        let replacement: CoverPlayerController
-        do {
-            if requestedTracks != nil {
-                replacement = CoverPlayerController(item: try viewModel.makeMixerItem())
-            } else {
-                guard let url = viewModel.exportedURL else { return }
-                replacement = CoverPlayerController(url: url)
-            }
-        } catch {
-            player?.pause()
-            mixerError = error.localizedDescription
-            return
-        }
-
-        let position = player?.currentTime ?? 0
-        let wasPlaying = player?.isPlaying == true
-        player?.pause()
-        player = replacement
-        playingMixerTracks = requestedTracks
-        replacement.seek(to: position)
-        if wasPlaying { replacement.play() }
     }
 
     private func startExport() {
