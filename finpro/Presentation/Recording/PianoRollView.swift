@@ -207,9 +207,7 @@ struct PianoRollView: View {
 
     private func draw(in context: inout GraphicsContext, size: CGSize, now: TimeInterval?) {
         let rowsTop = Self.topInset
-        let wordFont = Font.system(size: 8 * min(contentZoom, 1.5), weight: .medium)
-        let wordHeight = wordLabels.isEmpty ? 0 : context.resolve(Text("Ag").font(wordFont)).measure(in: size).height + 2
-        let rowsHeight = max(Self.rowPitch, size.height - Self.topInset - max(Self.bottomInset, wordHeight + noteHeight / 2) - lyricsHeight)
+        let rowsHeight = max(Self.rowPitch, size.height - Self.topInset - Self.bottomInset - lyricsHeight)
 
         let laneWidth = size.width - labelWidth - trailInset
         let playheadX = labelWidth + laneWidth * Self.playheadPosition
@@ -225,21 +223,8 @@ struct PianoRollView: View {
         let (center, span) = viewport.update(center: alignedCenter, span: target.span)
         let pitch = rowsHeight / span
         let lowLine = center - span / 2
-        let windowStart = current - Self.visibleDuration * Self.playheadPosition
-        let windowEnd = windowStart + Self.visibleDuration
-        let visible = notes.filter { $0.end > windowStart && $0.start < windowEnd }.sorted { $0.start < $1.start }
-        // Reserve space on the time axis for each complete word. The playhead and
-        // both ends of every note use this same mapping, including while seeking.
-        let pointsPerSecond = laneWidth / CGFloat(Self.visibleDuration)
-        var spacing = LyricTimelineSpacing()
-        for (note, next) in zip(visible, visible.dropFirst()) {
-            guard let word = wordLabels[note.id] else { continue }
-            let width = context.resolve(Text(word).font(wordFont)).measure(in: CGSize(width: CGFloat.greatestFiniteMagnitude, height: size.height)).width
-            spacing.reserve(from: note.start, to: next.start, width: max(noteHeight, width + 5), pointsPerSecond: pointsPerSecond)
-        }
-        let playheadOffset = spacing.extra(at: current)
         func x(_ time: TimeInterval) -> CGFloat {
-            playheadX + CGFloat(time - current) * pointsPerSecond + spacing.extra(at: time) - playheadOffset
+            playheadX + CGFloat((time - current) / Self.visibleDuration) * laneWidth
         }
         func y(_ midi: Double) -> CGFloat {
             rowsTop + rowsHeight - CGFloat(Self.linePosition(of: midi) - lowLine) * pitch
@@ -264,10 +249,12 @@ struct PianoRollView: View {
         // Notes above or below the lines in view stay hidden until the lines glide to them.
         let noteMargin = noteHeight / 2
         context.clip(to: Path(CGRect(x: labelWidth, y: rowsTop - noteMargin, width: laneWidth + trailInset,
-                                     height: rowsHeight + noteMargin * 2 + wordHeight)))
+                                     height: rowsHeight + noteMargin * 2)))
 
         // Target notes.
-        for note in visible {
+        let windowStart = current - Self.visibleDuration * Self.playheadPosition
+        let windowEnd = windowStart + Self.visibleDuration
+        for note in notes where note.end > windowStart && note.start < windowEnd {
             let height = noteHeight
             let rect = CGRect(x: x(note.start), y: y(Double(note.midi)) - height / 2,
                               width: max(height, x(note.end) - x(note.start) - 2), height: height)
@@ -276,7 +263,7 @@ struct PianoRollView: View {
             context.fill(shape, with: .color(isPrevious ? Palette.previousNote : Palette.note))
             if !isPrevious { fillSung(note, shape: shape, upTo: current, in: &context, x: x) }
             if let word = wordLabels[note.id] {
-                context.draw(Text(word).font(wordFont).foregroundStyle(Palette.word),
+                context.draw(Text(word).font(.system(size: 8 * min(contentZoom, 1.5), weight: .medium)).foregroundStyle(Palette.word),
                              at: CGPoint(x: rect.minX + 2, y: rect.maxY + 2), anchor: .topLeading)
             }
         }
