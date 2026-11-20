@@ -95,6 +95,10 @@ final class CompingViewModel {
     /// Notes of the cover's takes sung well and missed (`TakeAttemptLog.missedNoteIDs`).
     let hitNoteIDs: Set<UUID>
     let missedNoteIDs: Set<UUID>
+    /// Synced lyrics of the song, shown under the pitch guide (empty when none were found).
+    let lyrics: [LyricLine]
+    /// The word sung on each guide note, drawn under the note.
+    let wordLabels: [UUID: String]
     /// "Artist - Title" of the imported song, when known.
     let songName: String?
     private(set) var exportState: ExportState = .idle
@@ -126,10 +130,13 @@ final class CompingViewModel {
          passThreshold: Float = AppConfiguration().passThreshold,
          onExported: @escaping (URL, CompingCompositionPlan) -> Void = { _, _ in },
          onSavedToPhotos: @escaping () -> Void = {},
-         transposition: TranspositionPlan? = nil) {
+         transposition: TranspositionPlan? = nil,
+         lyrics: [LyricLine] = []) {
         guideNotes = plan.segments.flatMap(\.targetNotes).map {
             PianoRollView.Note(id: $0.id, midi: transposition?.transposed($0) ?? $0.midiNote, start: $0.startTime, end: $0.endTime)
         }
+        self.lyrics = lyrics
+        wordLabels = GuideWordLabels.make(words: lyrics.flatMap(\.words), notes: guideNotes)
         var hit = Set<UUID>(), missed = Set<UUID>()
         for take in plan.validTakes where plan.segments.indices.contains(take.segmentIndex) {
             let missedHere = Set(take.missedNoteIDs)

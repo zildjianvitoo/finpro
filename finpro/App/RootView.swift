@@ -161,7 +161,8 @@ struct RootView: View {
             passThreshold: container.configuration.passThreshold,
             onExported: { flow.coverExported($0, plan: $1) },
             onSavedToPhotos: flow.coverSavedToPhotos,
-            transposition: flow.preparedSong?.transposition)
+            transposition: flow.preparedSong?.transposition,
+            lyrics: flow.recordingLyrics)
     }
 }
 

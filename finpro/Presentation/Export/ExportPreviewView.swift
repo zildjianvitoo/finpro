@@ -65,7 +65,8 @@ struct ExportPreviewView: View {
     private let videoCornerRadius: CGFloat = 12
     private let seekBarInset: CGFloat = 15
     private let guideInset: CGFloat = 8
-    private let guideRows = 4
+    /// At least 6 lines, as in the recording guide (more when the notes on screen spread wider).
+    private let guideRows = RecordingDisplaySettings.guideRows
     private let seekBarBottom: CGFloat = 20
     private let timelineHeight: CGFloat = 2
     private let scrubbingLineHeight: CGFloat = 4
@@ -348,15 +349,26 @@ struct ExportPreviewView: View {
         let shownTime = player.currentTime
         let notes = viewModel.guideNotes
         let focus = notes.filter { $0.end > shownTime }.prefix(PianoRollView.upcomingNoteCount).map(\.midi)
+        let lyricsHeight = viewModel.lyrics.isEmpty ? 0 : RecordingDisplaySettings.guideLyricsHeight
+        let songTime: () -> TimeInterval? = { player.isPlaying ? player.player.currentTime().seconds : shownTime }
         return PianoRollView(notes: notes,
                              trail: [],
                              noteStyle: .review(hit: viewModel.hitNoteIDs, missed: viewModel.missedNoteIDs),
                              focusMIDI: Array(focus),
-                             songTime: { player.isPlaying ? player.player.currentTime().seconds : shownTime },
+                             songTime: songTime,
                              isPaused: !player.isPlaying,
                              showsVoiceDot: false,
+                             wordLabels: viewModel.wordLabels,
+                             lyricsHeight: lyricsHeight,
                              fixedRows: Double(guideRows))
-            .frame(height: PianoRollView.height(rows: CGFloat(guideRows)))
+            .overlay(alignment: .bottom) {
+                if !viewModel.lyrics.isEmpty {
+                    RecordingGuideLyricsView(lines: viewModel.lyrics, songTime: songTime)
+                        .frame(height: lyricsHeight)
+                        .padding(.bottom, PianoRollView.bottomInset / 2)
+                }
+            }
+            .frame(height: PianoRollView.height(rows: CGFloat(guideRows), lyricsHeight: lyricsHeight))
             .allowsHitTesting(false)
             .accessibilityLabel("Pitch guide: green notes were sung well, red notes were missed")
     }
