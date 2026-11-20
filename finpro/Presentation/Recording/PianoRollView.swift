@@ -186,6 +186,44 @@ struct PianoRollView: View {
                      with: .color(Palette.passedNote))
     }
 
+    /// The voice's recent pitch as a lime comet tail behind the dot: thick and bright at the dot,
+    /// thinner and fading to the left. Breaks where the singer paused. Samples within the green
+    /// tolerance of the note sung then sit on that note, like the dot.
+    private func drawTrail(to dot: CGPoint?, current: TimeInterval, windowStart: TimeInterval, width: CGFloat,
+                           in context: inout GraphicsContext, x: (TimeInterval) -> CGFloat, y: (Double) -> CGFloat) {
+        let length = Self.visibleDuration * Self.playheadPosition
+        let gap = 0.15
+        var points: [(time: TimeInterval, point: CGPoint)?] = []
+        var lastTime: TimeInterval?
+        for sample in trail where sample.songTime >= windowStart && sample.songTime <= current {
+            guard let midi = sample.midi else { points.append(nil); lastTime = nil; continue }
+            if let lastTime, sample.songTime - lastTime > gap { points.append(nil) }
+            var shown = Double(midi)
+            if let note = notes.first(where: { $0.start <= sample.songTime && sample.songTime < $0.end }),
+               abs(shown - Double(note.midi)) * 100 <= Double(NoteTally.toleranceCents) {
+                shown = Double(note.midi)
+            }
+            points.append((sample.songTime, CGPoint(x: x(sample.songTime), y: y(shown))))
+            lastTime = sample.songTime
+        }
+        // Joined to the dot while the voice is heard, so the tail ends where the dot is.
+        if let dot, let lastTime, current - lastTime < gap * 3 { points.append((current, dot)) }
+
+        var previous: (time: TimeInterval, point: CGPoint)?
+        for entry in points {
+            guard let entry else { previous = nil; continue }
+            if let previous {
+                let age = max(0, min(1, (current - entry.time) / length))
+                var segment = Path()
+                segment.move(to: previous.point)
+                segment.addLine(to: entry.point)
+                context.stroke(segment, with: .color(Palette.dot.opacity(0.9 * (1 - age))),
+                               style: StrokeStyle(lineWidth: max(1, width * (1 - 0.7 * age)), lineCap: .round, lineJoin: .round))
+            }
+            previous = entry
+        }
+    }
+
     /// While the voice is on the note: a pulsing lime glow behind the dot, a ring spreading out
     /// and stars bursting away, a reward without judging the note itself.
     private func sparkle(around center: CGPoint, radius: CGFloat, at time: TimeInterval, in context: inout GraphicsContext) {
@@ -326,9 +364,9 @@ struct PianoRollView: View {
             }
         }
 
-        // The voice is shown only as a dot at the playhead, no trail line (design review). The
-        // pitch pipeline lags the song clock by ~0.1 s, so a voice heard within this long still
-        // counts as singing now.
+        // The voice is a dot at the playhead with a fading trail behind it (trail back on
+        // 2026-11-20, user request). The pitch pipeline lags the song clock by ~0.1 s, so a voice
+        // heard within this long still counts as singing now.
         let dotHold = 0.3
 
         // Playhead, with a dot where the voice is now.
@@ -367,6 +405,8 @@ struct PianoRollView: View {
             let dotY = min(max(y(midi), rowsTop + radius), rowsTop + rowsHeight - radius)
             // On the playhead: the dot is "now"; drawing it at the sample's time made it shake sideways.
             let dot = CGRect(x: playheadX - radius, y: dotY - radius, width: dotSize, height: dotSize)
+            drawTrail(to: singing ? CGPoint(x: playheadX, y: dotY) : nil, current: current, windowStart: windowStart,
+                      width: dotSize * 0.5, in: &context, x: x, y: { min(max(y($0), rowsTop), rowsTop + rowsHeight) })
             if onPitch { sparkle(around: CGPoint(x: playheadX, y: dotY), radius: radius, at: current, in: &context) }
             context.fill(Path(ellipseIn: dot), with: .color(Palette.dot.opacity(singing ? 1 : Self.restingDotOpacity)))
         }
