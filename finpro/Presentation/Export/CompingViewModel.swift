@@ -63,12 +63,13 @@ final class CompingViewModel {
         let mix = editable.makeMix(1, 1)
         let scale = editable.previewGainScale(vocals, music)
         var gains: [(Bool, PreviewTrackGain)] = []
+        // Fresh inputs without volume ramps: the taps apply the crossfades and fade-out themselves.
         mix.inputParameters = try mix.inputParameters.map { parameter in
-            guard let input = parameter.mutableCopy() as? AVMutableAudioMixInputParameters else {
-                throw CompingError.exportUnavailable
-            }
+            let input = AVMutableAudioMixInputParameters()
+            input.trackID = parameter.trackID
+            guard let envelope = editable.previewEnvelopes[input.trackID] else { throw CompingError.exportUnavailable }
             let isVocal = editable.vocalTrackIDs.contains(input.trackID)
-            let gain = PreviewTrackGain((isVocal ? vocals : music) * scale)
+            let gain = PreviewTrackGain((isVocal ? vocals : music) * scale, envelope: envelope)
             input.audioTapProcessor = try gain.makeTap()
             gains.append((isVocal, gain))
             return input

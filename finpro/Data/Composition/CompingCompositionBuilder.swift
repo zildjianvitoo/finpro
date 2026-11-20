@@ -36,7 +36,10 @@ nonisolated struct CompingCompositionBuilder {
         let preparedTracks: [PreparedMixTrack]
         var composition: AVMutableComposition
         var audioMix: AVMutableAudioMix
+        /// Overall level for the given slider levels, so the mix never clips.
         var previewGainScale: (Float, Float) -> Float = { _, _ in 1 }
+        /// The preview's volume curves per audio track, at slider level 1 and without `previewGainScale`.
+        var previewEnvelopes: [CMPersistentTrackID: PreviewEnvelope] = [:]
         let makeMix: (Float, Float) -> AVMutableAudioMix
         let videoComposition: AVMutableVideoComposition
         let vocalTrackIDs: Set<CMPersistentTrackID>
@@ -186,7 +189,6 @@ nonisolated struct CompingCompositionBuilder {
             }
             return min(1, 0.97 / max(peak, 0.001))
         }
-        let unityScale = scale(1, 1)
         func makeMix(_ vocals: Float, _ backing: Float) -> AVMutableAudioMix {
             let headroom = scale(vocals, backing) / PreparedMixTrack.reserve
             let vocalParameters = vocalTracks.map { track in
@@ -222,6 +224,24 @@ nonisolated struct CompingCompositionBuilder {
             audioMix.inputParameters = vocalParameters + [instrumentalParameters]
             return audioMix
         }
+        var envelopes: [CMPersistentTrackID: PreviewEnvelope] = [:]
+        for (index, track) in vocalTracks.enumerated() {
+            let parts = plan.validTakes.enumerated().filter { $0.offset % 2 == index }.map { position, take in
+                let segment = plan.segments[take.segmentIndex]
+                return PreviewEnvelope.Part(gain: corrections[position] / PreparedMixTrack.reserve,
+                                            fadeInStart: position == 0 ? nil : segment.audioStartTime - halfFade,
+                                            fadeOutStart: position < lastIndex ? segment.audioEndTime - halfFade : nil)
+            }
+            envelopes[track.trackID] = PreviewEnvelope(parts: parts, crossfade: handle)
+        }
+        var musicCurve = PreviewEnvelope(parts: [.init(gain: 1 / PreparedMixTrack.reserve, fadeInStart: nil, fadeOutStart: nil)],
+                                            crossfade: handle)
+        if plan.instrumentalFadeOut > 0 {
+            musicCurve.fadeOutStart = max(0, plan.endTime - plan.instrumentalFadeOut)
+            musicCurve.fadeOutEnd = plan.endTime
+        }
+        envelopes[instrumentalTrack.trackID] = musicCurve
+
         let rendered = CGRect(origin: .zero, size: naturalSize).applying(transform)
         let renderSize = CGSize(width: abs(rendered.width), height: abs(rendered.height))
         let alignments = await aligner.corrections(plan: plan, renderSize: renderSize)
@@ -235,7 +255,7 @@ nonisolated struct CompingCompositionBuilder {
             videoComposition.colorTransferFunction = extensions[kCVImageBufferTransferFunctionKey as String] as? String
             videoComposition.colorYCbCrMatrix = extensions[kCVImageBufferYCbCrMatrixKey as String] as? String
         }
-        return Output(preparedTracks: prepared + [music], composition: composition, audioMix: makeMix(plan.vocalGain, plan.instrumentalGain), previewGainScale: { scale($0, $1) / unityScale }, makeMix: makeMix, videoComposition: videoComposition,
+        return Output(preparedTracks: prepared + [music], composition: composition, audioMix: makeMix(plan.vocalGain, plan.instrumentalGain), previewGainScale: { scale($0, $1) }, previewEnvelopes: envelopes, makeMix: makeMix, videoComposition: videoComposition,
                       vocalTrackIDs: Set(vocalTracks.map(\.trackID)), musicTrackID: instrumentalTrack.trackID)
     }
 
