@@ -222,6 +222,17 @@ struct ExportPreviewView: View {
                 }
                 .glassCircleButtonStyle()
                 .accessibilityLabel("Back")
+                // On the button, so iOS 26 grows the dialog out of it.
+                .confirmationDialog("Leave recording?", isPresented: $confirmsLeave, titleVisibility: .visible) {
+                    // Sing on from the first segment not in the cover; a complete cover records again.
+                    Button("Keep Recording", action: viewModel.canContinueRecording ? onContinue : onRetake)
+                    // The cover is already on Home (saved after each export): keep it as a draft, or remove it.
+                    Button("Save to Draft") { saveSoundThen(onSaveDraft) }
+                    // Not `.cancel`: iOS 26 hides that button here.
+                    Button("Discard", role: .destructive, action: onDiscard)
+                } message: {
+                    Text("You have an unfinished take. What would you like to do with it?")
+                }
 
                 Spacer()
 
@@ -286,16 +297,6 @@ struct ExportPreviewView: View {
         .alert("Sound unavailable", isPresented: Binding(get: { mixerError != nil }, set: { if !$0 { mixerError = nil } })) {
             Button("OK") { mixerError = nil }
         } message: { Text(mixerError ?? "") }
-        .confirmationDialog("Leave recording?", isPresented: $confirmsLeave, titleVisibility: .visible) {
-            // Sing on from the first segment not in the cover; a complete cover records again.
-            Button("Keep Recording", action: viewModel.canContinueRecording ? onContinue : onRetake)
-            // The cover is already on Home (saved after each export): keep it as a draft, or remove it.
-            Button("Save to Draft") { saveSoundThen(onSaveDraft) }
-            // Not `.cancel`: iOS 26 hides that button here.
-            Button("Discard", role: .destructive, action: onDiscard)
-        } message: {
-            Text("You have an unfinished take. What would you like to do with it?")
-        }
     }
 
     private var coverVideo: some View {
