@@ -65,6 +65,11 @@ struct RecordingView: View {
     /// Countdown: the screen dims, the number sits in a white circle (design).
     private let countdownDimOpacity = 0.4
     private let countdownCircleSize: CGFloat = 150
+    /// The pre-roll's small count shows its last `preRollCountFrom` seconds, refreshed this often.
+    private let preRollCountFrom = 3
+    private let preRollCountStep: TimeInterval = 0.1
+    private let preRollCountSize: CGFloat = 36
+    private let preRollInfoGap: CGFloat = 8
 
     init(viewModel: RecordingViewModel) {
         _viewModel = State(initialValue: viewModel)
@@ -281,8 +286,6 @@ struct RecordingView: View {
             }
 
             Spacer()
-            phaseInfo
-            Spacer()
 
             bluetoothWarning
 
@@ -315,6 +318,13 @@ struct RecordingView: View {
                     pitchGuide(zoom: guideFrameWidth > 0 ? size.height / defaultGuideFrame.height : 1)
                 }
             }
+        }
+        // Above everything, right under the timer: in the middle it was hidden by a moved or
+        // enlarged pitch guide.
+        .overlay(alignment: .top) {
+            phaseInfo
+                .padding(.top, layout.top + topBarInset + backButtonSize + preRollInfoGap)
+                .allowsHitTesting(false)
         }
         .animation(.snappy, value: lyricsInGuide)
         .animation(.snappy, value: showsLyrics)
@@ -540,12 +550,33 @@ struct RecordingView: View {
         if case .countdown = viewModel.loop.phase { true } else { false }
     }
 
+    /// During the pre-roll: "Listen…" and, in its last seconds, a small 3-2-1 to the first note of
+    /// the segment. It replaces the countdown that dimmed the screen, so the guide stays visible.
     @ViewBuilder
     private var phaseInfo: some View {
         if viewModel.loop.phase == .preRoll {
-            Label("Listen…", systemImage: "ear")
-                .font(.appTitle3.bold())
+            TimelineView(.periodic(from: .now, by: preRollCountStep)) { _ in
+                let remaining = viewModel.secondsToSegmentStart().map { Int($0.rounded(.up)) }
+                HStack(spacing: 10) {
+                    Label("Listen…", systemImage: "ear")
+                        .font(.appTitle3.bold())
+                    if let remaining, (1...preRollCountFrom).contains(remaining) {
+                        Text("\(remaining)")
+                            .font(.appTitle3.bold())
+                            .monospacedDigit()
+                            .foregroundStyle(Color.primary800)
+                            .contentTransition(.numericText(countsDown: true))
+                            .animation(.snappy, value: remaining)
+                            .frame(width: preRollCountSize, height: preRollCountSize)
+                            .background(Circle().fill(.white))
+                            .accessibilityLabel("Starting in \(remaining)")
+                    }
+                }
                 .foregroundStyle(.white)
+                .padding(.leading, 16).padding(.trailing, 6).padding(.vertical, 6)
+                .background(.black.opacity(0.55), in: Capsule())
+            }
+            .transition(.opacity)
         }
     }
 

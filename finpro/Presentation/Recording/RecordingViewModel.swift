@@ -187,6 +187,12 @@ final class RecordingViewModel {
         anchor.map { (capture.currentCaptureTime() - $0).seconds }
     }
 
+    /// Time until the current segment's first note is heard (pre-roll count), nil before playback.
+    func secondsToSegmentStart() -> TimeInterval? {
+        guard let start = loop.currentSegment?.audioStartTime, let now = currentSongTime() else { return nil }
+        return start - now
+    }
+
     /// What the piano roll shows: live song time while singing; during the countdown and a pause
     /// it holds on the start of the segment that will be sung.
     func displaySongTime() -> TimeInterval? {

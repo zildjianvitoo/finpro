@@ -67,23 +67,27 @@ nonisolated final class ReferencePlaybackRepositoryImpl: ReferencePlaybackReposi
     }
 
     func play(from referenceTime: TimeInterval) throws -> CMTime {
-        guard let file, referenceTime.isFinite, referenceTime >= 0 else { throw failure("Invalid reference playback time.") }
-        let start = AVAudioFramePosition((referenceTime * file.processingFormat.sampleRate).rounded())
+        guard let file, referenceTime.isFinite else { throw failure("Invalid reference playback time.") }
+        // Before 0: the song starts after that much silence; `referenceTime` is still what is returned.
+        let silence = max(0, -referenceTime)
+        let songStart = max(0, referenceTime)
+        let start = AVAudioFramePosition((songStart * file.processingFormat.sampleRate).rounded())
         guard start < file.length else { throw failure("Playback starts outside the song.") }
         node.stop(); instrumentalNode.stop()
         if !engine.isRunning { try engine.start() }
         node.scheduleSegment(file, startingFrame: start, frameCount: AVAudioFrameCount(file.length - start), at: nil)
         if let backing = instrumentalFile {
-            let backingStart = AVAudioFramePosition((referenceTime * backing.processingFormat.sampleRate).rounded())
+            let backingStart = AVAudioFramePosition((songStart * backing.processingFormat.sampleRate).rounded())
             guard backingStart < backing.length else { throw failure("Instrumental playback starts outside the song.") }
             instrumentalNode.scheduleSegment(backing, startingFrame: backingStart,
                                              frameCount: AVAudioFrameCount(backing.length - backingStart), at: nil)
         }
         let host = CMClockGetTime(CMClockGetHostTimeClock())
         let scheduled = CMTimeAdd(host, CMTime(seconds: Self.schedulingLead, preferredTimescale: 60000))
-        node.play(at: AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: scheduled.seconds)))
+        let songPlays = CMTimeAdd(scheduled, CMTime(seconds: silence, preferredTimescale: 60000))
+        node.play(at: AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: songPlays.seconds)))
         if instrumentalFile != nil {
-            instrumentalNode.play(at: AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: scheduled.seconds)))
+            instrumentalNode.play(at: AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: songPlays.seconds)))
         }
         let session = AVAudioSession.sharedInstance()
         let latency = session.outputLatency + session.ioBufferDuration + configuration().manualLatencyCalibration
