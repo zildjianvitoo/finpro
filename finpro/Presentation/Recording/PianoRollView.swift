@@ -344,6 +344,8 @@ struct PianoRollView: View {
         // Target notes.
         let windowStart = current - Self.visibleDuration * Self.playheadPosition
         let windowEnd = windowStart + Self.visibleDuration
+        var drawnLabels: [CGRect] = []
+        let labelSpacing: CGFloat = 3
         for note in notes where note.end > windowStart && note.start < windowEnd {
             let height = noteHeight
             let rect = CGRect(x: x(note.start), y: y(Double(note.midi)) - height / 2,
@@ -359,8 +361,16 @@ struct PianoRollView: View {
                 context.fill(shape, with: .color(color))
             }
             if let word = wordLabels[note.id] {
-                context.draw(Text(word).font(.system(size: 8 * min(contentZoom, 1.5), weight: .medium)).foregroundStyle(Palette.word),
-                             at: CGPoint(x: rect.minX + 2, y: rect.maxY + 2), anchor: .topLeading)
+                // A word that would run into an earlier one (short notes close together) is left
+                // out; the lyric line under the guide still shows it.
+                let label = context.resolve(Text(word).font(.system(size: 8 * min(contentZoom, 1.5), weight: .medium))
+                    .foregroundStyle(Palette.word))
+                let frame = CGRect(origin: CGPoint(x: rect.minX + 2, y: rect.maxY + 2),
+                                   size: label.measure(in: CGSize(width: CGFloat.infinity, height: .infinity)))
+                if !drawnLabels.contains(where: { $0.insetBy(dx: -labelSpacing, dy: 0).intersects(frame) }) {
+                    context.draw(label, in: frame)
+                    drawnLabels.append(frame)
+                }
             }
         }
 
