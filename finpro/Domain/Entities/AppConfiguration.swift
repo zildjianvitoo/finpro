@@ -10,13 +10,16 @@ import Foundation
 
 nonisolated struct AppConfiguration: Sendable, Equatable, Codable {
     // Evaluation
-    var passThreshold: Float = 0.75
+    /// 0.75 → 0.30 on 2026-11-20: scored with the app's own rules, the original vocal passed only
+    /// 45% of lines at 0.75 and a monotone voice still fails nearly all at 0.30.
+    var passThreshold: Float = 0.30
     var hitToleranceCents: Float = 80
     var noiseGateDBFS: Float = -40
     var pitchHop: TimeInterval = 0.05
     var attackIgnore: TimeInterval = 0.10
     var timingTolerance: TimeInterval = 0.10
-    var missedNoteThreshold: Float = 0.50
+    /// 0.50 → 0.30 on 2026-11-20: the original vocal had 27% of its notes red at 0.50, 7% at 0.30.
+    var missedNoteThreshold: Float = 0.30
 
     // Segmentation
     var segmentGap: TimeInterval = 0.8

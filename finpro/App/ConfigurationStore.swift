@@ -14,7 +14,8 @@ nonisolated struct ConfigurationStore: @unchecked Sendable {
     /// 1 (2026-11-04): first finpro version. PoC settings (versions 2–3) are not carried over:
     /// the new bundle ID starts with empty UserDefaults.
     /// 2 (2026-11-20): pre-roll 2 → 3 s and countdown 3 → 0 s (the pre-roll replaced the countdown).
-    static let currentVersion = 2
+    /// 3 (2026-11-20): pass threshold 0.75 → 0.30 and missed-note threshold 0.50 → 0.30.
+    static let currentVersion = 3
 
     let defaults: UserDefaults
 
@@ -43,6 +44,10 @@ nonisolated struct ConfigurationStore: @unchecked Sendable {
         if version < 2 {
             if configuration.preRoll == 2.0 { configuration.preRoll = AppConfiguration.default.preRoll }
             if configuration.countdownSeconds == 3 { configuration.countdownSeconds = AppConfiguration.default.countdownSeconds }
+        }
+        if version < 3 {
+            if configuration.passThreshold == 0.75 { configuration.passThreshold = AppConfiguration.default.passThreshold }
+            if configuration.missedNoteThreshold == 0.50 { configuration.missedNoteThreshold = AppConfiguration.default.missedNoteThreshold }
         }
         return configuration
     }
