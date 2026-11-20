@@ -603,20 +603,33 @@ struct ExportPreviewView: View {
     }
 
     private func volumeSlider(_ title: String, value: Binding<Float>, icon: String) -> some View {
-        VStack(alignment: .leading) {
+        let range: ClosedRange<Float> = 0...2
+        func set(_ level: Float) {
+            value.wrappedValue = level
+            viewModel.updatePreviewVolume()
+        }
+        return VStack(alignment: .leading) {
             Text(title).font(.appSubheadline)
             HStack {
-                Image(systemName: "speaker.slash.fill")
-                Slider(value: Binding(get: { value.wrappedValue }, set: {
-                    value.wrappedValue = $0
-                    viewModel.updatePreviewVolume()
-                }), in: 0...2)
+                // The end icons jump straight to silent and to the loudest level.
+                volumeEndButton("speaker.slash.fill", label: "Mute \(title)") { set(range.lowerBound) }
+                Slider(value: Binding(get: { value.wrappedValue }, set: set), in: range)
                     .tint(.blue)
                     .accessibilityLabel(title)
                     .accessibilityValue(Double(value.wrappedValue).formatted(.percent))
-                Image(systemName: icon)
+                volumeEndButton(icon, label: "\(title) at maximum") { set(range.upperBound) }
             }
         }
+    }
+
+    private func volumeEndButton(_ systemName: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .frame(minWidth: 32, minHeight: 44)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 
     private func startExport() {
