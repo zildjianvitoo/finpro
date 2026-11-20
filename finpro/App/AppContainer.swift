@@ -53,6 +53,8 @@ final class AppContainer {
     #endif
     /// Loads the CoreML models at app start; nil with fakes.
     let modelPrewarmer: ModelPrewarmer?
+    /// On-device recognition of the sung words, for the lyric guide; nil with fakes.
+    let wordRecognition: (any SungWordRecognitionRepository)?
 
     init(configuration: AppConfiguration,
          demo: SynthesizedDemoRepository,
@@ -68,7 +70,8 @@ final class AppContainer {
          videoComposition: any VideoCompositionRepository,
          videoLibrary: any VideoLibrarySaving,
          permissions: any MediaPermissionProviding,
-         modelPrewarmer: ModelPrewarmer? = nil) {
+         modelPrewarmer: ModelPrewarmer? = nil,
+         wordRecognition: (any SungWordRecognitionRepository)? = nil) {
         self.configuration = configuration
         self.demo = demo
         self.stemSeparation = stemSeparation
@@ -84,6 +87,7 @@ final class AppContainer {
         self.videoLibrary = videoLibrary
         self.permissions = permissions
         self.modelPrewarmer = modelPrewarmer
+        self.wordRecognition = wordRecognition
     }
 
     /// What the app runs with: imported songs are prepared on the device (CoreML vocal separation
@@ -131,7 +135,8 @@ final class AppContainer {
             videoComposition: videoComposition,
             videoLibrary: PhotoLibraryVideoSaver(),
             permissions: SystemMediaPermissions(),
-            modelPrewarmer: ModelPrewarmer(htDemucs: htDemucs)
+            modelPrewarmer: ModelPrewarmer(htDemucs: htDemucs),
+            wordRecognition: SpeechTranscriberWordRecognition()
         )
         #if DEBUG && targetEnvironment(simulator)
         container.simulatedSinger = singer

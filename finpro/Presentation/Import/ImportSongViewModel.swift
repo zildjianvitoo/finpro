@@ -279,7 +279,8 @@ final class ImportSongViewModel {
         preparedLyrics = lyrics
         // The parser spread each line's words by syllable count, so their lengths are the weights.
         let lyricLines = lyrics.map { line in
-            LyricGuideNotesUseCase.Line(start: line.start, end: line.end, wordWeights: line.words.map { $0.end - $0.start })
+            LyricGuideNotesUseCase.Line(start: line.start, end: line.end, wordWeights: line.words.map { $0.end - $0.start },
+                                        words: line.words.map(\.text))
         }
         status = .preparing(step: "Starting…")
         let token = generation

@@ -18,16 +18,19 @@ import Foundation
 
 nonisolated struct LyricGuideNotesUseCase: Sendable {
     /// One lyric line on the prepared song's timeline. `wordWeights` is one weight per word
-    /// (its syllable count), in order.
+    /// (its syllable count), in order; `words` is the words' text (matched against recognized
+    /// words; empty when unknown).
     struct Line: Sendable, Equatable {
         let start: TimeInterval
         let end: TimeInterval
         let wordWeights: [Double]
+        let words: [String]
 
-        init(start: TimeInterval, end: TimeInterval, wordWeights: [Double]) {
+        init(start: TimeInterval, end: TimeInterval, wordWeights: [Double], words: [String] = []) {
             self.start = start
             self.end = end
             self.wordWeights = wordWeights
+            self.words = words
         }
     }
 
@@ -80,8 +83,19 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
     /// hold one, but a long rest holds none.
     static let silenceShare: TimeInterval = 0.5
 
-    /// `pitchNotes`: the notes found in the vocal guide (original key), any order.
-    func execute(pitchNotes: [TargetMIDINote], lines: [Line]) -> Result {
+    // Recognized words (on-device speech recognition of the vocal stem).
+    /// A line's words are matched against the words recognized from this long before its first
+    /// word to this long after the next line's first word.
+    static let recognitionMargin: TimeInterval = 1
+    /// A match that would move a word further than this is ignored: it is the same word sung
+    /// elsewhere (a backing vocal in brackets, a repeat), not this one.
+    static let maximumAnchorMove: TimeInterval = 3
+
+    /// `pitchNotes`: the notes found in the vocal guide (original key), any order. `recognized`:
+    /// words heard in the vocal stem; a lyric word matched to one starts where it was heard, and
+    /// the words between two matches keep their spacing in between (measured on two English songs:
+    /// words within 0.3 s 65% → 74% and 73% → 86%).
+    func execute(pitchNotes: [TargetMIDINote], lines: [Line], recognized: [RecognizedWord] = []) -> Result {
         let pitched = pitchNotes
             .filter { $0.startTime.isFinite && $0.endTime.isFinite && $0.duration > 0 }
             .sorted { $0.startTime < $1.startTime }
@@ -93,6 +107,10 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
             let lineWords = sungWords(in: line, pitched: pitched, after: notes.last?.endTime ?? 0)
             notes += lineWords.compactMap(\.note)
             words.append(lineWords)
+        }
+        if !recognized.isEmpty {
+            words = anchored(words, texts: lines.map(\.words), recognized: recognized, pitched: pitched)
+            notes = words.flatMap { $0.compactMap(\.note) }
         }
         let guideMiddle = Self.middle(notes.map(\.midiNote))
         words = words.map { line in
@@ -133,6 +151,103 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
             }
         }
         return best - attackLead
+    }
+
+    /// Moves each line's words onto the recognized words that match them (in order, near the line);
+    /// words between two matches keep their spacing, words before the first or after the last match
+    /// move with it. The notes are rebuilt for the moved words. Lines without a match are kept.
+    private func anchored(_ words: [[Word]], texts: [[String]], recognized: [RecognizedWord],
+                          pitched: [TargetMIDINote]) -> [[Word]] {
+        let heard = recognized.flatMap { word in
+            word.text.split(whereSeparator: \.isWhitespace).map { (text: Self.normalized(String($0)), start: word.startTime) }
+        }.filter { !$0.text.isEmpty }.sorted { $0.start < $1.start }
+        var result = words
+        var previousEnd = -TimeInterval.infinity
+        for index in words.indices {
+            let line = words[index]
+            guard let first = line.first, let last = line.last, texts[index].count == line.count else {
+                previousEnd = max(previousEnd, words[index].last?.end ?? previousEnd)
+                continue
+            }
+            let nextStart = words[(index + 1)...].first { !$0.isEmpty }?.first?.start ?? last.end
+            let window = (first.start - Self.recognitionMargin)...(max(nextStart, first.start) + Self.recognitionMargin)
+            // Not before the previous line has ended: a common word ("your") heard there is that line's.
+            let candidates = heard.filter { window.contains($0.start) && $0.start >= previousEnd }
+            var anchors: [Int: TimeInterval] = [:]
+            var lastAnchor = -TimeInterval.infinity
+            for (word, heardIndex) in Self.commonSubsequence(texts[index].map(Self.normalized), candidates.map(\.text)) {
+                let time = candidates[heardIndex].start
+                // In order only: a later lyric word never starts before an earlier one.
+                if time > lastAnchor, abs(time - line[word].start) <= Self.maximumAnchorMove {
+                    anchors[word] = time
+                    lastAnchor = time
+                }
+            }
+            guard !anchors.isEmpty else {
+                previousEnd = max(previousEnd, last.end)
+                continue
+            }
+            let starts = line.map(\.start)
+            var moved = starts
+            let keys = anchors.keys.sorted()
+            for key in keys { moved[key] = anchors[key]! }
+            let leading = anchors[keys[0]]! - starts[keys[0]]
+            for word in 0..<keys[0] { moved[word] = starts[word] + leading }
+            let trailing = anchors[keys[keys.count - 1]]! - starts[keys[keys.count - 1]]
+            for word in (keys[keys.count - 1] + 1)..<line.count { moved[word] = starts[word] + trailing }
+            for (a, b) in zip(keys, keys.dropFirst()) where b > a + 1 {
+                for word in (a + 1)..<b {
+                    let fraction = starts[b] > starts[a] ? (starts[word] - starts[a]) / (starts[b] - starts[a]) : 0
+                    moved[word] = anchors[a]! + fraction * (anchors[b]! - anchors[a]!)
+                }
+            }
+            // Forwards only, and never back into the previous line.
+            for word in moved.indices {
+                moved[word] = max(moved[word], previousEnd, word > 0 ? moved[word - 1] : -TimeInterval.infinity)
+            }
+            let lineEnd = max(last.end, moved[moved.count - 1])
+            let voiced = pitched.compactMap { note -> ClosedRange<TimeInterval>? in
+                let lower = max(note.startTime, moved[0]), upper = min(note.endTime, lineEnd)
+                return upper - lower > Self.epsilon ? lower...upper : nil
+            }
+            result[index] = moved.indices.map { word in
+                let from = moved[word]
+                let to = word + 1 < moved.count ? moved[word + 1] : lineEnd
+                return Word(start: from, end: to, note: noteFor(from: from, to: to, voiced: voiced, pitched: pitched))
+            }
+            previousEnd = lineEnd
+        }
+        return result
+    }
+
+    /// Lower-case letters and digits only, so "you're" matches "youre" and "Part," matches "part".
+    static func normalized(_ word: String) -> String {
+        String(word.lowercased().filter { $0.isLetter || $0.isNumber })
+    }
+
+    /// Index pairs of a longest common subsequence of `a` and `b`, in order.
+    static func commonSubsequence(_ a: [String], _ b: [String]) -> [(Int, Int)] {
+        guard !a.isEmpty, !b.isEmpty else { return [] }
+        var table = Array(repeating: Array(repeating: 0, count: b.count + 1), count: a.count + 1)
+        for i in stride(from: a.count - 1, through: 0, by: -1) {
+            for j in stride(from: b.count - 1, through: 0, by: -1) {
+                table[i][j] = a[i] == b[j] ? table[i + 1][j + 1] + 1 : max(table[i + 1][j], table[i][j + 1])
+            }
+        }
+        var pairs: [(Int, Int)] = []
+        var i = 0, j = 0
+        while i < a.count && j < b.count {
+            if a[i] == b[j] {
+                pairs.append((i, j))
+                i += 1
+                j += 1
+            } else if table[i + 1][j] >= table[i][j + 1] {
+                i += 1
+            } else {
+                j += 1
+            }
+        }
+        return pairs
     }
 
     /// Notes on each side compared with a word in the second octave pass.

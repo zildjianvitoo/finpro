@@ -113,6 +113,29 @@ nonisolated enum LyricGuideNotesUseCaseChecks {
         try check(neighbours.notes.map(\.midiNote) == [66, 68, 68, 69, 64, 64, 61, 61],
                   "Octave error folded against its neighbours: \(neighbours.notes.map(\.midiNote)).")
 
+        // Recognized words (speech recognition of the vocal stem) anchor the words they match.
+        let sung = [note(60, 0, 1), note(62, 1, 2), note(64, 2, 3), note(65, 3, 4)]
+        let plain = useCase.execute(pitchNotes: sung, lines: [.init(start: 0, end: 4, wordWeights: [1, 1, 1, 1],
+                                                                       words: ["Best", "part,", "of", "you"])])
+        let heard = [RecognizedWord(text: "best", startTime: 0.1, endTime: 0.5),
+                     RecognizedWord(text: "you", startTime: 3.2, endTime: 3.6)]
+        let anchoredLine = useCase.execute(pitchNotes: sung, lines: [.init(start: 0, end: 4, wordWeights: [1, 1, 1, 1],
+                                                                             words: ["Best", "part,", "of", "you"])],
+                                           recognized: heard)
+        try check(near(anchoredLine.words[0][0].start, 0.1) && near(anchoredLine.words[0][3].start, 3.2),
+                  "Matched words start where they were heard: \(anchoredLine.words[0]).")
+        let (p0, p3) = (plain.words[0][0].start, plain.words[0][3].start)
+        let expected = 0.1 + (plain.words[0][1].start - p0) / (p3 - p0) * 3.1
+        try check(abs(anchoredLine.words[0][1].start - expected) <= 1e-6, "Words between matches keep their spacing.")
+        for (previous, next) in zip(anchoredLine.notes, anchoredLine.notes.dropFirst()) {
+            try check(previous.endTime <= next.startTime + 1e-9, "Anchored notes must not overlap.")
+        }
+        let none = useCase.execute(pitchNotes: sung, lines: [.init(start: 0, end: 4, wordWeights: [1, 1, 1, 1],
+                                                                      words: ["Best", "part,", "of", "you"])],
+                                   recognized: [RecognizedWord(text: "you", startTime: 3.95 + LyricGuideNotesUseCase.maximumAnchorMove, endTime: 9)])
+        try check(none.words[0].map { [$0.start, $0.end] } == plain.words[0].map { [$0.start, $0.end] },
+                  "A match further than the maximum move is ignored.")
+
         // The guide's notes are the words' notes, in order.
         try check(line.notes.map(\.id) == line.words.flatMap { $0.compactMap(\.note?.id) }, "Notes match the words.")
         return count

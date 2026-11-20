@@ -12,6 +12,9 @@ nonisolated struct PrepareSongUseCase: Sendable {
     let fallbackAnalysis: (any AudioAnalysisRepository)?
     let transposition: any AudioTranspositionRepository
     var configuration: AppConfiguration = .default
+    /// Hears the sung words in the vocal stem so the lyric guide puts them where they are sung;
+    /// nil (or no words heard) places them from the pitch notes alone.
+    var wordRecognition: (any SungWordRecognitionRepository)?
 
     func execute(audioURL: URL, trimRange: ClosedRange<TimeInterval>, vocalRange: VocalRange,
                  progress: @escaping @Sendable (String) -> Void = { _ in }) async throws -> PreparedSong {
@@ -64,7 +67,14 @@ nonisolated struct PrepareSongUseCase: Sendable {
                         progress: @escaping @Sendable (String) -> Void = { _ in }) async throws -> Choices {
         let (stems, extracted) = try await extract(audioURL: audioURL, trimRange: trimRange, progress: progress)
         let duration = trimRange.upperBound - trimRange.lowerBound
-        let lyricGuide = LyricGuideNotesUseCase().execute(pitchNotes: extracted, lines: lyricLines)
+        var recognized: [RecognizedWord] = []
+        if let wordRecognition, !lyricLines.isEmpty {
+            progress("Matching the lyrics")
+            recognized = await wordRecognition.recognizeWords(in: stems.vocalGuideURL,
+                                                              lyrics: lyricLines.flatMap(\.words).joined(separator: " "))
+            try Task.checkCancellation()
+        }
+        let lyricGuide = LyricGuideNotesUseCase().execute(pitchNotes: extracted, lines: lyricLines, recognized: recognized)
         guard !lyricGuide.notes.isEmpty else {
             // No lyrics: the raw pitch notes, with the tracker's octave errors folded back so the
             // key recommendation does not plan around notes nobody sings.
