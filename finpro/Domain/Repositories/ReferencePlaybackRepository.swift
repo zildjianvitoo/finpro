@@ -13,6 +13,7 @@ nonisolated protocol ReferencePlaybackRepository: AnyObject {
     func load(earphoneMixURL: URL) throws
     /// Schedules playback from `referenceTime` and returns the capture-clock time
     /// at which that point is HEARD (scheduled host time + output latency).
+    /// A negative `referenceTime` plays that much silence before the song's start.
     func play(from referenceTime: TimeInterval) throws -> CMTime
     func stop()
 }

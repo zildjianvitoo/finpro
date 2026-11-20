@@ -137,8 +137,9 @@ nonisolated struct LoopStateController: Sendable {
         phase = .ended
     }
 
-    /// PRD §5.6: 2 s of reference before the segment (from 0 when not available).
+    /// PRD §5.6: `preRoll` of reference before the segment. Before the song's first notes this
+    /// starts below 0 (silence first), so the singer always gets the whole lead-in.
     private func preRollStart(for segment: SongSegment) -> TimeInterval {
-        max(0, segment.audioStartTime - configuration.preRoll)
+        segment.audioStartTime - configuration.preRoll
     }
 }

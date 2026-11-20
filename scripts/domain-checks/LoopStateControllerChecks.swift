@@ -14,15 +14,24 @@ nonisolated enum LoopStateControllerChecks {
             count += 1
             if !condition { throw ContractViolation(contract: "LoopStateController", message: message) }
         }
-        let configuration = AppConfiguration.default
         let segments = DomainFixtures.segments  // 0–6, 6–9 (instrumental), 9–16
+
+        // Default (2026-11-20): no countdown, the whole pre-roll before the first segment, below 0.
+        var quick = LoopStateController(segments: segments, configuration: .default)
+        _ = quick.begin(now: 0)
+        try check(quick.tick(now: 0, songTime: nil) == .startPlayback(from: -AppConfiguration.default.preRoll),
+                  "default: pre-roll starts right away, before 0 for a song that starts singing at once")
+
+        // A countdown can still be set (Debug Settings); the checks below use one of 3 s.
+        var configuration = AppConfiguration.default
+        configuration.countdownSeconds = 3
         var loop = LoopStateController(segments: segments, configuration: configuration)
 
-        // Start: silent countdown, then pre-roll from 0.
+        // Start: silent countdown, then the pre-roll (before 0 here: the first segment starts at 0).
         try check(loop.begin(now: -3) == .none, "begin waits for the countdown")
         try check(loop.phase == .countdown(remaining: configuration.countdownSeconds), "countdown first")
         try check(loop.tick(now: -0.5, songTime: nil) == .none && loop.phase == .countdown(remaining: 1), "counting down")
-        try check(loop.tick(now: 0, songTime: nil) == .startPlayback(from: 0), "first segment plays from 0")
+        try check(loop.tick(now: 0, songTime: nil) == .startPlayback(from: -configuration.preRoll), "first segment gets the whole pre-roll")
         try check(loop.phase == .preRoll, "pre-roll")
         try check(loop.tick(now: 0, songTime: 0) == .none && loop.phase == .singing, "segment start → singing")
         try check(loop.tick(now: 6, songTime: 6) == .none, "no evaluation before end + tail")
@@ -51,7 +60,7 @@ nonisolated enum LoopStateControllerChecks {
         try check(paused.pause() == .stopPlayback && paused.phase == .paused, "pause stops playback")
         try check(paused.tick(now: 10, songTime: nil) == .none, "nothing happens while paused")
         try check(paused.resume(now: 10) == .none && paused.phase == .countdown(remaining: configuration.countdownSeconds), "resume counts down")
-        try check(paused.tick(now: 13, songTime: nil) == .startPlayback(from: max(0, 6 - configuration.preRoll)), "resume restarts the current segment with pre-roll")
+        try check(paused.tick(now: 13, songTime: nil) == .startPlayback(from: 6 - configuration.preRoll), "resume restarts the current segment with pre-roll")
         try check(paused.segmentIndex == 1 && paused.completedCount == 1, "resume keeps the completed segments")
 
         // Deleting the last segment goes back one segment, with the countdown, and sings it again.
@@ -65,7 +74,7 @@ nonisolated enum LoopStateControllerChecks {
         try check(back.goBackOneSegment(now: 7) == .stopPlayback, "delete stops playback")
         try check(back.segmentIndex == 0 && back.completedCount == 0, "back on the first segment")
         try check(back.phase == .countdown(remaining: configuration.countdownSeconds), "countdown before singing again")
-        try check(back.tick(now: 10, songTime: nil) == .startPlayback(from: 0), "first segment is sung again from the start")
+        try check(back.tick(now: 10, songTime: nil) == .startPlayback(from: -configuration.preRoll), "first segment is sung again with the whole pre-roll")
         try check(back.goBackOneSegment(now: 11) == .stopPlayback && back.segmentIndex == 0, "on the first segment, delete stays there")
         _ = back.tick(now: 13, songTime: 0)
         _ = back.pause()
@@ -93,7 +102,7 @@ nonisolated enum LoopStateControllerChecks {
         var retake = LoopStateController(segments: segments, configuration: configuration, range: 1..<2)
         try check(retake.segmentIndex == 1, "a retake starts on its segment")
         _ = retake.begin(now: -3)
-        try check(retake.tick(now: 0, songTime: nil) == .startPlayback(from: max(0, second.audioStartTime - configuration.preRoll)),
+        try check(retake.tick(now: 0, songTime: nil) == .startPlayback(from: second.audioStartTime - configuration.preRoll),
                   "a retake plays the pre-roll before its segment")
         _ = retake.tick(now: 0, songTime: second.audioStartTime)
         try check(retake.tick(now: 4, songTime: second.audioEndTime + configuration.evaluationTail) == .evaluate(segmentIndex: 1),
