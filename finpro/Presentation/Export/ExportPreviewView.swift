@@ -24,6 +24,8 @@ struct ExportPreviewView: View {
     @State private var showsSound = false
     @State private var mixerReady = false
     @State private var mixerError: String?
+    /// Saving the edited sound before leaving failed: the message, offering to leave without it.
+    @State private var soundSaveError: String?
     @State private var page = Page.preview
     @State private var confirmsLeave = false
     /// Shown progress of the save to Photos, which reports none: it runs ahead to `saveRunUp`
@@ -101,11 +103,18 @@ struct ExportPreviewView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.screenBackground.ignoresSafeArea())
-        .overlay { if isMerging { merging } }
-        // A locked phone interrupts the export (AVFoundation -11847).
-        .keepsScreenAwake(isMerging)
+        .overlay {
+            if isMerging {
+                merging(title: "Merging your recording…", progress: mergeProgress)
+            } else if page == .preview, let progress = viewModel.soundProgress {
+                merging(title: "Saving sound changes…", progress: progress)
+            }
+        }
+        // A locked phone interrupts the export (AVFoundation -11847), the sound re-export too.
+        .keepsScreenAwake(isMerging || viewModel.soundProgress != nil)
         .animation(.default, value: page)
         .animation(.default, value: isMerging)
+        .animation(.default, value: viewModel.soundProgress == nil)
         .task {
             // iOS stops an export started while the app is not in the foreground (screen locked
             // right as the recording ended, Control Center open): wait until it is.
@@ -125,9 +134,16 @@ struct ExportPreviewView: View {
             }
         }
         .onChange(of: viewModel.exportedURL) { _, url in
+            // The sound mixer plays the edited levels live; a re-export with them must not replace it.
+            guard !mixerReady else { return }
             player = url.flatMap { viewModel.hasPlayableFile ? CoverPlayerController(url: $0) : nil }
         }
         .onChange(of: viewModel.saveState) { _, state in saveStateChanged(state) }
+        // Saving with edited sound re-exports first: its real progress fills the border up to the run-up.
+        .onChange(of: viewModel.soundProgress) { _, progress in
+            guard page == .exporting else { return }
+            withAnimation(.linear(duration: 0.2)) { exportProgress = (progress ?? 1) * saveRunUp }
+        }
         // The purple outline follows the clip that is playing.
         .onChange(of: player?.currentTime) { _, time in
             if let time { viewModel.followPlayback(at: time) }
@@ -172,7 +188,7 @@ struct ExportPreviewView: View {
         if case .exporting(let value) = viewModel.exportState { value } else { 0 }
     }
 
-    private var merging: some View {
+    private func merging(title: String, progress: Double) -> some View {
         ZStack {
             Color.black.opacity(0.6)
                 .ignoresSafeArea()
@@ -181,7 +197,7 @@ struct ExportPreviewView: View {
                     .font(.system(size: mergingIconSize))
                     .symbolEffect(.bounce, options: .repeat(.continuous))
                     .accessibilityHidden(true)
-                Text("Merging your recording… \(mergeProgress.formatted(.percent.precision(.fractionLength(0))))")
+                Text("\(title) \(progress.formatted(.percent.precision(.fractionLength(0))))")
                     .font(.subheadline.weight(.semibold))
                     .monospacedDigit()
             }
@@ -260,6 +276,13 @@ struct ExportPreviewView: View {
                 }
             } else { clipsSheet }
         }
+        .alert("Couldn't Save Sound", isPresented: Binding(get: { soundSaveError != nil }, set: { if !$0 { soundSaveError = nil } })) {
+            Button("Leave Without Changes", role: .destructive) {
+                soundSaveError = nil
+                onSaveDraft()
+            }
+            Button("Cancel", role: .cancel) { soundSaveError = nil }
+        } message: { Text(soundSaveError ?? "") }
         .alert("Sound unavailable", isPresented: Binding(get: { mixerError != nil }, set: { if !$0 { mixerError = nil } })) {
             Button("OK") { mixerError = nil }
         } message: { Text(mixerError ?? "") }
@@ -267,7 +290,7 @@ struct ExportPreviewView: View {
             // Sing on from the first segment not in the cover; a complete cover records again.
             Button("Keep Recording", action: viewModel.canContinueRecording ? onContinue : onRetake)
             // The cover is already on Home (saved after each export): keep it as a draft, or remove it.
-            Button("Save to Draft", action: onSaveDraft)
+            Button("Save to Draft") { saveSoundThen(onSaveDraft) }
             // Not `.cancel`: iOS 26 hides that button here.
             Button("Discard", role: .destructive, action: onDiscard)
         } message: {
@@ -600,8 +623,25 @@ struct ExportPreviewView: View {
         player?.pause()
         exportProgress = 0
         page = .exporting
-        withAnimation(.easeOut(duration: saveRunUpDuration)) { exportProgress = saveRunUp }
+        // With edited sound the re-export reports real progress (see onChange of soundProgress).
+        if !viewModel.hasVolumeEdits {
+            withAnimation(.easeOut(duration: saveRunUpDuration)) { exportProgress = saveRunUp }
+        }
         Task { await viewModel.saveToPhotos() }
+    }
+
+    /// Leaving with edited sound: re-export the cover with it first, so Home and the draft keep it.
+    private func saveSoundThen(_ leave: @escaping () -> Void) {
+        guard viewModel.hasVolumeEdits else { return leave() }
+        player?.pause()
+        Task {
+            do {
+                try await viewModel.applyVolumeEdits()
+                leave()
+            } catch {
+                soundSaveError = error.localizedDescription
+            }
+        }
     }
 
     private func saveStateChanged(_ state: CompingViewModel.SaveState) {

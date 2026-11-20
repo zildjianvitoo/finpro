@@ -41,7 +41,15 @@ final class CompingViewModel {
     var vocals: Float
     var music: Float
 
-    var hasVolumeEdits: Bool { vocals != plan.vocalGain || music != plan.instrumentalGain }
+    /// Levels of the cover file on disk: the plan's, then the last applied edit.
+    private var appliedVocals: Float
+    private var appliedMusic: Float
+    /// The cover re-exported with edited levels; it replaces the first export from then on.
+    private var remixedURL: URL?
+    /// Progress (0...1) of re-exporting the cover with edited levels; nil when not running.
+    private(set) var soundProgress: Double?
+
+    var hasVolumeEdits: Bool { vocals != appliedVocals || music != appliedMusic }
 
     func prepareMixer() async throws {
         if editable == nil { editable = try await CompingCompositionBuilder().build(plan) }
@@ -114,6 +122,8 @@ final class CompingViewModel {
          onSavedToPhotos: @escaping () -> Void = {}) {
         vocals = plan.vocalGain
         music = plan.instrumentalGain
+        appliedVocals = plan.vocalGain
+        appliedMusic = plan.instrumentalGain
         self.plan = plan
         self.songName = songName
         self.useCase = useCase
@@ -186,7 +196,7 @@ final class CompingViewModel {
     }
 
     var exportedURL: URL? {
-        if case .finished(let url) = exportState { url } else { nil }
+        if case .finished(let url) = exportState { remixedURL ?? url } else { nil }
     }
 
     /// False while running on fakes: the fake export returns a URL without writing a file.
@@ -236,27 +246,43 @@ final class CompingViewModel {
         }
     }
 
+    /// Re-exports the cover with the edited levels and stores it (Home, draft) in place of the
+    /// earlier file. Does nothing without edits.
+    func applyVolumeEdits() async throws {
+        guard hasVolumeEdits, soundProgress == nil else { return }
+        guard let editable else { throw CompingError.exportUnavailable }
+        let edited = CompingCompositionPlan(rawVideoURLs: plan.rawVideoURLs, instrumentalURL: plan.instrumentalURL,
+            segments: plan.segments, validTakes: plan.validTakes, endTime: plan.endTime,
+            crossfadeDuration: plan.crossfadeDuration, instrumentalFadeOut: plan.instrumentalFadeOut,
+            vocalGain: vocals, instrumentalGain: music)
+        soundProgress = 0
+        defer { soundProgress = nil }
+        let output = try editable.applyingVolumes(vocals: edited.vocalGain, music: edited.instrumentalGain)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Cover-\(UUID().uuidString).mp4")
+        do {
+            try await VideoCompositionRepositoryImpl().export(output, plan: edited, to: url) { progress in
+                Task { @MainActor in
+                    if let current = self.soundProgress { self.soundProgress = max(current, progress) }
+                }
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: url)
+            throw error
+        }
+        if let remixedURL { try? FileManager.default.removeItem(at: remixedURL) }
+        remixedURL = url
+        appliedVocals = edited.vocalGain
+        appliedMusic = edited.instrumentalGain
+        onExported(url, edited)
+    }
+
     func saveToPhotos() async {
-        guard let url = exportedURL, saveState != .saving else { return }
+        guard exportedURL != nil, saveState != .saving else { return }
         saveState = .saving
         do {
-            if hasVolumeEdits {
-                guard let editable else { throw CompingError.exportUnavailable }
-                let exportVocals = vocals
-                let exportMusic = music
-                let output = try editable.applyingVolumes(vocals: exportVocals, music: exportMusic)
-                let mixed = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
-                defer { try? FileManager.default.removeItem(at: mixed) }
-                try await VideoCompositionRepositoryImpl().export(output, plan: plan, to: mixed) { _ in }
-                try await videoLibrary.saveVideo(at: mixed)
-                let savedPlan = CompingCompositionPlan(rawVideoURLs: plan.rawVideoURLs, instrumentalURL: plan.instrumentalURL,
-                    segments: plan.segments, validTakes: plan.validTakes, endTime: plan.endTime,
-                    crossfadeDuration: plan.crossfadeDuration, instrumentalFadeOut: plan.instrumentalFadeOut,
-                    vocalGain: exportVocals, instrumentalGain: exportMusic)
-                onExported(mixed, savedPlan)
-            } else {
-                try await videoLibrary.saveVideo(at: url)
-            }
+            try await applyVolumeEdits()
+            guard let url = exportedURL else { throw CompingError.exportUnavailable }
+            try await videoLibrary.saveVideo(at: url)
             saveState = .saved
             onSavedToPhotos()
         } catch VideoLibraryError.accessDenied {
@@ -264,5 +290,9 @@ final class CompingViewModel {
         } catch {
             saveState = .failed(error.localizedDescription)
         }
+    }
+
+    isolated deinit {
+        if let remixedURL { try? FileManager.default.removeItem(at: remixedURL) }
     }
 }
