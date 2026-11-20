@@ -95,7 +95,11 @@ struct ImportSongView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.updatesFrequently)
-        .background(Color.black.opacity(0.75).ignoresSafeArea())
+        // Blurred under the dimming, so the sheet behind (title, lyrics) doesn't read through the
+        // progress text.
+        .background(Color.black.opacity(0.6).ignoresSafeArea())
+        .background(.ultraThinMaterial, ignoresSafeAreaEdges: .all)
+        .environment(\.colorScheme, .dark)
     }
 
     private var importPrompt: some View {

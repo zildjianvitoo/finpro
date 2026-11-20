@@ -34,6 +34,10 @@ final class AppFlow {
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Flow")
     private(set) var importOrigin: Step = .home
     private(set) var selectedLibrarySongID: UUID?
+    /// The import screen edits a song from the library ("Choose Song Section"). Set when the
+    /// screen opens, not when the song gets saved: a new import is saved as preparation starts,
+    /// and the sheet switched layout under the preparing screen.
+    private(set) var importEditsSavedSong = false
     var selectedLibrarySong: SavedSong? { container.songLibrary.songs.first { $0.id == selectedLibrarySongID } }
     private(set) var preparedSong: PreparedSong?
     private(set) var keyChoices: PrepareSongUseCase.Choices?
@@ -133,6 +137,7 @@ final class AppFlow {
     func createNewCover() {
         importOrigin = step == .songList ? .songList : .home
         selectedLibrarySongID = nil
+        importEditsSavedSong = false
         step = .importSong
     }
 
@@ -142,6 +147,7 @@ final class AppFlow {
         container.audioPreview.stop()
         importOrigin = step == .songList ? .songList : .home
         selectedLibrarySongID = song.id
+        importEditsSavedSong = true
         step = .importSong
     }
     func sourceSongSaved(_ id: UUID) { selectedLibrarySongID = id }
@@ -153,7 +159,11 @@ final class AppFlow {
         step = importOrigin
     }
     func savedToSongList() { container.audioPreview.stop(); step = .songList }
-    func returnToSongSection() { container.audioPreview.stop(); step = .importSong }
+    func returnToSongSection() {
+        container.audioPreview.stop()
+        importEditsSavedSong = selectedLibrarySongID != nil
+        step = .importSong
+    }
 
 
     /// Import/prep screen (Ikzaz) finished preparing a song.

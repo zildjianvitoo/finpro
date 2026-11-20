@@ -64,7 +64,7 @@ struct RootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .sheet(isPresented: Binding(get: { flow.step == .importSong }, set: { if !$0 { flow.closeImport() } })) {
             ImportSongView(viewModel: makeImportViewModel(), onBack: flow.closeImport,
-                           isEditingSavedSong: flow.selectedLibrarySong != nil)
+                           isEditingSavedSong: flow.importEditsSavedSong && flow.selectedLibrarySong != nil)
         }
         .animation(.default, value: flow.step)
         #if DEBUG
