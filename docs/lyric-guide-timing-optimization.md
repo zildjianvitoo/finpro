@@ -14,6 +14,8 @@ All numbers come from three songs prepared with the real pipeline on the simulat
 | Words within 0.3 s of where they are sung (30 s clips) | 23% | **63%** |
 | Lines the original vocal passes (pass threshold 0.75 → 0.30) | 4–30% | **96–100%** |
 | Flat, one-pitch singing that passes | — | **8%** |
+| Words within 0.3 s, with on-device word recognition (AWNW / Best Part, iOS 26+) | 65% / 73% | **77% / 86%** |
+| Words more than 1 s off, with word recognition (AWNW / Best Part) | 3% / 7% | **0% / 2%** |
 | Pitch guide rows on the cover preview | 4 (sometimes) | **at least 6** |
 | Lyrics on the cover preview's pitch guide | none | **lyric line + word labels** |
 
@@ -118,6 +120,59 @@ The reported line, against Whisper:
 | Loudness envelope for voice activity | 0.26 s | Worse than CREPE-based; would also need a repository contract change |
 | Shift search over ±3 s | 30 s clips mean 0.65 s | Short clips jump a phrase (e.g. −2.4 s instead of −0.7 s) |
 
+## 2b. Recognized words as anchors (iOS 26+, English and other supported languages)
+
+### Why
+
+Notes alone can't tell a run of decoration on one syllable from separate syllables, so lines that end in a long ad-lib drifted late. One example is "If life is a movie, then you're the best part, oh", where "best" was 2.6 s late. Recognizing the sung words in the original vocal stem tells *which* word is sung when.
+
+### What was measured first (Mac, same stems, Whisper as reference)
+
+| Recognizer | Lyric words recognized | Timing of recognized words |
+|---|---|---|
+| `SFSpeechRecognizer` (iOS 18 API) | ~15%, many misheard | 0.5–1.4 s off, worse than the pitch-based method |
+| **`SpeechTranscriber`** (iOS 26+) | **61–78%** | median 0.16–0.18 s, 2 min of audio in under 1 s |
+
+`SpeechTranscriber` has no Indonesian model, and neither has the older API on device. Indonesian songs such as Abadi keep the pitch-based method.
+
+### Change
+
+- New contract, approved by the user:
+  - `RecognizedWord` (entity)
+  - `SungWordRecognitionRepository` (repository): it returns an empty list instead of throwing, so preparation never fails because of it.
+- `SpeechTranscriberWordRecognition` (Data):
+  - picks the language from the lyrics (`NLLanguageRecognizer`);
+  - reserves that language and downloads its model once, waiting at most 20 s while the download carries on for the next song;
+  - transcribes the vocal stem with word times.
+- On iOS before 26, on the simulator, and for unsupported languages it returns nothing.
+- `LyricGuideNotesUseCase`, per line:
+  - the lyric words are matched (longest common subsequence) to the words recognized from 1 s before the line to 1 s after the next line starts;
+  - a matched word starts where it was heard;
+  - words between two matches keep their spacing;
+  - words before the first match or after the last move with it;
+  - the notes are rebuilt for the moved words.
+- Guards against a wrong match:
+  - matches stay in order;
+  - a match may not move a word more than 3 s, because that is the same word sung elsewhere, such as a bracketed backing vocal;
+  - a match may not fall before the previous line has ended, because a common word like "your" heard there belongs to that line;
+  - lines never overlap.
+
+### Result (Swift code, recognized words from the Mac run)
+
+| Song | Words within 0.3 s | Mean error | Words more than 1 s off |
+|---|---|---|---|
+| A Whole New World | 65% → **77%** | 0.30 → 0.22 s | 3% → 0% |
+| Best Part | 73% → **86%** | 0.32 → 0.20 s | 7% → 2% |
+
+- On "If life is a movie… best part, oh", "best" moves from 79.60 s to 77.04 s (reference 76.86 s).
+- Scoring at the 0.30 threshold is unchanged: 100% and 96% of lines pass for the original vocal.
+- No notes overlap.
+
+### Not yet verified
+
+- `SpeechTranscriber` doesn't run on the simulator ("unsupported"), where the app skips it and prepares as before. The real behaviour, model download time and timing on an iPhone still need a device test. The `WordRecognition` log category shows what happened.
+- Whether `SpeechTranscriber` needs the speech recognition permission on iOS. The app never asks for it. If it is needed, recognition fails, the app falls back, and the log says so.
+
 ## 3. Guide notes and scoring
 
 ### Problem
@@ -169,14 +224,17 @@ Simulator check (Best Part, selection from "I just wanna see…" at 0:52):
 
 ## 5. Checks
 
-The domain check `LyricGuideNotesUseCaseChecks` was updated and now has 27 checks. New ones:
+The domain check `LyricGuideNotesUseCaseChecks` was updated and now has 38 checks. New ones:
 - a held last word doesn't push earlier words late;
 - a long rest is split between the words around it;
-- a note covers only the voiced part of its word;
+- a note starts at its word's voice, is held to the word's end, and lasts at least 0.3 s;
+- a soft word the tracker missed still gets a note;
+- overlapping pitch notes still give ordered, non-overlapping notes;
 - lyrics 1 s early are moved by 1 s minus the attack lead;
-- a well-synced song is not moved.
+- a well-synced song is not moved;
+- recognized words anchor the words they match, the words between keep their spacing, and a match too far away is ignored.
 
-`check-domain.sh`, `check-contracts.sh`, `check-prep.sh` and the app build all pass.
+`check-domain.sh`, `check-contracts.sh`, `check-prep.sh`, `check-comping.sh` and the app build all pass.
 
 ## 6. Limits and open items
 
@@ -187,7 +245,7 @@ The domain check `LyricGuideNotesUseCaseChecks` was updated and now has 27 check
     - treating back-to-back notes as one held sound;
     - an English silent-"e" syllable count ("life", "you're");
     - a cap on share per syllable.
-  - The way forward is recognizing the sung words on device and using their timestamps as anchors.
+  - Addressed for English (iOS 26+) by recognized words as anchors (section 2b). It still applies to Indonesian songs and older iOS.
 - **Separation on short selections.** A short selection is separated on its own, so its CREPE notes differ from those of the same part in a longer selection.
 - **Device check pending.** The scoring change still needs a check on the device, using the per-clip `Notes` log.
 - **English syllable count.** The lyric parser counts vowel groups, so a silent "e" adds a syllable: "life" and "you're" count as 2. A fix needs language detection, because Indonesian words like "sore" pronounce the final "e".
