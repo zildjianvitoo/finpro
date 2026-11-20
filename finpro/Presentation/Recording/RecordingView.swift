@@ -35,11 +35,13 @@ struct RecordingView: View {
     @AppStorage(RecordingDisplaySettings.guideFrameHeightKey) private var guideFrameHeight = 0.0
     /// The pitch guide's default place (under the camera, above the controls), measured.
     @State private var defaultGuideFrame = CGRect.zero
+    @State private var showsBluetoothBanner = false
 
     /// Measurements of the design (iPhone 17 Pro, 402 × 874 pt).
     private let backButtonSize: CGFloat = 44
     /// The design puts the back button 1 pt under the status bar; a little more air reads better.
     private let topBarInset: CGFloat = 9
+    private let bluetoothWarningDuration: Duration = .seconds(5)
     private let lyricsCardGap: CGFloat = 8
     private let lyricsCardInset: CGFloat = 33
     private let pitchGuideMaxWidth: CGFloat = 316
@@ -287,8 +289,6 @@ struct RecordingView: View {
 
             Spacer()
 
-            bluetoothWarning
-
             if showsPitchGuide {
                 // Holds the default place; the guide itself floats above (movable, see below).
                 Color.clear
@@ -319,12 +319,15 @@ struct RecordingView: View {
                 }
             }
         }
-        // Above everything, right under the timer: in the middle it was hidden by a moved or
+        // Above everything, right under the timer: lower down they were hidden by a moved or
         // enlarged pitch guide.
         .overlay(alignment: .top) {
-            phaseInfo
-                .padding(.top, layout.top + topBarInset + backButtonSize + preRollInfoGap)
-                .allowsHitTesting(false)
+            VStack(spacing: preRollInfoGap) {
+                phaseInfo
+                bluetoothWarning
+            }
+            .padding(.top, layout.top + topBarInset + backButtonSize + preRollInfoGap)
+            .allowsHitTesting(false)
         }
         .animation(.snappy, value: lyricsInGuide)
         .animation(.snappy, value: showsLyrics)
@@ -368,15 +371,27 @@ struct RecordingView: View {
     }
 
     @ViewBuilder
+    /// Shown for `bluetoothWarningDuration` each time Bluetooth earphones become the route, then
+    /// it slides away (it stayed for the whole session before).
     private var bluetoothWarning: some View {
-        if viewModel.showsBluetoothWarning {
-            Label("Wired earphones give the best sync", systemImage: "airpodspro")
-                .font(.appCaption)
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(.orange.opacity(0.85), in: .capsule)
-                .padding(.bottom, 8)
+        ZStack {
+            if showsBluetoothBanner {
+                Label("Wired earphones give the best sync", systemImage: "airpodspro")
+                    .font(.appCaption)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.orange.opacity(0.85), in: .capsule)
+                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.9)))
+            }
+        }
+        .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(duration: 0.45, bounce: 0.25), value: showsBluetoothBanner)
+        .task(id: viewModel.showsBluetoothWarning) {
+            showsBluetoothBanner = viewModel.showsBluetoothWarning
+            guard showsBluetoothBanner else { return }
+            try? await Task.sleep(for: bluetoothWarningDuration)
+            guard !Task.isCancelled else { return }
+            showsBluetoothBanner = false
         }
     }
 
