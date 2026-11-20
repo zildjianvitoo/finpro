@@ -7,8 +7,10 @@ nonisolated final class PreparedMixTrack {
     let asset: AVURLAsset
     let track: AVAssetTrack
     let level: Float
-    let peak: Float
+    /// Loudest sample (before `reserve`) in each `blockDuration` from the start of the file.
+    let blockPeaks: [Float]
     static let reserve: Float = 8
+    static let blockDuration: TimeInterval = 0.01
 
     init(asset source: AVAsset, track input: AVAssetTrack, range: CMTimeRange, core: CMTimeRange) async throws {
         let destination = url
@@ -24,7 +26,9 @@ nonisolated final class PreparedMixTrack {
         guard reader.startReading() else { throw reader.error ?? CompingError.missingTrack("audio samples") }
         var file: AVAudioFile?
         var levels: [Float] = []
-        var maximum: Float = 0
+        var peaks: [Float] = []
+        var framesRead = 0
+        var blockFrames = 0
         while let sample = output.copyNextSampleBuffer() {
             try Task.checkCancellation()
             guard let description = sample.formatDescription else { throw CompingError.missingTrack("PCM description") }
@@ -34,14 +38,19 @@ nonisolated final class PreparedMixTrack {
             buffer.frameLength = buffer.frameCapacity
             guard CMSampleBufferCopyPCMDataIntoAudioBufferList(sample, at: 0, frameCount: Int32(buffer.frameLength), into: buffer.mutableAudioBufferList) == noErr,
                   let values = buffer.floatChannelData?[0] else { throw CompingError.missingTrack("PCM samples") }
-            let count = Int(buffer.frameLength) * Int(format.channelCount)
+            let channels = max(1, Int(format.channelCount))
+            let count = Int(buffer.frameLength) * channels
+            if blockFrames == 0 { blockFrames = max(1, Int(format.sampleRate * Self.blockDuration)) }
             var energy: Float = 0
             for i in 0..<count {
                 let value = values[i]
-                maximum = max(maximum, abs(value))
+                let block = (framesRead + i / channels) / blockFrames
+                while peaks.count <= block { peaks.append(0) }
+                peaks[block] = max(peaks[block], abs(value))
                 energy += value * value
                 values[i] = value * Self.reserve
             }
+            framesRead += Int(buffer.frameLength)
             if core.containsTime(sample.presentationTimeStamp), count > 0 {
                 levels.append(sqrt(energy / Float(count)))
             }
@@ -55,7 +64,7 @@ nonisolated final class PreparedMixTrack {
         let gate = max(0.003, (levels.max() ?? 0) * 0.08)
         let active = levels.filter { $0 >= gate }.sorted()
         level = active.isEmpty ? 0 : active[active.count / 2]
-        peak = maximum
+        blockPeaks = peaks
         asset = AVURLAsset(url: destination)
         guard let audio = try await asset.loadTracks(withMediaType: .audio).first else { throw CompingError.missingTrack("prepared audio") }
         track = audio

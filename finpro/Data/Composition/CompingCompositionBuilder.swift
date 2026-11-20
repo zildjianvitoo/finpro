@@ -122,6 +122,7 @@ nonisolated struct CompingCompositionBuilder {
         let videoTracks = [videoA, videoB]
         let vocalTracks = [vocalA, vocalB]
         var prepared: [PreparedMixTrack] = []
+        var insertTimes: [TimeInterval] = []
         let handle = plan.crossfadeDuration.seconds
         let halfFade = handle / 2
         let lastIndex = plan.validTakes.count - 1
@@ -140,6 +141,7 @@ nonisolated struct CompingCompositionBuilder {
             let core = CMTimeRange(start: time(segmentStartInRaw), duration: time(segment.audioDuration))
             let audio = try await PreparedMixTrack(asset: source.asset, track: source.audio, range: range, core: core)
             prepared.append(audio)
+            insertTimes.append(segment.audioStartTime - lead)
             try vocalTracks[position % 2].insertTimeRange(CMTimeRange(start: .zero, duration: range.duration),
                                                         of: audio.track, at: time(segment.audioStartTime - lead))
         }
@@ -151,14 +153,40 @@ nonisolated struct CompingCompositionBuilder {
         let musicRange = CMTimeRange(start: .zero, duration: min(time(plan.endTime), musicDuration))
         let music = try await PreparedMixTrack(asset: instrumentalAsset, track: instrumental, range: musicRange, core: musicRange)
         try instrumentalTrack.insertTimeRange(musicRange, of: music.track, at: .zero)
-        let vocalPeak = zip(prepared, corrections).map { $0.peak * $1 }.max() ?? 0
-        // Two overlapping equal-power ramps sum to at most sqrt(2).
-        let vocalPeakBound = vocalPeak * (lastIndex > 0 ? sqrt(2) : 1)
-        let defaultPeak = vocalPeakBound * plan.vocalGain + music.peak * plan.instrumentalGain
+        // Upper bound of the mixed signal in every 10 ms of the song: the loudest sample of each
+        // source there, added up (the fades only lower a source). Unlike one peak per source, this
+        // knows where the voice and the music are actually loud, so the mix keeps its level and
+        // only turns down when the chosen levels would really clip.
+        let block = PreparedMixTrack.blockDuration
+        let ends = zip(prepared, insertTimes).map { $1 + Double($0.blockPeaks.count) * block }
+        let blockCount = Int((max(plan.endTime, ends.max() ?? 0) / block).rounded(.up)) + 2
+        func envelope(_ track: PreparedMixTrack, at start: TimeInterval) -> [Float] {
+            var result = [Float](repeating: 0, count: blockCount)
+            for (index, peak) in track.blockPeaks.enumerated() where peak > 0 {
+                let from = start + Double(index) * block
+                // A source block straddles two song blocks unless it lines up exactly: count it in both.
+                let first = max(0, Int((from / block).rounded(.down)))
+                let last = min(blockCount - 1, Int(((from + block) / block).rounded(.down)))
+                guard first <= last else { continue }
+                for slot in first...last { result[slot] = max(result[slot], peak) }
+            }
+            return result
+        }
+        var vocalEnvelope = [Float](repeating: 0, count: blockCount)
+        for (position, track) in prepared.enumerated() {
+            for (slot, peak) in envelope(track, at: insertTimes[position]).enumerated() where peak > 0 {
+                vocalEnvelope[slot] += peak * corrections[position]
+            }
+        }
+        let musicEnvelope = envelope(music, at: 0)
         func scale(_ vocals: Float, _ backing: Float) -> Float {
-            let peak = max(defaultPeak, vocalPeakBound * vocals + music.peak * backing)
+            var peak: Float = 0
+            for slot in 0..<blockCount {
+                peak = max(peak, vocals * vocalEnvelope[slot] + backing * musicEnvelope[slot])
+            }
             return min(1, 0.97 / max(peak, 0.001))
         }
+        let unityScale = scale(1, 1)
         func makeMix(_ vocals: Float, _ backing: Float) -> AVMutableAudioMix {
             let headroom = scale(vocals, backing) / PreparedMixTrack.reserve
             let vocalParameters = vocalTracks.map { track in
@@ -207,7 +235,7 @@ nonisolated struct CompingCompositionBuilder {
             videoComposition.colorTransferFunction = extensions[kCVImageBufferTransferFunctionKey as String] as? String
             videoComposition.colorYCbCrMatrix = extensions[kCVImageBufferYCbCrMatrixKey as String] as? String
         }
-        return Output(preparedTracks: prepared + [music], composition: composition, audioMix: makeMix(plan.vocalGain, plan.instrumentalGain), previewGainScale: { scale($0, $1) / scale(1, 1) }, makeMix: makeMix, videoComposition: videoComposition,
+        return Output(preparedTracks: prepared + [music], composition: composition, audioMix: makeMix(plan.vocalGain, plan.instrumentalGain), previewGainScale: { scale($0, $1) / unityScale }, makeMix: makeMix, videoComposition: videoComposition,
                       vocalTrackIDs: Set(vocalTracks.map(\.trackID)), musicTrackID: instrumentalTrack.trackID)
     }
 
