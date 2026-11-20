@@ -278,14 +278,12 @@ struct ExportPreviewView: View {
         }
         // A centred system alert (it pops in over a dimmed screen), not a dialog: Cancel stays here.
         .alert("Leave recording?", isPresented: $confirmsLeave) {
-            // Sing on from the first segment not in the cover; a complete cover records again.
-            Button("Keep Recording", action: viewModel.canContinueRecording ? onContinue : onRetake)
             // The cover is already on Home (saved after each export): keep it as a draft, or remove it.
             Button("Save to Draft") { saveSoundThen(onSaveDraft) }
             Button("Discard", role: .destructive, action: onDiscard)
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("You have an unfinished take. What would you like to do with it?")
+            Text("Keep this cover as a draft, or discard it?")
         }
         .alert("Couldn't Save Sound", isPresented: Binding(get: { soundSaveError != nil }, set: { if !$0 { soundSaveError = nil } })) {
             Button("Leave Without Changes", role: .destructive) {
