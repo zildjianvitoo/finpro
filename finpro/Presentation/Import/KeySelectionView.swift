@@ -37,7 +37,14 @@ struct KeySelectionView: View {
                         Button("Re-test vocal range", action: onRetest).buttonStyle(.appPrimary)
                     } else {
                         dial.padding(.top, 68)
-                        if viewModel.isRendering { ProgressView("Preparing key…").frame(maxWidth: .infinity) }
+                        if viewModel.isRendering {
+                            HStack(spacing: AppSpacing.small) {
+                                LoadingMascotView(size: AppLayout.loadingMascotInline)
+                                LoadingTextView(title: "Preparing key…", font: .appSubheadline, shadowed: false).foregroundStyle(Color.primary300)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .accessibilityElement(children: .combine)
+                        }
                         if let notes = viewModel.selectedNotes {
                             Button(action: viewModel.previewSelected) {
                                 Text("Vocal notes: \(PitchMath.noteName(midi: notes.low)) – \(PitchMath.noteName(midi: notes.high))")

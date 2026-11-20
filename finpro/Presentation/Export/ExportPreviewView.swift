@@ -82,7 +82,6 @@ struct ExportPreviewView: View {
     private let clipCornerRadius: CGFloat = 12
     private let selectedClipBorder: CGFloat = 4
     private let badgeInset: CGFloat = 4
-    private let mergingIconSize: CGFloat = 64
     private let exportFrameWidth: CGFloat = 288
     private let exportFrameAspectRatio: CGFloat = 288.0 / 453.0
     private let exportVideoInset: CGFloat = 18
@@ -194,16 +193,11 @@ struct ExportPreviewView: View {
 
     private func merging(title: String, progress: Double) -> some View {
         ZStack {
-            Color.black.opacity(0.6)
+            Color.loadingOverlay.opacity(AppLayout.loadingOverlayOpacity)
                 .ignoresSafeArea()
-            VStack(spacing: 16) {
-                Image(systemName: "film.stack")
-                    .font(.system(size: mergingIconSize))
-                    .symbolEffect(.bounce, options: .repeat(.continuous))
-                    .accessibilityHidden(true)
-                Text("\(title) \(progress.formatted(.percent.precision(.fractionLength(0))))")
-                    .font(.subheadline.weight(.semibold))
-                    .monospacedDigit()
+            VStack(spacing: AppSpacing.medium) {
+                LoadingMascotView()
+                LoadingTextView(title: title, progress: progress)
             }
             .foregroundStyle(.white)
         }

@@ -250,21 +250,26 @@ struct RecordingView: View {
     private func content(_ layout: VideoLayout) -> some View {
         switch viewModel.status {
         case .starting where !viewModel.isCameraReady:
-            ProgressView("Getting ready…")
-                .tint(.white)
-                .foregroundStyle(.white)
-                .frame(maxHeight: .infinity)
+            loading("Getting ready…")
         case .ready, .starting, .recording:
             sessionOverlay(layout)
         case .finishing:
-            ProgressView("Saving your recording…")
-                .tint(.white)
-                .foregroundStyle(.white)
-                .frame(maxHeight: .infinity)
+            loading("Saving your recording…")
         case .blocked, .interrupted, .failed:
             // Shown as a system alert (see `stoppedAlert`); the camera stays visible behind it.
             Color.clear
         }
+    }
+
+    private func loading(_ title: String) -> some View {
+        VStack(spacing: AppSpacing.medium) {
+            LoadingMascotView()
+            LoadingTextView(title: title)
+        }
+        .foregroundStyle(.white)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.loadingOverlay.opacity(AppLayout.loadingOverlayOpacity).ignoresSafeArea())
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Before and while recording

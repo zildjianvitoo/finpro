@@ -43,9 +43,9 @@ struct SongSectionLyrics: View {
                 }
             case .loading:
                 // Searching can take a few seconds (a busy lyrics service is retried).
-                HStack(spacing: AppSpacing.small) {
-                    ProgressView()
-                    Text(viewModel.isIdentifyingSong ? "Identifying song…" : "Finding lyrics…").font(.appSubheadline)
+                VStack(spacing: AppSpacing.small) {
+                    LoadingMascotView(size: AppLayout.loadingMascotCompact)
+                    LoadingTextView(title: viewModel.isIdentifyingSong ? "Identifying song…" : "Finding lyrics…", font: .appSubheadline, shadowed: false)
                 }
                 .foregroundStyle(Color.plumInk.opacity(0.6))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -80,25 +80,19 @@ struct ImportSongView: View {
     }
 
     private var preparingScreen: some View {
-        VStack(spacing: AppSpacing.regular) {
-            Image(systemName: "film.stack")
-                .font(.system(size: AppLayout.loadingIcon, weight: .regular))
-                .accessibilityHidden(true)
+        VStack(spacing: AppSpacing.medium) {
+            LoadingMascotView()
             // Redrawn a few times a second: the progress moves with time inside a step.
             TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-                Text("Preparing your song… \(Int(((viewModel.preparationProgress?.fraction ?? 0) * 100).rounded()))%")
-                    .font(.appHeadline).monospacedDigit()
-                    .contentTransition(.numericText())
+                LoadingTextView(title: "Preparing your song…",
+                                progress: ((viewModel.preparationProgress?.fraction ?? 0) * 100).rounded() / 100)
             }
         }
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.updatesFrequently)
-        // Blurred under the dimming, so the sheet behind (title, lyrics) doesn't read through the
-        // progress text.
-        .background(Color.black.opacity(0.6).ignoresSafeArea())
-        .background(.ultraThinMaterial, ignoresSafeAreaEdges: .all)
+        .background(Color.loadingOverlay.opacity(AppLayout.loadingOverlayOpacityBusy).ignoresSafeArea())
         .environment(\.colorScheme, .dark)
     }
 
