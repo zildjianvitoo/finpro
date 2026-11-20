@@ -125,11 +125,11 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
 * **Score** = hits / **voiced** evaluated frames when the singer is voiced for ≥ 60% of the evaluated frames; otherwise hits / all evaluated frames (silence = miss). The score is logged with the take and drives no decision (no pass threshold since 2026-11-12). A segment with zero evaluated frames scores 1.0. *(Changed 2026-11-01: on a real song the original singer is voiced only ~74% of the time, so "silence = miss" failed 73% of the original singer's own segments; with this rule and ±80¢ the original passes 100%, while singing 2 semitones off or not singing passes 0%.)*
 * **Missed note** (red on the piano roll) = note whose own hit ratio < 50%; the roll turns a note red once it has gone by without a correct sample.
 * **Timing:** evaluation runs at `segment end + latencyOffset + 150 ms` (see §7.1).
-* **Session start:** the session begins with the silent `3.. 2.. 1..` countdown, then the pre-roll, so the singer and the pitch detector are ready before the first note *(added 2026-11-01 after device testing)*.
+* **Session start:** the session begins with the **pre-roll** of 3.0 s of reference audio before the first segment; when the song gives less, it starts before 0 with silence, so the singer always gets the whole lead-in. A small `Listen… 3 · 2 · 1` under the timer counts down to the first note, and the pitch guide stays visible, so the singer and the pitch detector are ready before the first note *(changed 2026-11-20: replaces the silent `3.. 2.. 1..` countdown added 2026-11-01, which dimmed the screen and hid the guide)*.
 * **After every segment:** playback continues uninterrupted into the next segment; a segment is never repeated *(changed 2026-11-12, auto-rewind removed)*.
-* **Delete last segment (⌫, added 2026-11-12):** after a confirmation, the last finished segment is deleted (the current one when none is finished) and sung again after `3.. 2.. 1..` and the pre-roll; the session pauses while the dialog is open. The deleted take stays in the raw video but is marked removed in the take log (a `.failed` entry for that segment), and `passedTakesPrefix()` returns the **latest** take of each segment, so a re-sung segment replaces the old one.
+* **Delete last segment (⌫, added 2026-11-12):** after a confirmation, the last finished segment is deleted (the current one when none is finished) and sung again after the pre-roll; the session pauses while the dialog is open. The deleted take stays in the raw video but is marked removed in the take log (a `.failed` entry for that segment), and `passedTakesPrefix()` returns the **latest** take of each segment, so a re-sung segment replaces the old one.
 * **Record button ring:** a red ring on the edge of the record button fills with the progress through the song, with a white mark at the start of every segment and at the end of the filled part. While recording the button is a larger translucent disc with a red rounded square (tap to pause); when ready or paused it is a red disc (tap to start or resume).
-* **Pause / resume:** pausing stops playback and scoring; resuming shows `3.. 2.. 1..` (3 s, silent) → **pre-roll** of 2.0 s of reference audio before the current segment start (from 0 if not available) → that segment again, so a take never spans a pause. Pre-roll and countdown are never part of a take's video range.
+* **Pause / resume:** pausing stops playback and scoring; resuming plays the **pre-roll** of 3.0 s of reference audio before the current segment start (starting before 0 with silence when the song gives less) → that segment again, so a take never spans a pause. The pre-roll is never part of a take's video range. A silent countdown before the pre-roll can still be set in Debug Settings (`countdown`, default 0).
 
 ### 5.7 Session End & Partial Export
 * Because progress is sequential, finished segments are always a prefix `1…N`.
@@ -162,7 +162,7 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
 2. **`AudioImportView` & `PrepViewModel`** — importer, trimmer, disclaimer, step-by-step processing state, ready screen with earphone check.
 3. **`RecordingPianoRollView` & `RecordingViewModel`** — camera preview, piano roll, top bar, End Session dialog.
 4. **`LoopStateController`** — drives the session state machine:
-   `idle → countdown → preRoll → singing(segment) → evaluating → singing(next) … → ended → exporting → done` (pause → paused → countdown → preRoll restarts the current segment)
+   `idle → preRoll → singing(segment) → evaluating → singing(next) … → ended → exporting → done` (pause → paused → preRoll restarts the current segment; an optional `countdown` before `preRoll`, 0 s by default)
 5. **`ExportPreviewView` & `CompingViewModel`** — progress, player, Share, Save.
 6. **`DebugSettingsView`** — edits `PoCConfiguration` (§8).
 
@@ -394,8 +394,8 @@ public protocol VideoCompositionRepository: Sendable {
 | `timingTolerance` | 0.10 s |
 | `missedNoteThreshold` | 0.50 |
 | `segmentGap` / `minSegment` / `maxSegment` | 0.8 s / 3.0 s / 8.0 s |
-| `preRoll` | 2.0 s |
-| `countdown` | 3 s |
+| `preRoll` | 3.0 s *(was 2.0 s; 2026-11-20, may start before 0, saved settings migrated)* |
+| `countdown` | 0 s *(was 3 s; 2026-11-20, replaced by the pre-roll)* |
 | `crossfade` | 0.15 s *(was 0.03 s; v3.3, saved settings migrated)* |
 | `vocalGain` / `instrumentalGain` | 1.0 / 0.8 |
 | `manualLatencyCalibration` | 0 ms |
