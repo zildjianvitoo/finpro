@@ -58,6 +58,11 @@ final class ImportSongViewModel {
     /// and ends this much after its last sung word.
     private static let chorusLeadIn: TimeInterval = 1
     private static let chorusTail: TimeInterval = 1
+    /// The lead-in never reaches into the line before the chorus: it stops this long after that
+    /// line ends (half the gap that separates phrases, see `AppConfiguration.segmentGap`), so the
+    /// clip does not open on a fragment of it (a stray "wanna see" became a 1 s clip). The line's
+    /// timed end is used, not its estimated last word, which often ends before it is really sung.
+    private static let chorusLeadInClearance = AppConfiguration.default.segmentGap / 2
 
     private(set) var savedSongID: UUID?
     private(set) var actionError: UserFacingError?
@@ -491,7 +496,12 @@ final class ImportSongViewModel {
     var chorusSuggestion: (start: TimeInterval, length: TimeInterval)? {
         guard let audio, case .found(let song) = lyrics, let chorus = song.chorus else { return nil }
         let first = song.lines[chorus.lowerBound], last = song.lines[chorus.upperBound - 1]
-        let start = max(0, first.start - Self.chorusLeadIn)
+        var start = max(0, first.start - Self.chorusLeadIn)
+        if chorus.lowerBound > 0 {
+            let previous = song.lines[chorus.lowerBound - 1]
+            let previousEnd = previous.end + Self.chorusLeadInClearance
+            start = max(start, min(previousEnd, first.start))
+        }
         let end = min(audio.duration, (last.words.last?.end ?? last.end) + Self.chorusTail)
         let length = max(Self.minimumLength, end - start)
         // A chorus near the end of a song may need to start earlier to fit the minimum length.
