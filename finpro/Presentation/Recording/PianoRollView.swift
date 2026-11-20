@@ -83,8 +83,8 @@ struct PianoRollView: View {
     let trail: [RecordingViewModel.TrailPoint]
     /// Where the lime voice dot sits (smoothed, see VoiceDotFilter); nil hides it.
     var voiceDot: RecordingViewModel.VoiceDot?
-    /// How each note was sung so far; decides its colour (see NoteTally).
-    var noteTallies: [UUID: NoteTally] = [:]
+    /// How the notes are coloured: while recording, or the results in the cover preview.
+    var noteStyle: NoteStyle = .live
     /// Notes of the current segment, used to centre the vertical range.
     let focusMIDI: [Int]
     let songTime: () -> TimeInterval?
@@ -92,6 +92,8 @@ struct PianoRollView: View {
     var dimmedBefore: TimeInterval?
     /// Stops redrawing (e.g. while a dialog is open) to leave CPU time for audio and video.
     var isPaused = false
+    /// The lime dot of the live voice (off in the preview, which has no voice data).
+    var showsVoiceDot = true
     /// Lyric word sung on a note, drawn under it.
     var wordLabels: [UUID: String] = [:]
     /// Height reserved at the bottom for content drawn over the roll (the lyrics, in Concept 2).
@@ -110,6 +112,16 @@ struct PianoRollView: View {
     static let nearWindow: ClosedRange<TimeInterval> = -0.5...1.5
     /// Notes ahead used to place the lines while none is on screen.
     static let upcomingNoteCount = 4
+
+    enum NoteStyle {
+        /// Recording (user decision 2026-11-20): notes are never judged on screen. The part the
+        /// playhead has passed turns grey, the rest is white, and the lime dot sparkles while the
+        /// voice is on the note.
+        case live
+        /// Cover preview: each sung note green or red (missed), so the singer sees where it went
+        /// wrong; notes of segments not in the cover stay white.
+        case review(hit: Set<UUID>, missed: Set<UUID>)
+    }
     @State private var viewport = PianoRollViewport()
     @State private var dotMotion = VoiceDotMotion()
 
@@ -145,10 +157,12 @@ struct PianoRollView: View {
         static let panel = Color.secondaryButton.opacity(0.2)
         static let line = Color.tertiaryText.opacity(0.6)
         static let label = Color.secondaryButton
-        /// A note not passed yet; it turns green or red once the playhead is past it.
+        /// A note not passed yet.
         static let note = Color.secondaryButton
+        /// The part of a note the playhead has passed while recording.
+        static let passedNote = Color.gray
         /// Notes of the segments before the one being sung.
-        static let previousNote = Color.secondaryButton.opacity(0.45)
+        static let previousNote = Color.gray.opacity(0.6)
         static let playhead = Color.primary800
         static let dot = Color.secBrand
         static let word = Color.secondaryButton
@@ -160,25 +174,39 @@ struct PianoRollView: View {
 
     // MARK: - Drawing
 
-    /// Colours a note as a whole (user decision 2026-11-16, replacing per-moment stripes): while
-    /// it is sung, the part the playhead has passed takes the colour of the result so far; once
-    /// it is over, the whole note is green (≥65% in tune) or red. Grey until enough is heard.
-    private func fillSung(_ note: Note, shape: Path, upTo current: TimeInterval,
-                          in context: inout GraphicsContext, x: (TimeInterval) -> CGFloat) {
-        guard let tally = noteTallies[note.id] else { return }
-        let finished = current >= note.end
-        let color: Color
-        switch tally.verdict(finished: finished) {
-        case .undecided: return
-        case .good: color = .pitchHit
-        case .bad: color = .noteMiss
-        }
-        let end = finished ? note.end : current
+    /// Recording: greys the part of the note the playhead has passed.
+    private func fillPassed(_ shape: Path, upTo current: TimeInterval, in context: inout GraphicsContext,
+                            x: (TimeInterval) -> CGFloat) {
+        let bounds = shape.boundingRect
+        let passed = min(bounds.maxX, x(current))
+        guard passed > bounds.minX else { return }
         var clipped = context
         clipped.clip(to: shape)
-        let bounds = shape.boundingRect
-        let sung = CGRect(x: bounds.minX, y: bounds.minY, width: max(0, x(end) - bounds.minX), height: bounds.height)
-        clipped.fill(Path(finished ? bounds : sung), with: .color(color))
+        clipped.fill(Path(CGRect(x: bounds.minX, y: bounds.minY, width: passed - bounds.minX, height: bounds.height)),
+                     with: .color(Palette.passedNote))
+    }
+
+    /// Small sparks drifting out of the dot while the voice is on the note, a reward without
+    /// judging the note itself.
+    private func sparkle(around center: CGPoint, radius: CGFloat, at time: TimeInterval, in context: inout GraphicsContext) {
+        let count = 7
+        let cycle = 0.9
+        for index in 0..<count {
+            let progress = (time / cycle + Double(index) / Double(count)).truncatingRemainder(dividingBy: 1)
+            let round = ((time / cycle + Double(index) / Double(count)) - progress).rounded()
+            // A new direction every round, spread around the dot (golden angle).
+            let angle = (Double(index) * 2.399 + round * 1.7).truncatingRemainder(dividingBy: 2 * .pi)
+            let distance = radius * (1.2 + 2.2 * progress)
+            let point = CGPoint(x: center.x + CGFloat(cos(angle)) * distance, y: center.y + CGFloat(sin(angle)) * distance)
+            let size = radius * 0.85 * (1 - progress * 0.5)
+            var star = Path()
+            star.move(to: CGPoint(x: point.x, y: point.y - size))
+            star.addQuadCurve(to: CGPoint(x: point.x + size, y: point.y), control: point)
+            star.addQuadCurve(to: CGPoint(x: point.x, y: point.y + size), control: point)
+            star.addQuadCurve(to: CGPoint(x: point.x - size, y: point.y), control: point)
+            star.addQuadCurve(to: CGPoint(x: point.x, y: point.y - size), control: point)
+            context.fill(star, with: .color((index.isMultiple(of: 2) ? Color.white : Palette.dot).opacity(1 - progress)))
+        }
     }
 
     /// Centre and number of lines that show the notes on screen (or the segment's notes before
@@ -258,19 +286,25 @@ struct PianoRollView: View {
             let height = noteHeight
             let rect = CGRect(x: x(note.start), y: y(Double(note.midi)) - height / 2,
                               width: max(height, x(note.end) - x(note.start) - 2), height: height)
-            let isPrevious = dimmedBefore.map { note.end <= $0 + 1e-6 } ?? false
             let shape = Path(roundedRect: rect, cornerRadius: height / 2)
-            context.fill(shape, with: .color(isPrevious ? Palette.previousNote : Palette.note))
-            if !isPrevious { fillSung(note, shape: shape, upTo: current, in: &context, x: x) }
+            switch noteStyle {
+            case .live:
+                let isPrevious = dimmedBefore.map { note.end <= $0 + 1e-6 } ?? false
+                context.fill(shape, with: .color(isPrevious ? Palette.previousNote : Palette.note))
+                if !isPrevious { fillPassed(shape, upTo: current, in: &context, x: x) }
+            case .review(let hit, let missed):
+                let color = missed.contains(note.id) ? Color.noteMiss : hit.contains(note.id) ? Color.pitchHit : Palette.note
+                context.fill(shape, with: .color(color))
+            }
             if let word = wordLabels[note.id] {
                 context.draw(Text(word).font(.system(size: 8 * min(contentZoom, 1.5), weight: .medium)).foregroundStyle(Palette.word),
                              at: CGPoint(x: rect.minX + 2, y: rect.maxY + 2), anchor: .topLeading)
             }
         }
 
-        // The voice is shown only as a dot at the playhead, no trail line (design review); the
-        // notes it sang turn green or red. The pitch pipeline lags the song clock by ~0.1 s, so a
-        // voice heard within this long still counts as singing now.
+        // The voice is shown only as a dot at the playhead, no trail line (design review). The
+        // pitch pipeline lags the song clock by ~0.1 s, so a voice heard within this long still
+        // counts as singing now.
         let dotHold = 0.3
 
         // Playhead, with a dot where the voice is now.
@@ -285,12 +319,15 @@ struct PianoRollView: View {
         // Every move glides (VoiceDotMotion) instead of jumping.
         let magnet = notes.first { $0.start <= current && current < $0.end }
             ?? notes.filter { $0.start > current }.min { $0.start < $1.start }
+        guard showsVoiceDot else { return }
         let singing = voiceDot.map { current - $0.songTime < dotHold } ?? false
         var dotTarget: Double?
+        var onPitch = false
         if singing, let voiceDot {
             let sung = Double(voiceDot.midi)
-            if let magnet, abs(sung - Double(magnet.midi)) * 100 <= Double(NoteTally.toleranceCents) {
+            if let magnet, current >= magnet.start, abs(sung - Double(magnet.midi)) * 100 <= Double(NoteTally.toleranceCents) {
                 dotTarget = Double(magnet.midi)
+                onPitch = true
             } else {
                 dotTarget = sung
             }
@@ -306,6 +343,7 @@ struct PianoRollView: View {
             let dotY = min(max(y(midi), rowsTop + radius), rowsTop + rowsHeight - radius)
             // On the playhead: the dot is "now"; drawing it at the sample's time made it shake sideways.
             let dot = CGRect(x: playheadX - radius, y: dotY - radius, width: dotSize, height: dotSize)
+            if onPitch { sparkle(around: CGPoint(x: playheadX, y: dotY), radius: radius, at: current, in: &context) }
             context.fill(Path(ellipseIn: dot), with: .color(Palette.dot.opacity(singing ? 1 : Self.restingDotOpacity)))
         }
     }

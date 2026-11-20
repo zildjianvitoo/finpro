@@ -349,7 +349,6 @@ struct RecordingView: View {
         PianoRollView(notes: pianoRollNotes,
                       trail: viewModel.trail,
                       voiceDot: viewModel.voiceDot,
-                      noteTallies: viewModel.noteTallies,
                       focusMIDI: focusMIDI,
                       songTime: viewModel.displaySongTime,
                       dimmedBefore: viewModel.singingFrom,
