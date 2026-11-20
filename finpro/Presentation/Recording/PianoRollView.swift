@@ -186,26 +186,50 @@ struct PianoRollView: View {
                      with: .color(Palette.passedNote))
     }
 
-    /// Small sparks drifting out of the dot while the voice is on the note, a reward without
-    /// judging the note itself.
+    /// While the voice is on the note: a pulsing lime glow behind the dot, a ring spreading out
+    /// and stars bursting away, a reward without judging the note itself.
     private func sparkle(around center: CGPoint, radius: CGFloat, at time: TimeInterval, in context: inout GraphicsContext) {
-        let count = 7
-        let cycle = 0.9
+        // Glow, pulsing a few times a second.
+        let pulse = 0.5 + 0.5 * sin(time * 2 * .pi * 2.5)
+        var glow = context
+        glow.addFilter(.blur(radius: radius * 1.2))
+        let glowRadius = radius * (2.0 + 0.5 * pulse)
+        glow.fill(Path(ellipseIn: CGRect(x: center.x - glowRadius, y: center.y - glowRadius,
+                                         width: glowRadius * 2, height: glowRadius * 2)),
+                  with: .color(Palette.dot.opacity(0.45 + 0.3 * pulse)))
+
+        // Rings spreading out.
+        for offset in [0.0, 0.5] {
+            let progress = (time / 0.7 + offset).truncatingRemainder(dividingBy: 1)
+            let ringRadius = radius * (1.1 + 1.9 * progress)
+            context.stroke(Path(ellipseIn: CGRect(x: center.x - ringRadius, y: center.y - ringRadius,
+                                                  width: ringRadius * 2, height: ringRadius * 2)),
+                           with: .color(Palette.dot.opacity(0.8 * (1 - progress))), lineWidth: max(1, radius * 0.25 * (1 - progress)))
+        }
+
+        // Stars bursting away in new directions every round (golden angle spread).
+        let count = 12
+        let cycle = 0.8
+        let colors: [Color] = [.white, Palette.dot, Color(red: 1, green: 0.97, blue: 0.75)]
         for index in 0..<count {
-            let progress = (time / cycle + Double(index) / Double(count)).truncatingRemainder(dividingBy: 1)
-            let round = ((time / cycle + Double(index) / Double(count)) - progress).rounded()
-            // A new direction every round, spread around the dot (golden angle).
+            let phase = time / cycle + Double(index) / Double(count)
+            let progress = phase.truncatingRemainder(dividingBy: 1)
+            let round = (phase - progress).rounded()
             let angle = (Double(index) * 2.399 + round * 1.7).truncatingRemainder(dividingBy: 2 * .pi)
-            let distance = radius * (1.2 + 2.2 * progress)
+            let distance = radius * (1.0 + 3.2 * progress)
             let point = CGPoint(x: center.x + CGFloat(cos(angle)) * distance, y: center.y + CGFloat(sin(angle)) * distance)
-            let size = radius * 0.85 * (1 - progress * 0.5)
+            let size = radius * (index.isMultiple(of: 3) ? 1.3 : 0.9) * (1 - progress * 0.5)
+            let spin = Angle.radians(progress * .pi / 2)
             var star = Path()
-            star.move(to: CGPoint(x: point.x, y: point.y - size))
-            star.addQuadCurve(to: CGPoint(x: point.x + size, y: point.y), control: point)
-            star.addQuadCurve(to: CGPoint(x: point.x, y: point.y + size), control: point)
-            star.addQuadCurve(to: CGPoint(x: point.x - size, y: point.y), control: point)
-            star.addQuadCurve(to: CGPoint(x: point.x, y: point.y - size), control: point)
-            context.fill(star, with: .color((index.isMultiple(of: 2) ? Color.white : Palette.dot).opacity(1 - progress)))
+            star.move(to: CGPoint(x: 0, y: -size))
+            star.addQuadCurve(to: CGPoint(x: size, y: 0), control: .zero)
+            star.addQuadCurve(to: CGPoint(x: 0, y: size), control: .zero)
+            star.addQuadCurve(to: CGPoint(x: -size, y: 0), control: .zero)
+            star.addQuadCurve(to: CGPoint(x: 0, y: -size), control: .zero)
+            let placed = star.applying(CGAffineTransform(rotationAngle: spin.radians).translatedBy(x: 0, y: 0))
+                .applying(CGAffineTransform(translationX: point.x, y: point.y))
+            let opacity = progress < 0.15 ? progress / 0.15 : 1 - (progress - 0.15) / 0.85
+            context.fill(placed, with: .color(colors[index % colors.count].opacity(opacity)))
         }
     }
 
