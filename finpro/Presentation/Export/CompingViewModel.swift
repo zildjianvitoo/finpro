@@ -90,6 +90,11 @@ final class CompingViewModel {
     }
 
     let plan: CompingCompositionPlan
+    /// Notes of the song in the key it was sung in, for the pitch guide over the preview.
+    let guideNotes: [PianoRollView.Note]
+    /// Notes of the cover's takes sung well and missed (`TakeAttemptLog.missedNoteIDs`).
+    let hitNoteIDs: Set<UUID>
+    let missedNoteIDs: Set<UUID>
     /// "Artist - Title" of the imported song, when known.
     let songName: String?
     private(set) var exportState: ExportState = .idle
@@ -120,7 +125,20 @@ final class CompingViewModel {
          thumbnailProvider: any ClipThumbnailProviding = AVClipThumbnailProvider(),
          passThreshold: Float = AppConfiguration().passThreshold,
          onExported: @escaping (URL, CompingCompositionPlan) -> Void = { _, _ in },
-         onSavedToPhotos: @escaping () -> Void = {}) {
+         onSavedToPhotos: @escaping () -> Void = {},
+         transposition: TranspositionPlan? = nil) {
+        guideNotes = plan.segments.flatMap(\.targetNotes).map {
+            PianoRollView.Note(id: $0.id, midi: transposition?.transposed($0) ?? $0.midiNote, start: $0.startTime, end: $0.endTime)
+        }
+        var hit = Set<UUID>(), missed = Set<UUID>()
+        for take in plan.validTakes where plan.segments.indices.contains(take.segmentIndex) {
+            let missedHere = Set(take.missedNoteIDs)
+            for note in plan.segments[take.segmentIndex].targetNotes {
+                if missedHere.contains(note.id) { missed.insert(note.id) } else { hit.insert(note.id) }
+            }
+        }
+        hitNoteIDs = hit
+        missedNoteIDs = missed
         vocals = plan.vocalGain
         music = plan.instrumentalGain
         appliedVocals = plan.vocalGain

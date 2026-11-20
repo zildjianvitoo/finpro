@@ -22,6 +22,8 @@ struct ExportPreviewView: View {
     @State private var viewModel: CompingViewModel
     @State private var player: CoverPlayerController?
     @State private var showsSound = false
+    /// The pitch guide over the video, with each note green or red (remembered for next time).
+    @AppStorage("previewShowsPitchGuide") private var showsPitchGuide = true
     @State private var mixerReady = false
     @State private var mixerError: String?
     /// Saving the edited sound before leaving failed: the message, offering to leave without it.
@@ -62,6 +64,8 @@ struct ExportPreviewView: View {
     private let videoAspectRatio: CGFloat = 9.0 / 16.0
     private let videoCornerRadius: CGFloat = 12
     private let seekBarInset: CGFloat = 15
+    private let guideInset: CGFloat = 8
+    private let guideRows = 4
     private let seekBarBottom: CGFloat = 20
     private let timelineHeight: CGFloat = 2
     private let scrubbingLineHeight: CGFloat = 4
@@ -226,6 +230,16 @@ struct ExportPreviewView: View {
                 Spacer()
 
                 Button {
+                    withAnimation(.snappy) { showsPitchGuide.toggle() }
+                } label: {
+                    Image(systemName: showsPitchGuide ? "pianokeys.inverse" : "pianokeys")
+                }
+                .glassCircleButtonStyle()
+                .accessibilityLabel("Pitch guide")
+                .accessibilityValue(showsPitchGuide ? "Shown" : "Hidden")
+                .disabled(!viewModel.hasPlayableFile)
+
+                Button {
                     showsSound.toggle()
                 } label: {
                     Image(systemName: "speaker.wave.2")
@@ -303,6 +317,13 @@ struct ExportPreviewView: View {
             .frame(maxWidth: videoMaxWidth)
             .overlay { videoContent }
             .clipShape(.rect(cornerRadius: videoCornerRadius, style: .continuous))
+            .overlay(alignment: .top) {
+                if showsPitchGuide, let player {
+                    pitchGuide(player)
+                        .padding(guideInset)
+                        .transition(.opacity)
+                }
+            }
             .overlay(alignment: .bottom) {
                 if let player { seekBar(player) }
             }
@@ -324,6 +345,26 @@ struct ExportPreviewView: View {
                     .foregroundStyle(Color.primary800)
             }
         }
+    }
+
+    /// The song's notes scrolling with the video, green where they were sung well and red where
+    /// they were missed, so the singer sees where to retake. Touches pass through to the video.
+    private func pitchGuide(_ player: CoverPlayerController) -> some View {
+        // Read here so a seek or scrub while paused redraws the guide.
+        let shownTime = player.currentTime
+        let notes = viewModel.guideNotes
+        let focus = notes.filter { $0.end > shownTime }.prefix(PianoRollView.upcomingNoteCount).map(\.midi)
+        return PianoRollView(notes: notes,
+                             trail: [],
+                             noteStyle: .review(hit: viewModel.hitNoteIDs, missed: viewModel.missedNoteIDs),
+                             focusMIDI: Array(focus),
+                             songTime: { player.isPlaying ? player.player.currentTime().seconds : shownTime },
+                             isPaused: !player.isPlaying,
+                             showsVoiceDot: false,
+                             fixedRows: Double(guideRows))
+            .frame(height: PianoRollView.height(rows: CGFloat(guideRows)))
+            .allowsHitTesting(false)
+            .accessibilityLabel("Pitch guide: green notes were sung well, red notes were missed")
     }
 
     private func seekBar(_ player: CoverPlayerController) -> some View {

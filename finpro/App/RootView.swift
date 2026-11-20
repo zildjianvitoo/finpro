@@ -160,7 +160,8 @@ struct RootView: View {
             videoLibrary: container.videoLibrary,
             passThreshold: container.configuration.passThreshold,
             onExported: { flow.coverExported($0, plan: $1) },
-            onSavedToPhotos: flow.coverSavedToPhotos)
+            onSavedToPhotos: flow.coverSavedToPhotos,
+            transposition: flow.preparedSong?.transposition)
     }
 }
 
