@@ -2,7 +2,7 @@
 //  RecordingView.swift
 //  finpro
 //
-//  Recording screen (PRD §5.5): the front camera in its 9:16 frame, a tips card before recording
+//  Recording screen (PRD §5.5): the front camera in its 9:16 frame, a tips alert before recording
 //  starts, then the timer, the lyrics (a card near the camera, or inside the pitch guide), the
 //  pitch guide and the controls: settings, record (start / pause / resume), delete and done.
 //
@@ -15,6 +15,12 @@ struct RecordingView: View {
     @State private var confirmsEnd = false
     @State private var confirmsDeleteLast = false
     @State private var showsSettings = false
+    /// The recording tips, shown as a system alert before the first take.
+    @State private var showsTips = false
+    /// A stopped session (no earphones, interrupted, failed) as a system alert.
+    @State private var showsStopped = false
+    private static let tipsDelay: Duration = .milliseconds(450)
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
 
     @AppStorage(RecordingDisplaySettings.showsLyricsKey) private var showsLyrics = true
@@ -22,11 +28,20 @@ struct RecordingView: View {
     @AppStorage(RecordingDisplaySettings.lyricsInGuideKey) private var lyricsInGuide = RecordingDisplaySettings.defaultLyricsInGuide
     @AppStorage(RecordingDisplaySettings.pitchGuideScaleKey) private var pitchGuideScale = RecordingDisplaySettings.defaultPitchGuideScale
     @AppStorage(RecordingDisplaySettings.lyricsTextStepKey) private var lyricsTextStep = RecordingDisplaySettings.defaultLyricsTextStep
+    // Where the user moved / how big they made the pitch guide (width 0 = default place).
+    @AppStorage(RecordingDisplaySettings.guideFrameXKey) private var guideFrameX = 0.0
+    @AppStorage(RecordingDisplaySettings.guideFrameYKey) private var guideFrameY = 0.0
+    @AppStorage(RecordingDisplaySettings.guideFrameWidthKey) private var guideFrameWidth = 0.0
+    @AppStorage(RecordingDisplaySettings.guideFrameHeightKey) private var guideFrameHeight = 0.0
+    /// The pitch guide's default place (under the camera, above the controls), measured.
+    @State private var defaultGuideFrame = CGRect.zero
+    @State private var showsBluetoothBanner = false
 
     /// Measurements of the design (iPhone 17 Pro, 402 × 874 pt).
     private let backButtonSize: CGFloat = 44
     /// The design puts the back button 1 pt under the status bar; a little more air reads better.
     private let topBarInset: CGFloat = 9
+    private let bluetoothWarningDuration: Duration = .seconds(5)
     private let lyricsCardGap: CGFloat = 8
     private let lyricsCardInset: CGFloat = 33
     private let pitchGuideMaxWidth: CGFloat = 316
@@ -52,6 +67,11 @@ struct RecordingView: View {
     /// Countdown: the screen dims, the number sits in a white circle (design).
     private let countdownDimOpacity = 0.4
     private let countdownCircleSize: CGFloat = 150
+    /// The pre-roll's small count shows its last `preRollCountFrom` seconds, refreshed this often.
+    private let preRollCountFrom = 3
+    private let preRollCountStep: TimeInterval = 0.1
+    private let preRollCountSize: CGFloat = 36
+    private let preRollInfoGap: CGFloat = 8
 
     init(viewModel: RecordingViewModel) {
         _viewModel = State(initialValue: viewModel)
@@ -71,13 +91,24 @@ struct RecordingView: View {
                 content(layout)
                 countdownLayer
             }
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.25), value: isCountingDown)
             .frame(width: layout.size.width, height: layout.size.height, alignment: .top)
             .ignoresSafeArea()
             // The design is light only; tokens resolve light even when the phone is in dark mode.
             .environment(\.colorScheme, .light)
         }
         .preferredColorScheme(.dark)
-        .task { await viewModel.start() }
+        // The user sings without touching the phone: the screen must not dim or lock mid-take.
+        .keepsScreenAwake()
+        .task {
+            // Right after the camera and microphone prompts the app is not active yet, and a
+            // camera or audio session started then may not run (first launch after install).
+            while UIApplication.shared.applicationState != .active {
+                try? await Task.sleep(for: .milliseconds(100))
+                if Task.isCancelled { return }
+            }
+            await viewModel.start()
+        }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .background else { return }
             // PRD §5.8: leaving the app stops the session; ask for time to finalize the file.
@@ -111,6 +142,49 @@ struct RecordingView: View {
                  : "The current segment will start again.")
         }
         .sheet(isPresented: $showsSettings) { RecordingSettingsSheet(viewModel: viewModel) }
+        .alert("Quick Recording Tips", isPresented: $showsTips) {
+            Button("Let’s Record") { Task { await viewModel.beginRecording() } }
+        } message: {
+            Text("Wear wired headphones, keep your camera steady, and find a quiet spot for the best result.")
+        }
+        .alert(stoppedError?.title ?? "", isPresented: $showsStopped, presenting: stoppedError) { _ in
+            // The way forward takes the cancel role, so iOS adds no extra Cancel that would leave
+            // an empty screen behind the alert.
+            if case .blocked = viewModel.status {
+                Button("Try Again", role: .cancel) { Task { await viewModel.start() } }
+                Button("Start Over", role: .destructive) { Task { await viewModel.discard() } }
+            } else if viewModel.completedCount > 0 {
+                Button("Export \(viewModel.completedCount) of \(viewModel.segmentCount)", role: .cancel) {
+                    viewModel.exportAfterInterruption()
+                }
+                Button("Start Over", role: .destructive) { Task { await viewModel.discard() } }
+            } else {
+                Button("Start Over", role: .cancel) { Task { await viewModel.discard() } }
+            }
+        } message: { error in
+            Text(error.message)
+        }
+        .task(id: stoppedError) {
+            guard stoppedError != nil else { showsStopped = false; return }
+            // Like the tips: UIKit refuses an alert while the screen is still sliding in.
+            try? await Task.sleep(for: Self.tipsDelay)
+            if !Task.isCancelled { showsStopped = true }
+        }
+        .onChange(of: showsStopped) { _, shown in
+            // Try Again that is blocked again (still no earphones) ends in the same state, which the
+            // task above does not see as a change: ask again once the alert has gone.
+            guard !shown else { return }
+            Task {
+                try? await Task.sleep(for: Self.tipsDelay)
+                if stoppedError != nil, !showsStopped { showsStopped = true }
+            }
+        }
+        .task(id: viewModel.status == .ready) {
+            guard viewModel.status == .ready else { showsTips = false; return }
+            // UIKit refuses an alert while the screen is still sliding in; wait for it to settle.
+            try? await Task.sleep(for: Self.tipsDelay)
+            if !Task.isCancelled { showsTips = true }
+        }
     }
 
     // MARK: - Layout
@@ -187,20 +261,15 @@ struct RecordingView: View {
                 .tint(.white)
                 .foregroundStyle(.white)
                 .frame(maxHeight: .infinity)
-        case .blocked(let error):
-            stoppedState(error, primary: ("Try Again", { Task { await viewModel.start() } }))
-                .frame(maxHeight: .infinity)
-        case .interrupted(let error), .failed(let error):
-            stoppedState(error, primary: viewModel.completedCount > 0
-                         ? ("Export \(viewModel.completedCount) of \(viewModel.segmentCount)", { viewModel.exportAfterInterruption() })
-                         : nil)
-                .frame(maxHeight: .infinity)
+        case .blocked, .interrupted, .failed:
+            // Shown as a system alert (see `stoppedAlert`); the camera stays visible behind it.
+            Color.clear
         }
     }
 
     // MARK: - Before and while recording
 
-    /// Top bar, lyrics, pitch guide and controls over the camera frame; the tips card sits on top
+    /// Top bar, lyrics, pitch guide and controls over the camera frame; the tips alert is presented on top
     /// of them until it is dismissed by starting the recording.
     private func sessionOverlay(_ layout: VideoLayout) -> some View {
         VStack(spacing: 0) {
@@ -219,15 +288,15 @@ struct RecordingView: View {
             }
 
             Spacer()
-            phaseInfo
-            Spacer()
-
-            bluetoothWarning
 
             if showsPitchGuide {
-                pitchGuide
+                // Holds the default place; the guide itself floats above (movable, see below).
+                Color.clear
                     .frame(maxWidth: pitchGuideMaxWidth)
                     .frame(height: guideHeight)
+                    .onGeometryChange(for: CGRect.self) { $0.frame(in: .named(Self.overlaySpace)) } action: {
+                        defaultGuideFrame = $0
+                    }
                     .padding(.bottom, guideControlsGap)
             }
 
@@ -236,25 +305,62 @@ struct RecordingView: View {
         }
         .padding(.top, layout.top)
         .frame(width: layout.size.width, height: layout.top + layout.videoHeight, alignment: .top)
-        .overlay {
-            if viewModel.status == .ready {
-                tipsCard
+        .coordinateSpace(.named(Self.overlaySpace))
+        .overlay(alignment: .topLeading) {
+            if showsPitchGuide, defaultGuideFrame.width > 0 {
+                // Between the top bar and the controls, so it never covers a button.
+                let top = layout.top + topBarInset + backButtonSize + lyricsCardGap
+                let bounds = CGRect(x: 0, y: top, width: layout.size.width,
+                                    height: max(defaultGuideFrame.height, defaultGuideFrame.maxY - top))
+                MovablePanel(defaultFrame: defaultGuideFrame, bounds: bounds,
+                             minimumSize: CGSize(width: Self.guideMinimumWidth, height: defaultGuideFrame.height * 0.6),
+                             frame: guideFrameBinding) { size in
+                    pitchGuide(zoom: guideFrameWidth > 0 ? size.height / defaultGuideFrame.height : 1)
+                }
             }
+        }
+        // Above everything, right under the timer: lower down they were hidden by a moved or
+        // enlarged pitch guide.
+        .overlay(alignment: .top) {
+            VStack(spacing: preRollInfoGap) {
+                phaseInfo
+                bluetoothWarning
+            }
+            .padding(.top, layout.top + topBarInset + backButtonSize + preRollInfoGap)
+            .allowsHitTesting(false)
         }
         .animation(.snappy, value: lyricsInGuide)
         .animation(.snappy, value: showsLyrics)
     }
 
-    private var pitchGuide: some View {
+    private static let overlaySpace = "recordingOverlay"
+    private static let guideMinimumWidth: CGFloat = 200
+
+    /// The user's pitch guide frame, nil while it is in its default place.
+    private var guideFrameBinding: Binding<CGRect?> {
+        Binding(
+            get: { guideFrameWidth > 0 ? CGRect(x: guideFrameX, y: guideFrameY, width: guideFrameWidth, height: guideFrameHeight) : nil },
+            set: { rect in
+                guideFrameX = Double(rect?.minX ?? 0)
+                guideFrameY = Double(rect?.minY ?? 0)
+                guideFrameWidth = Double(rect?.width ?? 0)
+                guideFrameHeight = Double(rect?.height ?? 0)
+            })
+    }
+
+    private func pitchGuide(zoom: CGFloat) -> some View {
         PianoRollView(notes: pianoRollNotes,
                       trail: viewModel.trail,
+                      voiceDot: viewModel.voiceDot,
                       focusMIDI: focusMIDI,
                       songTime: viewModel.displaySongTime,
                       dimmedBefore: viewModel.singingFrom,
                       isPaused: confirmsEnd || confirmsDeleteLast || showsSettings,
                       wordLabels: wordLabels,
                       lyricsHeight: lyricsInPanel ? RecordingDisplaySettings.guideLyricsHeight : 0,
-                      scale: pitchGuideScale)
+                      scale: pitchGuideScale,
+                      fixedRows: Double(RecordingDisplaySettings.guideRows),
+                      contentZoom: min(max(zoom, 0.6), 2.5))
             .overlay(alignment: .bottom) {
                 if lyricsInPanel {
                     RecordingGuideLyricsView(lines: viewModel.lyrics, songTime: viewModel.displaySongTime)
@@ -265,15 +371,27 @@ struct RecordingView: View {
     }
 
     @ViewBuilder
+    /// Shown for `bluetoothWarningDuration` each time Bluetooth earphones become the route, then
+    /// it slides away (it stayed for the whole session before).
     private var bluetoothWarning: some View {
-        if viewModel.showsBluetoothWarning {
-            Label("Wired earphones give the best sync", systemImage: "airpodspro")
-                .font(.appCaption)
-                .foregroundStyle(.white)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(.orange.opacity(0.85), in: .capsule)
-                .padding(.bottom, 8)
+        ZStack {
+            if showsBluetoothBanner {
+                Label("Wired earphones give the best sync", systemImage: "airpodspro")
+                    .font(.appCaption)
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.orange.opacity(0.85), in: .capsule)
+                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.9)))
+            }
+        }
+        .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(duration: 0.45, bounce: 0.25), value: showsBluetoothBanner)
+        .task(id: viewModel.showsBluetoothWarning) {
+            showsBluetoothBanner = viewModel.showsBluetoothWarning
+            guard showsBluetoothBanner else { return }
+            try? await Task.sleep(for: bluetoothWarningDuration)
+            guard !Task.isCancelled else { return }
+            showsBluetoothBanner = false
         }
     }
 
@@ -418,48 +536,6 @@ struct RecordingView: View {
         .accessibilityLabel("Finish recording")
     }
 
-    // MARK: - Tips
-
-    private var tipsCard: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Image(systemName: "headphones")
-                .font(.body)
-                .foregroundStyle(Color.primary800)
-                .environment(\.colorScheme, .light)
-                .frame(width: 32, height: 32)
-                .background(Circle().fill(.white))
-                .frame(maxWidth: .infinity)
-                .accessibilityHidden(true)
-
-            Text("Quick Recording Tips")
-                .font(.appSubheadline.weight(.semibold))
-                .foregroundStyle(.white)
-                .accessibilityAddTraits(.isHeader)
-
-            Text("Wear headphones, keep your camera steady, and find a quiet place for the best recording.")
-                .font(.appFootnote)
-                .foregroundStyle(.white.opacity(0.85))
-                .fixedSize(horizontal: false, vertical: true)
-
-            Button {
-                Task { await viewModel.beginRecording() }
-            } label: {
-                Text("Let’s Record")
-                    .font(.appSubheadline.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity, minHeight: 44)
-                    .background(Capsule().fill(Color.primary800))
-                    .contentShape(Capsule())
-            }
-            .buttonStyle(.plain)
-            .padding(.top, 6)
-        }
-        .padding(14)
-        .frame(maxWidth: 260)
-        .glassCardBackground(cornerRadius: 22)
-        .environment(\.colorScheme, .dark)
-    }
-
     // MARK: - Countdown
 
     /// Dims the screen and shows the number in a white circle, before the first segment and after
@@ -480,29 +556,49 @@ struct RecordingView: View {
                     .accessibilityLabel("Starting in \(remaining)")
             }
             .allowsHitTesting(false)
+            .transition(.opacity)
         }
     }
 
+    private var isCountingDown: Bool {
+        if case .countdown = viewModel.loop.phase { true } else { false }
+    }
+
+    /// During the pre-roll: "Listen…" and, in its last seconds, a small 3-2-1 to the first note of
+    /// the segment. It replaces the countdown that dimmed the screen, so the guide stays visible.
     @ViewBuilder
     private var phaseInfo: some View {
         if viewModel.loop.phase == .preRoll {
-            Label("Listen…", systemImage: "ear")
-                .font(.appTitle3.bold())
+            TimelineView(.periodic(from: .now, by: preRollCountStep)) { _ in
+                let remaining = viewModel.secondsToSegmentStart().map { Int($0.rounded(.up)) }
+                HStack(spacing: 10) {
+                    Label("Listen…", systemImage: "ear")
+                        .font(.appTitle3.bold())
+                    if let remaining, (1...preRollCountFrom).contains(remaining) {
+                        Text("\(remaining)")
+                            .font(.appTitle3.bold())
+                            .monospacedDigit()
+                            .foregroundStyle(Color.primary800)
+                            .contentTransition(.numericText(countsDown: true))
+                            .animation(.snappy, value: remaining)
+                            .frame(width: preRollCountSize, height: preRollCountSize)
+                            .background(Circle().fill(.white))
+                            .accessibilityLabel("Starting in \(remaining)")
+                    }
+                }
                 .foregroundStyle(.white)
+                .padding(.leading, 16).padding(.trailing, 6).padding(.vertical, 6)
+                .background(.black.opacity(0.55), in: Capsule())
+            }
+            .transition(.opacity)
         }
     }
 
-    private func stoppedState(_ error: UserFacingError, primary: (String, () -> Void)?) -> some View {
-        VStack(spacing: 16) {
-            ErrorStateView(error: error, actionTitle: primary?.0, action: primary?.1)
-            Button("Start Over", role: .destructive) {
-                Task { await viewModel.discard() }
-            }
+    private var stoppedError: UserFacingError? {
+        switch viewModel.status {
+        case .blocked(let error), .interrupted(let error), .failed(let error): error
+        default: nil
         }
-        .foregroundStyle(.white)
-        .padding()
-        .background(.black.opacity(0.7), in: .rect(cornerRadius: 20))
-        .padding()
     }
 
     // MARK: - Data for the pitch guide
@@ -530,9 +626,6 @@ struct RecordingView: View {
 
     private var focusMIDI: [Int] {
         guard let segment = viewModel.loop.currentSegment else { return [] }
-        let notes = segment.targetNotes.isEmpty
-            ? viewModel.song.segments.flatMap(\.targetNotes)
-            : segment.targetNotes
-        return notes.map(viewModel.song.transposition.transposed)
+        return segment.targetNotes.map(viewModel.song.transposition.transposed)
     }
 }

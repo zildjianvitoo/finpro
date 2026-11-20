@@ -10,6 +10,7 @@
 import CoreMedia
 import Foundation
 import Observation
+import os
 
 @Observable
 final class AppFlow {
@@ -17,9 +18,9 @@ final class AppFlow {
         case onboarding
         case vocalRange
         case home
+        case songList
         case importSong
         case chooseKey
-        case ready
         case recording
         case export
     }
@@ -27,20 +28,38 @@ final class AppFlow {
     private static let hasCompletedOnboardingKey = "hasCompletedOnboarding"
 
     let container: AppContainer
-    private(set) var step: Step
+    private(set) var step: Step {
+        didSet { if step != oldValue { Self.log.notice("step: \(String(describing: oldValue), privacy: .public) → \(String(describing: self.step), privacy: .public)") } }
+    }
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Flow")
+    private(set) var importOrigin: Step = .home
+    private(set) var selectedLibrarySongID: UUID?
+    /// The import screen edits a song from the library ("Choose Song Section"). Set when the
+    /// screen opens, not when the song gets saved: a new import is saved as preparation starts,
+    /// and the sheet switched layout under the preparing screen.
+    private(set) var importEditsSavedSong = false
+    var selectedLibrarySong: SavedSong? { container.songLibrary.songs.first { $0.id == selectedLibrarySongID } }
     private(set) var preparedSong: PreparedSong?
     private(set) var keyChoices: PrepareSongUseCase.Choices?
     private(set) var preparationError: UserFacingError?
     private(set) var loadingDemo = false
-    /// Stems of the chosen song before transposition (Ready screen, original key).
-    var separatedStems: SeparatedStems? { keyChoices?.stems }
-    private(set) var compingPlan: CompingCompositionPlan?
+    private(set) var compingPlan: CompingCompositionPlan? {
+        didSet { compingPlanExportURL = nil }
+    }
+    /// The saved cover video made from exactly `compingPlan`, so the result screen can show it
+    /// without merging the takes again (opening a draft, or coming back from a discarded retake).
+    private(set) var compingPlanExportURL: URL?
     /// What the recording screen records next: the session, or a retake / continue of the cover.
     private(set) var recordingPass = RecordingPass.session
     /// Lyrics of the chosen part on the prepared song's timeline, for the recording screen.
     private(set) var recordingLyrics: [LyricLine] = []
     /// "Artist - Title" of the imported song, for the final result screens (nil for the demo).
     private(set) var songName: String?
+    /// The Home library entry of the cover being made, so a re-export after a retake or
+    /// continue replaces it instead of adding a second one. Cleared when a new cover starts.
+    private var savedCoverID: UUID?
+    /// The last copy of the cover's working files to `CoverDraftStore`; later saves and deletes wait for it.
+    @ObservationIgnored private var draftSave: Task<Void, Never>?
 
     init(container: AppContainer) {
         self.container = container
@@ -56,6 +75,7 @@ final class AppFlow {
         case "onboarding": step = .onboarding
         case "vocalRange": step = .vocalRange
         case "home": step = .home
+        case "songList": step = .songList
         case "importSong": step = .importSong
         case "recording": step = .importSong // the demo song is prepared below, then recording starts
         case "export":
@@ -68,6 +88,10 @@ final class AppFlow {
         #endif
         // Leftovers from a session that ended in a crash.
         SessionFiles.cleanUp()
+        // Only drafts can be opened again; finished or removed covers don't need their working files.
+        let draftIDs = Set(container.coverLibrary.covers.filter(\.isDraft).map(\.id))
+        let drafts = container.coverDrafts
+        draftSave = Task.detached(priority: .utility) { drafts.deleteAll(except: draftIDs) }
         container.modelPrewarmer?.start()
         #if DEBUG
         if DebugOptions.launchScreen == "recording" {
@@ -83,7 +107,6 @@ final class AppFlow {
         await loadDemoSong()
         guard let song = keyChoices?.options.first?.song else { return }
         songPrepared(song)
-        startRecording()
     }
     #endif
 
@@ -112,14 +135,42 @@ final class AppFlow {
 
     /// Home screen: user tapped Create New Cover.
     func createNewCover() {
+        importOrigin = step == .songList ? .songList : .home
+        selectedLibrarySongID = nil
+        importEditsSavedSong = false
         step = .importSong
     }
+
+    func openSongList() { step = .songList }
+    func openHome() { container.audioPreview.stop(); step = .home }
+    func openSong(_ song: SavedSong) {
+        container.audioPreview.stop()
+        importOrigin = step == .songList ? .songList : .home
+        selectedLibrarySongID = song.id
+        importEditsSavedSong = true
+        step = .importSong
+    }
+    func sourceSongSaved(_ id: UUID) { selectedLibrarySongID = id }
+    /// The import sheet was dismissed. SwiftUI also calls this after the sheet closed because the
+    /// flow moved on (e.g. to Find Your Key); the next screen's audio must keep playing then.
+    func closeImport() {
+        guard step == .importSong else { return }
+        container.audioPreview.stop()
+        step = importOrigin
+    }
+    func savedToSongList() { container.audioPreview.stop(); step = .songList }
+    func returnToSongSection() {
+        container.audioPreview.stop()
+        importEditsSavedSong = selectedLibrarySongID != nil
+        step = .importSong
+    }
+
 
     /// Import/prep screen (Ikzaz) finished preparing a song.
     func songPrepared(_ song: PreparedSong) {
         Contract.assertValid(song.validate())
         preparedSong = song
-        step = .ready
+        startRecording()
     }
 
     func changeKey() {
@@ -166,9 +217,21 @@ final class AppFlow {
     /// Ready screen: user tapped Record. A new session starts, so files from the last one go (ZV-16).
     func startRecording() {
         guard preparedSong != nil else { return }
+        // The previous cover's draft may still be copying its raw videos out of the session
+        // folder; clearing the folder before that ends would leave the draft incomplete.
+        guard draftSave == nil else {
+            let pending = draftSave
+            draftSave = nil
+            Task {
+                await pending?.value
+                startRecording()
+            }
+            return
+        }
         container.takeLog.clear()
         SessionFiles.cleanUp()
         try? SessionFiles.prepareDirectory()
+        savedCoverID = nil
         // A new cover: its first recording locks the camera look again.
         (container.capture as? any CameraLookLocking)?.resetCameraLook()
         record(.session)
@@ -214,6 +277,76 @@ final class AppFlow {
         step = .recording
     }
 
+    /// Final result screen: the cover was exported; keep one Home library entry per cover.
+    /// Also keeps its working files (raw videos, song audio, takes), so it can be opened as a
+    /// draft later, even after the app was closed without choosing Save to Draft.
+    func coverExported(_ url: URL, plan: CompingCompositionPlan) {
+        savedCoverID = container.coverLibrary.save(url, title: songName, duration: plan.endTime,
+                                                   isDraft: plan.isPartial, replacing: savedCoverID) ?? savedCoverID
+        compingPlanExportURL = savedCoverURL
+        guard let id = savedCoverID, let preparedSong else { return }
+        let draft = CoverDraft(song: preparedSong, plan: plan, attempts: container.takeLog.allAttempts(),
+                               lyrics: recordingLyrics, songName: songName)
+        let drafts = container.coverDrafts
+        let previous = draftSave
+        draftSave = Task {
+            await previous?.value
+            try? await drafts.save(draft, id: id)
+        }
+    }
+
+    private var savedCoverURL: URL? {
+        let library = container.coverLibrary
+        return library.covers.first { $0.id == savedCoverID }.map(library.url(for:))
+    }
+
+    /// Home: a draft cover was tapped. Opens it on the result screen with its takes, so it can be
+    /// retaken, continued or exported. False when its working files are gone (the caller plays it).
+    func openDraft(_ id: UUID) -> Bool {
+        guard let draft = container.coverDrafts.load(id: id), draft.plan.validate().isEmpty,
+              draft.song.validate().isEmpty else { return false }
+        container.audioPreview.stop()
+        container.takeLog.clear()
+        draft.attempts.forEach(container.takeLog.logAttempt)
+        keyChoices = nil
+        preparationError = nil
+        preparedSong = draft.song
+        recordingLyrics = draft.lyrics
+        songName = draft.songName
+        compingPlan = draft.plan
+        recordingPass = .session
+        savedCoverID = id
+        // The draft's plan is the one its saved video was exported from.
+        compingPlanExportURL = savedCoverURL
+        step = .export
+        return true
+    }
+
+    /// Final result screen: the cover was saved to Photos, so it counts as finished on Home.
+    func coverSavedToPhotos() {
+        if let savedCoverID { container.coverLibrary.markFinished(savedCoverID) }
+    }
+
+    /// Final result screen, leave dialog: keep the cover on Home as a draft, then go home.
+    func saveCoverAsDraft() {
+        if let savedCoverID { container.coverLibrary.markDraft(savedCoverID) }
+        startOver()
+    }
+
+    /// Final result screen, leave dialog: remove the cover and its working files, then go home.
+    func discardCover() {
+        if let id = savedCoverID {
+            container.coverLibrary.delete(id)
+            let drafts = container.coverDrafts
+            let previous = draftSave
+            draftSave = Task {
+                await previous?.value
+                drafts.delete(id: id)
+            }
+        }
+        startOver()
+    }
+
     /// Recording screen (Takin) ended the session with at least one passed segment.
     func sessionEnded(with plan: CompingCompositionPlan) {
         Contract.assertValid(plan.validate())
@@ -229,7 +362,7 @@ final class AppFlow {
             return
         }
         container.takeLog.clear()
-        step = .ready
+        step = keyChoices == nil ? .home : .chooseKey
     }
 
     /// Final result screen: record the same song again.
@@ -245,6 +378,7 @@ final class AppFlow {
         preparationError = nil
         preparedSong = nil
         compingPlan = nil
+        savedCoverID = nil
         container.takeLog.clear()
         step = .home
     }

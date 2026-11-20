@@ -2,253 +2,148 @@
 //  OnboardingView.swift
 //  finpro
 //
-//  App onboarding and walkthrough flow: Splash + 3 swipeable guide screens.
-//
 
 import SwiftUI
 
 struct OnboardingView: View {
     let onFinish: () -> Void
+    @State private var currentStep = -2
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    /// -1: Splash screen, 0..2: Walkthrough steps
-    @State private var currentStep: Int = -1
-
-    /// Inset of the buttons from the screen edge.
-    private let buttonInset: CGFloat = 24
-    /// Inset of the text and illustrations, deeper than the buttons per the design.
-    private let contentInset: CGFloat = 44
-
-    private struct WalkthroughPage {
-        let badge: String
-        let title: String
-        let subtitle: String
-        let imageName: String
-        var proTip: String?
-    }
-
-    private let pages: [WalkthroughPage] = [
-        WalkthroughPage(
-            badge: "VOCAL GUIDE",
-            title: "Stay on pitch, as you sing.",
-            subtitle: "Follow visual pitch and timing guides as you record.",
-            imageName: "onboarding-2"
-        ),
-        WalkthroughPage(
-            badge: "SEAMLESS RECORDING",
-            title: "Retake less. Create more.",
-            subtitle: "Redo specific parts without restarting. Your takes come together in one cover.",
-            imageName: "onboarding-3"
-        ),
-        WalkthroughPage(
-            badge: "SETUP",
-            title: "Get your setup ready.",
-            subtitle: "Use wired earphones or headphones for more synchronized audio. Bluetooth may cause recording delays.",
-            imageName: "onboarding-4",
-            proTip: "Pro tip: Connect your wired headphones before you start recording."
-        )
+    private let titles = ["Stay on pitch,\nas you sing.", "Retake less.\nCreate more.", "Find a key that fits\nyour voice."]
+    private let subtitles = [
+        "Follow visual pitch and timing cues while recording your cover.",
+        "We’ll highlight clips that need a retake, so you can re-record just that section.",
+        "We'll transpose songs to match your voice, so you can sing with confidence."
     ]
 
     var body: some View {
         Group {
-            if currentStep < 0 {
-                splashScreen
-                    .transition(.opacity)
+            if currentStep == -2 {
+                BrandLogoView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .task {
+                        try? await Task.sleep(for: .seconds(1))
+                        guard !Task.isCancelled else { return }
+                        withAnimation { currentStep = -1 }
+                    }
+            } else if currentStep == -1 {
+                welcome
             } else {
-                walkthroughContainer
-                    .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .leading)))
+                walkthrough
             }
         }
-        .animation(.default, value: currentStep < 0)
-        .background(Color.onboardingBackground.ignoresSafeArea())
+        .background(Color.screenBackground.ignoresSafeArea())
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: currentStep < 0)
     }
 
-    // MARK: - Splash Screen
-
-    private var splashScreen: some View {
-        VStack(spacing: 0) {
-            // Centered in the space above the text, nudged up as in the design.
-            EasySingLogoView()
-                .frame(maxHeight: .infinity)
-                .padding(.bottom, 50)
-
-            VStack(spacing: 12) {
-                Text("Make your cover easier.")
-                    .font(.title.bold())
-                    .foregroundStyle(Color.plumInk)
-
-                Text("A smoother way to record your singing covers.")
-                    .font(.callout)
-                    .foregroundStyle(Color.plumInkSecondary)
-            }
-            .multilineTextAlignment(.center)
-            .padding(.horizontal, contentInset)
-            .padding(.bottom, 44)
-
-            Button("Get started") {
-                withAnimation { currentStep = 0 }
-            }
-            .buttonStyle(.primaryDeep)
-            .padding(.horizontal, buttonInset)
-            .padding(.bottom, 8)
-        }
-    }
-
-    // MARK: - Walkthrough Container (Swipeable)
-
-    private var walkthroughContainer: some View {
-        VStack(spacing: 0) {
-            topBar
-
-            ScrollView {
-                VStack(spacing: 20) {
-                    pager
-                    pageDots
+    private var welcome: some View {
+        // Logo in the upper part, as in the 1.2 Welcome Screen design (top at ~23% of the safe area).
+        GeometryReader { proxy in
+            VStack(spacing: 0) {
+                BrandLogoView()
+                    .padding(.top, proxy.size.height * 0.23)
+                Spacer(minLength: 24)
+                VStack(spacing: 0) {
+                    Text("Record covers effortlessly").font(.appTitle2).fontWeight(.bold)
+                        .foregroundStyle(Color.primaryBrand)
+                    Text("A smoother way to create\nyour singing covers.")
+                        .font(.appBody).foregroundStyle(Color.primary300)
                 }
+                .multilineTextAlignment(.center)
+                Button("Get Started") { currentStep = 0 }
+                    .buttonStyle(.appPrimary)
+                    .padding(.top, 65)
+                    .padding(.bottom, 16)
             }
-            .scrollBounceBehavior(.basedOnSize)
-
-            footer
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 25)
         }
     }
 
-    /// The hidden copies give the pager the height of its tallest page,
-    /// so the dots sit right under the illustration instead of at the bottom.
-    private var pager: some View {
-        ZStack {
-            ForEach(pages.indices, id: \.self) { index in
-                pageContent(for: pages[index])
-            }
+    /// Page illustrations, each animated from its layers while its page is shown.
+    @ViewBuilder private func illustration(_ index: Int) -> some View {
+        switch index {
+        case 0: PitchGuideIllustration(isActive: currentStep == 0)
+        case 1: RetakeIllustration(isActive: currentStep == 1)
+        default: VocalRangeIllustration(isActive: currentStep == 2)
         }
-        .hidden()
-        .overlay {
+    }
+
+    private var isLastPage: Bool { currentStep == 2 }
+    private var pageAnimation: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.25) }
+
+    private var walkthrough: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button { withAnimation { currentStep -= 1 } } label: {
+                    Image(systemName: "chevron.left")
+                }
+                .buttonStyle(.appIcon(.glass))
+                .accessibilityLabel("Back")
+                Spacer()
+                // Kept in the layout on the last page (only faded out), so the header height and
+                // with it the pages don't jump when the last page is reached.
+                Button("Skip", action: onFinish)
+                    .font(.appBody).fontWeight(.medium).foregroundStyle(Color.primary)
+                    .glassPillButtonStyle()
+                    .opacity(isLastPage ? 0 : 1)
+                    .disabled(isLastPage)
+                    .accessibilityHidden(isLastPage)
+                    .animation(pageAnimation, value: isLastPage)
+            }
+            .padding(.horizontal, 16)
+
             TabView(selection: $currentStep) {
-                ForEach(pages.indices, id: \.self) { index in
-                    pageContent(for: pages[index])
-                        .frame(maxHeight: .infinity, alignment: .top)
-                        .tag(index)
+                ForEach(0..<3) { index in
+                    GeometryReader { proxy in
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(titles[index]).font(.appLargeTitle)
+                                    .foregroundStyle(Color.primaryBrand)
+                                    .accessibilityAddTraits(.isHeader)
+                                Text(subtitles[index]).font(.appBody)
+                                    .foregroundStyle(Color.primary300)
+                                    .frame(maxWidth: 335, alignment: .leading)
+                                    .padding(.top, 8)
+                                    .frame(minHeight: 52, alignment: .topLeading)
+                                illustration(index)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: max(220, proxy.size.height - 212))
+                                    .padding(.top, 34)
+                            }
+                            .padding(.horizontal, 24)
+                            .padding(.top, 44)
+                        }
+                        .scrollBounceBehavior(.basedOnSize)
+                    }
+                    .tag(index)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
-        }
-    }
 
-    private func pageContent(for page: WalkthroughPage) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            badgeView(title: page.badge)
-                .padding(.bottom, 12)
-
-            Text(page.title)
-                .font(.title.bold())
-                .foregroundStyle(Color.plumInk)
-                .padding(.bottom, 8)
-
-            Text(page.subtitle)
-                .font(.callout)
-                .foregroundStyle(Color.plumInkSecondary)
-                .padding(.bottom, 32)
-
-            Image(page.imageName)
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: .infinity)
-                .overlay(alignment: .bottom) {
-                    if let proTip = page.proTip {
-                        OnboardingProTipView(text: proTip)
-                            .padding(.horizontal, 20)
-                            .padding(.bottom, 20)
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-        }
-        .fixedSize(horizontal: false, vertical: true)
-        .padding(.horizontal, contentInset)
-        .padding(.top, 8)
-    }
-
-    // MARK: - Top Bar (with Liquid Glass)
-
-    private var topBar: some View {
-        LiquidGlassGroup {
-            HStack {
-                Button {
-                    withAnimation {
-                        if currentStep == 0 {
-                            currentStep = -1
-                        } else {
-                            currentStep -= 1
-                        }
-                    }
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.primary)
-                }
-                .glassCircleButtonStyle()
-                .accessibilityLabel("Back")
-
-                Spacer()
-
-                if currentStep < pages.count - 1 {
-                    Button(action: onFinish) {
-                        Text("Skip")
-                            .font(.subheadline)
-                            .foregroundStyle(.primary)
-                    }
-                    .glassCapsuleButtonStyle()
+            HStack(spacing: 8) {
+                ForEach(0..<3) { index in
+                    Capsule().fill(index == currentStep ? Color.plumNight : Color.gray.opacity(0.4))
+                        .frame(width: index == currentStep ? 20 : 8, height: 8)
                 }
             }
-            .padding(.horizontal, buttonInset)
-            .padding(.bottom, 2)
+            .animation(pageAnimation, value: currentStep)
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(Color.searchField, in: Capsule())
+            .accessibilityLabel("Page \(currentStep + 1) of 3")
+            .padding(.top, 15)
+
+            // Always laid out (faded in on the last page), so nothing moves when it appears.
+            Button("Find my vocal range", action: onFinish).buttonStyle(.appPrimary)
+                .opacity(isLastPage ? 1 : 0)
+                .offset(y: isLastPage || reduceMotion ? 0 : 8)
+                .disabled(!isLastPage)
+                .accessibilityHidden(!isLastPage)
+                .animation(pageAnimation, value: isLastPage)
+                .padding(.horizontal, 25).padding(.top, 16).padding(.bottom, 16)
         }
-    }
-
-    private func badgeView(title: String) -> some View {
-        Text(title)
-            .font(.body)
-            .foregroundStyle(.white)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 7)
-            .background(Capsule().fill(Color.badgeBackground))
-    }
-
-    // MARK: - Page Dots
-
-    private var pageDots: some View {
-        HStack(spacing: 8) {
-            ForEach(pages.indices, id: \.self) { index in
-                Circle()
-                    .fill(index == currentStep ? Color.primary : Color(.systemGray4))
-                    .frame(width: 6, height: 6)
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 7)
-        .background(Capsule().fill(Color(.systemBackground)))
-        .animation(.easeInOut(duration: 0.2), value: currentStep)
-        .accessibilityElement()
-        .accessibilityLabel("Page \(currentStep + 1) of \(pages.count)")
-    }
-
-    // MARK: - Footer
-
-    private var footer: some View {
-        let isLastPage = currentStep >= pages.count - 1
-        let buttonTitle = isLastPage ? "I'm ready" : "Continue"
-
-        return Button(buttonTitle) {
-            if !isLastPage {
-                withAnimation { currentStep += 1 }
-            } else {
-                onFinish()
-            }
-        }
-        .buttonStyle(.primaryDeep)
-        .padding(.horizontal, buttonInset)
-        .padding(.top, 12)
-        .padding(.bottom, 8)
     }
 }
 
-#Preview {
-    OnboardingView(onFinish: {})
-}
+#Preview { OnboardingView(onFinish: {}) }

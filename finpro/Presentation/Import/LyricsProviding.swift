@@ -8,13 +8,13 @@
 
 import Foundation
 
-nonisolated struct LyricWord: Equatable, Sendable {
+nonisolated struct LyricWord: Equatable, Sendable, Codable {
     let text: String
     let start: TimeInterval
     let end: TimeInterval
 }
 
-nonisolated struct LyricLine: Equatable, Sendable, Identifiable {
+nonisolated struct LyricLine: Equatable, Sendable, Identifiable, Codable {
     let id: Int
     let text: String
     let start: TimeInterval
@@ -22,9 +22,27 @@ nonisolated struct LyricLine: Equatable, Sendable, Identifiable {
     let end: TimeInterval
     /// Estimated: the source only times whole lines.
     let words: [LyricWord]
+
+    /// Keep only the sung portion intersecting the selection, on the excerpt's timeline.
+    func clipped(to selection: ClosedRange<TimeInterval>) -> LyricLine? {
+        let lower = max(start, selection.lowerBound)
+        let upper = min(end, selection.upperBound)
+        guard lower < upper else { return nil }
+        let offset = selection.lowerBound
+        let kept = words.compactMap { word -> LyricWord? in
+            let from = max(lower, word.start)
+            let to = min(upper, word.end)
+            guard from < to else { return nil }
+            return LyricWord(text: word.text, start: from - offset, end: to - offset)
+        }
+        // Without word timing only an entirely selected line can be shown reliably.
+        guard !kept.isEmpty || (words.isEmpty && lower == start && upper == end) else { return nil }
+        let selectedText = kept.count == words.count ? text : kept.map(\.text).joined(separator: " ")
+        return LyricLine(id: id, text: selectedText, start: lower - offset, end: upper - offset, words: kept)
+    }
 }
 
-nonisolated struct SongLyrics: Equatable, Sendable {
+nonisolated struct SongLyrics: Equatable, Sendable, Codable {
     let lines: [LyricLine]
     /// Indices into `lines` of the chorus' first occurrence (the most repeated block), if any.
     let chorus: Range<Int>?

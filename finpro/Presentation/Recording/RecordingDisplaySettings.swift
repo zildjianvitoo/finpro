@@ -22,6 +22,13 @@ enum RecordingDisplaySettings {
     /// Size of the notes, lines and voice dot of the pitch guide, 0...1 (the Pitch Guide slider).
     static let pitchGuideScaleKey = "recording.pitchGuideScale"
 
+    /// Where the user moved the pitch guide panel and how big they made it (points on the
+    /// recording overlay); a width of 0 means the default place under the camera.
+    static let guideFrameXKey = "recording.guideFrame.x"
+    static let guideFrameYKey = "recording.guideFrame.y"
+    static let guideFrameWidthKey = "recording.guideFrame.width"
+    static let guideFrameHeightKey = "recording.guideFrame.height"
+
     static let defaultLyricsInGuide = true
     /// The middle of the slider is the design's default look; the right end is "Pitch Max".
     static let defaultPitchGuideScale = 0.5

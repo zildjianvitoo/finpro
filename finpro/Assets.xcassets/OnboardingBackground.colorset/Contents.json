@@ -13,7 +13,6 @@
       }
     },
     {
-      "idiom": "universal",
       "appearances": [
         {
           "appearance": "luminosity",
@@ -23,12 +22,13 @@
       "color": {
         "color-space": "srgb",
         "components": {
-          "red": "0x12",
-          "green": "0x10",
-          "blue": "0x12",
-          "alpha": "1.000"
+          "alpha": "1.000",
+          "red": "0x17",
+          "green": "0x11",
+          "blue": "0x1A"
         }
-      }
+      },
+      "idiom": "universal"
     }
   ],
   "info": {

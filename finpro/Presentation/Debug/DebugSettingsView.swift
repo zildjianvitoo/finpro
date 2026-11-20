@@ -60,9 +60,6 @@ struct DebugSettingsView: View {
                     row("Vocal gain", $configuration.vocalGain, in: 0...2, step: 0.1)
                     row("Instrumental gain", $configuration.instrumentalGain, in: 0...2, step: 0.1)
                 }
-                Section("Feature flags") {
-                    Toggle("CoreML stem separation (htdemucs)", isOn: $configuration.useCoreMLSeparation)
-                }
                 Section {
                     Toggle("Allow recording without earphones", isOn: $allowsSpeakerRecording)
                 } header: {

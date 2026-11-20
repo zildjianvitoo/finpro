@@ -3,7 +3,7 @@
 //  finpro
 //
 //  44 pt round icon buttons of the design system (Sketch "Design System" > "Icon Primary",
-//  "Icon Secondary", "Icon Tinted").
+//  "Icon Secondary", "Icon Tinted"), plus the glass back button of the screens' toolbars.
 //
 
 import SwiftUI
@@ -13,6 +13,8 @@ struct AppIconButtonStyle: ButtonStyle {
         case primary
         case secondary
         case tinted
+        /// Liquid Glass circle with a dark glyph (toolbar back buttons in the design).
+        case glass
     }
 
     /// 44 pt in the design system; the recording controls use 50 pt.
@@ -28,7 +30,7 @@ struct AppIconButtonStyle: ButtonStyle {
             .font(.appTitle2.weight(.regular))
             .foregroundStyle(glyph)
             .frame(width: size, height: size)
-            .background(Circle().fill(fill))
+            .modifier(Background(kind: kind, fill: fill))
             .opacity(isEnabled ? (configuration.isPressed ? 0.8 : 1) : 0.45)
             .contentShape(Circle())
     }
@@ -38,6 +40,7 @@ struct AppIconButtonStyle: ButtonStyle {
         case .primary: .primaryButton
         case .secondary: .smallButton
         case .tinted: .secondaryButton
+        case .glass: .clear
         }
     }
 
@@ -46,6 +49,22 @@ struct AppIconButtonStyle: ButtonStyle {
         case .primary: .white
         case .secondary: .primary800
         case .tinted: .primaryBrand
+        case .glass: .primary
+        }
+    }
+
+    private struct Background: ViewModifier {
+        let kind: Kind
+        let fill: Color
+
+        func body(content: Content) -> some View {
+            if kind != .glass {
+                content.background(Circle().fill(fill))
+            } else if #available(iOS 26, *) {
+                content.glassEffect(.regular.interactive(), in: Circle())
+            } else {
+                content.background(.ultraThinMaterial, in: Circle())
+            }
         }
     }
 }

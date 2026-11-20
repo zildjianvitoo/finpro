@@ -24,8 +24,13 @@ nonisolated struct AppConfiguration: Sendable, Equatable, Codable {
     var maxSegment: TimeInterval = 8.0
 
     // Session
-    var preRoll: TimeInterval = 2.0
-    var countdownSeconds: Int = 3
+    /// Reference heard before every segment start (session start, resume, sing again). It starts
+    /// before 0 when the song gives less: silence first, while the guide already moves.
+    /// 2.0 → 3.0 on 2026-11-20, when it replaced the countdown.
+    var preRoll: TimeInterval = 3.0
+    /// Silent countdown before the pre-roll. 3 → 0 on 2026-11-20: it covered the pitch guide, and
+    /// the pre-roll (with a small 3-2-1) now gets the singer ready.
+    var countdownSeconds: Int = 0
     var maxSessionDuration: TimeInterval = 15 * 60
     var manualLatencyCalibration: TimeInterval = 0
     var evaluationTail: TimeInterval = 0.15
@@ -37,10 +42,6 @@ nonisolated struct AppConfiguration: Sendable, Equatable, Codable {
     var partialExportFadeOut: TimeInterval = 1.0
     var vocalGain: Float = 1.0
     var instrumentalGain: Float = 0.8
-
-    // Feature flags
-    /// Track B went "go" after the 2026-11-01 spike (see docs/test-reports/coreml-spike-2026-11-01.md).
-    var useCoreMLSeparation = true
 
     static let `default` = AppConfiguration()
 }

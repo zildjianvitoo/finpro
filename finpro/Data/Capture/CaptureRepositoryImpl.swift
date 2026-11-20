@@ -8,6 +8,7 @@
 //
 
 import AVFoundation
+import os
 
 extension Notification.Name {
     /// Posted by CaptureRepositoryImpl when capture or writing fails; `object` is the repository.
@@ -48,6 +49,10 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
     private var cameraLook: CameraLook?
     private var prepared = false
     private var microphoneObserver: NSObjectProtocol?
+    private var sessionObservers: [NSObjectProtocol] = []
+    /// When startRecording armed the writer; for the first-frame timing log.
+    private var recordingStartedAt: ContinuousClock.Instant?
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Capture")
     private var selectedMicrophoneUID: String?
     private var microphoneChanged = false
 
@@ -66,10 +71,40 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
                 }
             }
         }
+        // The session can stop on its own right after it starts, e.g. when the song player then
+        // starts on the shared audio session. Nothing restarted it, so the preview froze and the
+        // first recording found no video frames; only a second prepare() started it again.
+        let center = NotificationCenter.default
+        sessionObservers.append(center.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: nil) { [weak self] note in
+            let error = note.userInfo?[AVCaptureSessionErrorKey] as? AVError
+            Self.log.error("capture session runtime error: \(error?.localizedDescription ?? "unknown", privacy: .public)")
+            self?.queue.async { self?.restartIfStopped() }
+        })
+        sessionObservers.append(center.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: session, queue: nil) { note in
+            let reason = (note.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int) ?? -1
+            Self.log.notice("capture session interrupted, reason \(reason)")
+        })
+        sessionObservers.append(center.addObserver(forName: AVCaptureSession.interruptionEndedNotification, object: session, queue: nil) { [weak self] _ in
+            Self.log.notice("capture session interruption ended")
+            self?.queue.async { self?.restartIfStopped() }
+        })
     }
 
     deinit {
         if let microphoneObserver { NotificationCenter.default.removeObserver(microphoneObserver) }
+        sessionObservers.forEach(NotificationCenter.default.removeObserver)
+    }
+
+    /// On queue. Starts the prepared session again when it stopped before a recording began.
+    /// During a recording a stop is left to the writer checks (the take timeline would break).
+    private func restartIfStopped() {
+        guard prepared, !recording, !session.isRunning, !session.isInterrupted else { return }
+        Self.log.notice("restarting the capture session")
+        session.startRunning()
+        orientVideoConnection()
+        lock.lock()
+        clock = session.synchronizationClock ?? CMClockGetHostTimeClock()
+        lock.unlock()
     }
 
     var previewSession: AVCaptureSession { session }
@@ -78,16 +113,28 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
     }
 
     func prepare() async throws {
+        let started = ContinuousClock.now
+        func elapsed() -> String { (ContinuousClock.now - started).formatted(.units(allowed: [.seconds, .milliseconds])) }
+        Self.log.notice("prepare: start (configured before: \(self.prepared))")
+        // Normally done since app launch; on a quick first run this waits here, under "Getting
+        // ready…", instead of blocking the capture queue during the recording.
+        await VideoEncoderWarmUp.wait()
+        Self.log.notice("prepare: video encoder ready after \(elapsed(), privacy: .public)")
         let microphoneUID = try HeadsetMicrophoneSession.activate(mode: .videoRecording, sampleRate: Self.audioSampleRate)
+        Self.log.notice("prepare: audio session active after \(elapsed(), privacy: .public)")
         try await worker.prepare()
+        Self.log.notice("prepare: pitch model ready after \(elapsed(), privacy: .public)")
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async {
                 do {
+                    Self.log.notice("prepare: on capture queue after \(elapsed(), privacy: .public)")
                     if !self.prepared {
                         try self.configure()
                         self.prepared = true
+                        Self.log.notice("prepare: configured after \(elapsed(), privacy: .public)")
                     }
                     if !self.session.isRunning { self.session.startRunning() }
+                    Self.log.notice("prepare: session running \(self.session.isRunning), interrupted \(self.session.isInterrupted) after \(elapsed(), privacy: .public)")
                     try HeadsetMicrophoneSession.verify(microphoneUID)
                     self.selectedMicrophoneUID = microphoneUID
                     // After commitConfiguration and startRunning: inside the configuration block the
@@ -167,6 +214,8 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             queue.async {
                 do {
+                    // A session that stopped after prepare() is started again instead of failing.
+                    self.restartIfStopped()
                     guard self.prepared, self.session.isRunning, !self.session.isInterrupted, !self.recording else { throw self.error("Capture is not ready.") }
                     guard let microphoneUID = self.selectedMicrophoneUID else { throw HeadsetMicrophoneError.unavailable }
                     try HeadsetMicrophoneSession.verify(microphoneUID)
@@ -189,6 +238,8 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
                     self.lock.unlock()
                     self.lockCameraLook()
                     self.recording = true
+                    self.recordingStartedAt = .now
+                    Self.log.notice("startRecording: running \(self.session.isRunning), waiting for the first frame")
                     continuation.resume()
                 } catch { continuation.resume(throwing: error) }
             }
@@ -256,9 +307,12 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
             guard writer.canAdd(video) else { failure = error("Video encoder unavailable."); return }
             writer.add(video)
             videoInput = video
+            let writerStart = ContinuousClock.now
             guard writer.startWriting() else { failure = writer.error ?? error("Cannot start video writer."); return }
             writer.startSession(atSourceTime: pts)
             lock.lock(); firstPTS = pts; lock.unlock()
+            let sinceArmed = recordingStartedAt.map { (ContinuousClock.now - $0).formatted(.units(allowed: [.seconds, .milliseconds])) } ?? "?"
+            Self.log.notice("first frame written \(sinceArmed, privacy: .public) after startRecording (writer start took \((ContinuousClock.now - writerStart).formatted(.units(allowed: [.seconds, .milliseconds])), privacy: .public))")
         }
         guard writer.status == .writing else { failure = writer.error ?? error("Recording was interrupted."); return }
         lock.lock(); let first = firstPTS; lock.unlock()
@@ -293,7 +347,7 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
     /// portrait, but some devices still deliver landscape (sensor) frames; those are stored as
     /// they are with a 90° portrait transform, instead of being squeezed into 1080×1920.
     /// Mirroring was already applied by the connection, so the result is a mirrored selfie.
-    private static func makeVideoInput(width: Int, height: Int) -> AVAssetWriterInput {
+    static func makeVideoInput(width: Int, height: Int) -> AVAssetWriterInput {
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.hevc, AVVideoWidthKey: width, AVVideoHeightKey: height,
         ])

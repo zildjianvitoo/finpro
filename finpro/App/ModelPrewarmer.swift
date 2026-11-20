@@ -16,6 +16,8 @@ nonisolated struct ModelPrewarmer: Sendable {
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Prewarm")
 
     func start() {
+        // Not a model, but the same idea: the first video encoder start after an install is slow.
+        VideoEncoderWarmUp.start()
         Task.detached(priority: .utility) { [htDemucs] in
             let clock = ContinuousClock()
             // CREPE first: it is small and the vocal range test may need it right away.

@@ -10,7 +10,6 @@ import Foundation
 nonisolated enum StemSeparationMethod: String, Sendable, Codable {
     case bundled
     case coreML
-    case centerChannelCancellation
     case synthesized
 }
 
@@ -18,7 +17,7 @@ nonisolated enum StemSeparationMethod: String, Sendable, Codable {
 nonisolated struct SeparatedStems: Sendable {
     /// Full mix with the original vocals, used as the earphone guide.
     let mixURL: URL
-    /// Vocal stem (or mid channel for the fallback), used for guide extraction.
+    /// Vocal stem, used for guide extraction.
     let vocalGuideURL: URL
     /// Music without the original vocals, used in the final mix.
     let instrumentalURL: URL

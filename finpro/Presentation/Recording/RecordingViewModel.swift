@@ -9,6 +9,7 @@
 
 import CoreMedia
 import Foundation
+import os
 import Observation
 
 @Observable
@@ -25,6 +26,12 @@ final class RecordingViewModel {
         /// Stopped by a call, another app, unplugged earphones or a limit; the file is finalized.
         case interrupted(UserFacingError)
         case failed(UserFacingError)
+    }
+
+    /// The lime dot on the pitch guide: the smoothed voice pitch and when it was last heard.
+    struct VoiceDot: Equatable {
+        let midi: Float
+        let songTime: TimeInterval
     }
 
     /// One point of the user's pitch trail on the song timeline.
@@ -48,6 +55,7 @@ final class RecordingViewModel {
     private static let tickInterval: Duration = .milliseconds(20)
     /// How long to wait for the first video frame before giving up.
     private static let firstFrameTimeout: TimeInterval = 3
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Capture")
     /// While held, the segment start sits this far behind the playhead (the roll's past window).
     private static let heldSegmentLead: TimeInterval = 1
     /// Enough trail for the piano roll's past window.
@@ -71,6 +79,19 @@ final class RecordingViewModel {
     private(set) var status: Status = .starting
     private(set) var loop: LoopStateController
     private(set) var trail: [TrailPoint] = []
+    /// Display only (see VoiceDotFilter); colours and scores use the raw samples.
+    private(set) var voiceDot: VoiceDot?
+    /// How each guide note was sung so far, for its colour (see NoteTally; display only).
+    private(set) var noteTallies: [UUID: NoteTally] = [:]
+    /// Feeds the live pitch into `noteTallies` (timing grace, glitch filter; see NoteColoring).
+    @ObservationIgnored private var noteColoring = NoteColoring(notes: [])
+    @ObservationIgnored private var loggedNoteIDs: Set<UUID> = []
+    @ObservationIgnored private var guideNotes: [NoteColoring.GuideNote] = []
+    /// Singing time shown by the timer (see `elapsedRecordingTime`), and the tick it was last
+    /// brought up to date (nil outside singing).
+    @ObservationIgnored private var singingTime: TimeInterval = 0
+    @ObservationIgnored private var lastTimerTick: TimeInterval?
+    @ObservationIgnored private var voiceDotFilter = VoiceDotFilter()
     /// Song time at which the part being sung starts (the segment a start or a resume began with);
     /// notes before it are previous material.
     private(set) var singingFrom: TimeInterval?
@@ -136,6 +157,10 @@ final class RecordingViewModel {
         self.allowsSpeaker = allowsSpeaker
         trailDisplay = StabilizePitchDisplayUseCase(configuration: configuration)
         noteDisplay = StabilizePitchDisplayUseCase(configuration: configuration)
+        guideNotes = song.segments.flatMap(\.targetNotes).map {
+            NoteColoring.GuideNote(id: $0.id, start: $0.startTime, end: $0.endTime, midi: Float(song.transposition.transposed($0)))
+        }
+        noteColoring = NoteColoring(notes: guideNotes)
         loop = LoopStateController(segments: song.segments, configuration: configuration,
                                    range: pass.segmentRange(segmentCount: song.segments.count))
         route = routeMonitor.currentRoute
@@ -160,6 +185,12 @@ final class RecordingViewModel {
     /// Song time now, from the capture clock; nil before playback started.
     func currentSongTime() -> TimeInterval? {
         anchor.map { (capture.currentCaptureTime() - $0).seconds }
+    }
+
+    /// Time until the current segment's first note is heard (pre-roll count), nil before playback.
+    func secondsToSegmentStart() -> TimeInterval? {
+        guard let start = loop.currentSegment?.audioStartTime, let now = currentSongTime() else { return nil }
+        return start - now
     }
 
     /// What the piano roll shows: live song time while singing; during the countdown and a pause
@@ -217,11 +248,16 @@ final class RecordingViewModel {
     }
     var canPause: Bool { status == .recording && (loop.canPause || isPaused) }
 
-    /// Time since recording started, on the capture clock (display only; cuts never use it).
+    /// Time spent singing, on the capture clock (display only; cuts never use it). It starts when
+    /// a countdown ends and stands still during countdowns and pauses: the camera already runs then
+    /// (one continuous raw file), but those moments are never part of the cover.
     func elapsedRecordingTime() -> TimeInterval {
         guard status == .recording || status == .finishing else { return 0 }
-        return max(0, capture.currentCaptureTime().seconds - sessionStart)
+        guard isSingingPhase, let lastTimerTick else { return singingTime }
+        return singingTime + max(0, capture.currentCaptureTime().seconds - lastTimerTick)
     }
+
+    private var isSingingPhase: Bool { loop.phase == .preRoll || loop.phase == .singing }
 
     // MARK: - Session
 
@@ -281,10 +317,25 @@ final class RecordingViewModel {
             isCapturing = true
             // The file starts at the first video frame; playing before it exists would put the
             // first take's handle before the start of the file.
-            try await waitForFirstFrame()
+            do {
+                try await waitForFirstFrame()
+            } catch RecordingError.noVideoFrames {
+                Self.log.error("no video frame within \(Self.firstFrameTimeout) s; preparing the camera again")
+                // A cold camera (first run after install) can stop before its first frame; a
+                // second prepare() starts it again, as leaving and reopening the screen did.
+                isCapturing = false
+                _ = try? await capture.stopRecording()
+                guard status == .starting else { return }
+                try await capture.prepare()
+                try await capture.startRecording()
+                isCapturing = true
+                try await waitForFirstFrame()
+            }
             guard status == .starting else { return }
             sessionStart = capture.currentCaptureTime().seconds
             lastStorageCheck = sessionStart
+            singingTime = 0
+            lastTimerTick = nil
             status = .recording
             perform(loop.begin(now: capture.currentCaptureTime().seconds))
             startTicking()
@@ -300,9 +351,11 @@ final class RecordingViewModel {
     }
 
     private func waitForFirstFrame() async throws {
-        let deadline = capture.currentCaptureTime().seconds + Self.firstFrameTimeout
+        // A real-time timeout: the capture clock stops when the camera session does, and the
+        // wait never ended (the record button stayed disabled).
+        let deadline = ContinuousClock.now + .seconds(Self.firstFrameTimeout)
         while capture.fileTime(forCaptureTime: capture.currentCaptureTime()) == nil {
-            guard capture.currentCaptureTime().seconds < deadline else {
+            guard ContinuousClock.now < deadline else {
                 throw RecordingError.noVideoFrames
             }
             try await Task.sleep(for: .milliseconds(10))
@@ -322,6 +375,7 @@ final class RecordingViewModel {
         anchor = nil
         evaluations = []
         trail = []
+        resetVoiceDot()
     }
 
     /// Resumes with a countdown and restarts the current segment.
@@ -351,6 +405,7 @@ final class RecordingViewModel {
         anchor = nil
         evaluations = []
         trail = []
+        resetVoiceDot()
         perform(loop.goBackOneSegment(now: capture.currentCaptureTime().seconds))
     }
 
@@ -447,7 +502,10 @@ final class RecordingViewModel {
                 return
             }
         }
+        // The timer counts the interval since the last tick if it was spent singing.
+        if isSingingPhase, let lastTimerTick { singingTime += max(0, seconds - lastTimerTick) }
         perform(loop.tick(now: seconds, songTime: anchor.map { (now - $0).seconds }))
+        lastTimerTick = isSingingPhase ? seconds : nil
     }
 
     private func perform(_ action: LoopStateController.Action) {
@@ -458,6 +516,8 @@ final class RecordingViewModel {
             singingFrom = loop.currentSegment?.audioStartTime
             evaluations = []
             trail = []
+        resetVoiceDot()
+            resetVoiceDot()
             trailDisplay.reset()
             noteDisplay.reset()
             displayTargetID = nil
@@ -562,6 +622,24 @@ final class RecordingViewModel {
         tasks.removeAll()
     }
 
+    /// One line per sung note in the event log, to tune the colouring from real takes.
+    private func logFinishedNotes(before time: TimeInterval) {
+        for note in guideNotes where note.end < time && !loggedNoteIDs.contains(note.id) {
+            guard let tally = noteTallies[note.id] else { continue }
+            loggedNoteIDs.insert(note.id)
+            Self.noteLog.notice("note \(PitchMath.noteName(midi: Int(note.midi)), privacy: .public) \(note.start, format: .fixed(precision: 2), privacy: .public)-\(note.end, format: .fixed(precision: 2), privacy: .public) s: \(tally.summary, privacy: .public)")
+        }
+    }
+    private static let noteLog = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Notes")
+
+    private func resetVoiceDot() {
+        voiceDotFilter.reset()
+        voiceDot = nil
+        noteTallies = [:]
+        noteColoring.reset()
+        loggedNoteIDs.removeAll()
+    }
+
     private func handle(_ sample: PitchSample) {
         updatePitchStats(sample)
         guard let anchor, loop.phase == .preRoll || loop.phase == .singing else { return }
@@ -573,9 +651,18 @@ final class RecordingViewModel {
             displayTargetID = evaluation.targetNoteID
         }
         let midi = trailDisplay.execute(midi: evaluation.detectedMIDINote, time: evaluation.referenceTime)
-        // Colour and scoring must report the same measured result; visual smoothing must
-        // never turn an out-of-tune sample green or conceal a genuine note transition.
         trail.append(TrailPoint(songTime: evaluation.referenceTime, midi: midi, isHit: evaluation.isHit))
+        // Note colours (user decision 2026-11-16): a whole note is green or red by NoteTally's
+        // looser rule; the clip score still uses every raw sample with its own tolerance.
+        noteColoring.add(time: evaluation.referenceTime, midi: evaluation.detectedMIDINote)
+        if noteColoring.tallies != noteTallies { noteTallies = noteColoring.tallies }
+        logFinishedNotes(before: evaluation.referenceTime - NoteColoring.lateGrace)
+        voiceDotFilter.update(midi: evaluation.detectedMIDINote, time: evaluation.referenceTime,
+                              foldToDot: evaluation.targetNoteID == nil)
+        if let dotMIDI = voiceDotFilter.midi, let heard = voiceDotFilter.lastVoicedTime {
+            let dot = VoiceDot(midi: dotMIDI, songTime: heard)
+            if dot != voiceDot { voiceDot = dot }
+        }
         trail.removeAll { $0.songTime < evaluation.referenceTime - Self.trailLength }
     }
 }

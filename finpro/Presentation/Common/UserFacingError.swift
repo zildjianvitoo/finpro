@@ -10,10 +10,12 @@ import Foundation
 
 nonisolated enum UserFacingError: Equatable, Sendable {
     case permissionDenied([MediaPermission])
+    case coverLibraryFailed
+    case separationFailed
+    case songLibraryFailed
     case unreadableFile
     case protectedFile
     case songTooShort(minimumSeconds: Int)
-    case monoSong
     case noVocalDetected
     case speakerOutput
     case lowStorage(requiredGB: Double)
@@ -33,10 +35,12 @@ nonisolated enum UserFacingError: Equatable, Sendable {
         switch self {
         case .permissionDenied(let permissions):
             "\(Self.list(permissions)) access is off"
+        case .separationFailed: "We couldn't separate this song"
+        case .coverLibraryFailed: "Your cover couldn't be saved"
+        case .songLibraryFailed: "Your song list couldn't be updated"
         case .unreadableFile: "This file can't be used"
         case .protectedFile: "This song is protected"
         case .songTooShort: "This song is too short"
-        case .monoSong: "Vocals can't be removed"
         case .noVocalDetected: "No vocal melody found"
         case .speakerOutput: "Plug in earphones"
         case .lowStorage: "Not enough storage"
@@ -59,14 +63,18 @@ nonisolated enum UserFacingError: Equatable, Sendable {
         case .permissionDenied(let permissions):
             "Turn on \(Self.list(permissions).lowercased()) access in Settings. "
                 + permissions.map { "\($0.displayName) is needed \($0.reason)." }.joined(separator: " ")
+        case .separationFailed:
+            "Try again or choose another audio file."
+        case .coverLibraryFailed:
+            "Your existing covers are kept. Check available storage and try again."
+        case .songLibraryFailed:
+            "Your saved songs are kept. Check available storage and try again."
         case .unreadableFile:
             "Try an MP3, M4A or WAV file."
         case .protectedFile:
             "Songs from Apple Music and other streaming apps are copy-protected. Pick a file you own, like an MP3 or M4A."
         case .songTooShort(let minimumSeconds):
             "Pick a song that is at least \(minimumSeconds) seconds long."
-        case .monoSong:
-            "This recording is mono, so the singer can't be separated from the music. Try a stereo version."
         case .noVocalDetected:
             "We couldn't find a vocal melody in this section. Try another part of the song."
         case .speakerOutput:
@@ -101,10 +109,12 @@ nonisolated enum UserFacingError: Equatable, Sendable {
     var systemImage: String {
         switch self {
         case .permissionDenied(let permissions): permissions.first?.systemImage ?? "lock.fill"
+        case .separationFailed: "waveform.badge.exclamationmark"
+        case .coverLibraryFailed: "externaldrive.badge.exclamationmark"
+        case .songLibraryFailed: "externaldrive.badge.exclamationmark"
         case .unreadableFile: "doc.questionmark"
         case .protectedFile: "lock.doc"
         case .songTooShort: "timer"
-        case .monoSong: "speaker.slash"
         case .noVocalDetected: "waveform.slash"
         case .speakerOutput: "headphones"
         case .lowStorage: "externaldrive.badge.exclamationmark"
@@ -125,3 +135,6 @@ nonisolated enum UserFacingError: Equatable, Sendable {
         permissions.map(\.displayName).formatted(.list(type: .and))
     }
 }
+
+// Allows storage operations to propagate the same error shown by the UI.
+extension UserFacingError: Error {}

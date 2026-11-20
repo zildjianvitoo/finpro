@@ -17,21 +17,52 @@ nonisolated enum CompingError: Error, CustomStringConvertible {
     case invalidPlan([ContractViolation])
     case missingTrack(String)
     case exportUnavailable
+    /// iOS stopped the export (the video hardware was busy or the app left the foreground) and
+    /// the retries did not get through.
+    case exportInterrupted
 
     var description: String {
         switch self {
         case .invalidPlan(let violations): "Invalid comping plan:\n" + violations.map(\.description).joined(separator: "\n")
         case .missingTrack(let name): "Missing track: \(name)"
         case .exportUnavailable: "Export session could not be created"
+        case .exportInterrupted: "The export was interrupted. Keep Verca open and tap Try Again."
         }
     }
 }
 
 nonisolated struct CompingCompositionBuilder {
     struct Output {
-        let composition: AVMutableComposition
-        let audioMix: AVMutableAudioMix
+        let preparedTracks: [PreparedMixTrack]
+        var composition: AVMutableComposition
+        var audioMix: AVMutableAudioMix
+        /// Overall level for the given slider levels, so the mix never clips.
+        var previewGainScale: (Float, Float) -> Float = { _, _ in 1 }
+        /// The preview's volume curves per audio track, at slider level 1 and without `previewGainScale`.
+        var previewEnvelopes: [CMPersistentTrackID: PreviewEnvelope] = [:]
+        let makeMix: (Float, Float) -> AVMutableAudioMix
         let videoComposition: AVMutableVideoComposition
+        let vocalTrackIDs: Set<CMPersistentTrackID>
+        let musicTrackID: CMPersistentTrackID
+
+        /// Build the playback/export asset without muted sources. Track IDs of the remaining
+        /// sources are preserved, so the gain ramps and video instructions still apply.
+        func applyingVolumes(vocals: Float, music: Float) throws -> Output {
+            var output = self
+            output.audioMix = makeMix(vocals, music)
+            guard vocals == 0 || music == 0 else { return output }
+            guard let filtered = composition.mutableCopy() as? AVMutableComposition else {
+                throw CompingError.exportUnavailable
+            }
+            var muted = vocals == 0 ? vocalTrackIDs : []
+            if music == 0 { muted.insert(musicTrackID) }
+            for id in muted {
+                if let track = filtered.track(withTrackID: id) { filtered.removeTrack(track) }
+            }
+            output.audioMix.inputParameters = output.audioMix.inputParameters.filter { !muted.contains($0.trackID) }
+            output.composition = filtered
+            return output
+        }
     }
 
     static let timescale: CMTimeScale = 48_000
@@ -93,12 +124,8 @@ nonisolated struct CompingCompositionBuilder {
         let transform = Self.anchored(rawTransform, naturalSize: naturalSize)
         let videoTracks = [videoA, videoB]
         let vocalTracks = [vocalA, vocalB]
-        let vocalParameters = vocalTracks.map { track in
-            let parameters = AVMutableAudioMixInputParameters(track: track)
-            parameters.setVolume(0, at: .zero)
-            return parameters
-        }
-
+        var prepared: [PreparedMixTrack] = []
+        var insertTimes: [TimeInterval] = []
         let handle = plan.crossfadeDuration.seconds
         let halfFade = handle / 2
         let lastIndex = plan.validTakes.count - 1
@@ -114,40 +141,113 @@ nonisolated struct CompingCompositionBuilder {
             let tail = position == lastIndex ? 0 : handle
             let range = CMTimeRange(start: time(segmentStartInRaw - lead), duration: time(segment.audioDuration + lead + tail))
             try videoTracks[position % 2].insertTimeRange(range, of: source.video, at: time(segment.audioStartTime - lead))
-            try vocalTracks[position % 2].insertTimeRange(range, of: source.audio, at: time(segment.audioStartTime - lead))
-
-            // Crossfade window is centered on each boundary.
-            let parameters = vocalParameters[position % 2]
-            if position == 0 {
-                parameters.setVolume(plan.vocalGain, at: .zero)
-            } else {
-                fade(parameters, in: true, gain: plan.vocalGain, from: segment.audioStartTime - halfFade, duration: handle)
-            }
-            if position < lastIndex {
-                fade(parameters, in: false, gain: plan.vocalGain, from: segment.audioEndTime - halfFade, duration: handle)
-            }
+            let core = CMTimeRange(start: time(segmentStartInRaw), duration: time(segment.audioDuration))
+            let audio = try await PreparedMixTrack(asset: source.asset, track: source.audio, range: range, core: core)
+            prepared.append(audio)
+            insertTimes.append(segment.audioStartTime - lead)
+            try vocalTracks[position % 2].insertTimeRange(CMTimeRange(start: .zero, duration: range.duration),
+                                                        of: audio.track, at: time(segment.audioStartTime - lead))
         }
 
-        let instrumentalDuration = try await instrumentalAsset.load(.duration).seconds
-        try instrumentalTrack.insertTimeRange(
-            CMTimeRange(start: .zero, duration: time(min(plan.endTime, instrumentalDuration))),
-            of: instrumental, at: .zero)
-        let instrumentalParameters = AVMutableAudioMixInputParameters(track: instrumentalTrack)
-        instrumentalParameters.setVolume(plan.instrumentalGain, at: .zero)
+        let levels = prepared.map(\.level).filter { $0 > 0 }.sorted()
+        let reference = levels.isEmpty ? 0 : levels[levels.count / 2]
+        let corrections = prepared.map { $0.level > 0 ? min(4, max(0.25, reference / $0.level)) : 1 }
+        let musicDuration = try await instrumentalAsset.load(.duration)
+        let musicRange = CMTimeRange(start: .zero, duration: min(time(plan.endTime), musicDuration))
+        let music = try await PreparedMixTrack(asset: instrumentalAsset, track: instrumental, range: musicRange, core: musicRange)
+        try instrumentalTrack.insertTimeRange(musicRange, of: music.track, at: .zero)
+        // Upper bound of the mixed signal in every 10 ms of the song: the loudest sample of each
+        // source there, added up (the fades only lower a source). Unlike one peak per source, this
+        // knows where the voice and the music are actually loud, so the mix keeps its level and
+        // only turns down when the chosen levels would really clip.
+        let block = PreparedMixTrack.blockDuration
+        let ends = zip(prepared, insertTimes).map { $1 + Double($0.blockPeaks.count) * block }
+        let blockCount = Int((max(plan.endTime, ends.max() ?? 0) / block).rounded(.up)) + 2
+        func envelope(_ track: PreparedMixTrack, at start: TimeInterval) -> [Float] {
+            var result = [Float](repeating: 0, count: blockCount)
+            for (index, peak) in track.blockPeaks.enumerated() where peak > 0 {
+                let from = start + Double(index) * block
+                // A source block straddles two song blocks unless it lines up exactly: count it in both.
+                let first = max(0, Int((from / block).rounded(.down)))
+                let last = min(blockCount - 1, Int(((from + block) / block).rounded(.down)))
+                guard first <= last else { continue }
+                for slot in first...last { result[slot] = max(result[slot], peak) }
+            }
+            return result
+        }
+        var vocalEnvelope = [Float](repeating: 0, count: blockCount)
+        for (position, track) in prepared.enumerated() {
+            for (slot, peak) in envelope(track, at: insertTimes[position]).enumerated() where peak > 0 {
+                vocalEnvelope[slot] += peak * corrections[position]
+            }
+        }
+        let musicEnvelope = envelope(music, at: 0)
+        func scale(_ vocals: Float, _ backing: Float) -> Float {
+            var peak: Float = 0
+            for slot in 0..<blockCount {
+                peak = max(peak, vocals * vocalEnvelope[slot] + backing * musicEnvelope[slot])
+            }
+            return min(1, 0.97 / max(peak, 0.001))
+        }
+        func makeMix(_ vocals: Float, _ backing: Float) -> AVMutableAudioMix {
+            let headroom = scale(vocals, backing) / PreparedMixTrack.reserve
+            let vocalParameters = vocalTracks.map { track in
+                let parameters = AVMutableAudioMixInputParameters(track: track)
+                parameters.setVolume(0, at: .zero)
+                return parameters
+            }
+
+            for (position, take) in plan.validTakes.enumerated() where vocals > 0 {
+                let segment = plan.segments[take.segmentIndex]
+                let gain = vocals * corrections[position] * headroom
+                // Crossfade window is centered on each boundary.
+                let parameters = vocalParameters[position % 2]
+                if position == 0 {
+                    parameters.setVolume(gain, at: .zero)
+                } else {
+                    fade(parameters, in: true, gain: gain, from: segment.audioStartTime - halfFade, duration: handle)
+                }
+                if position < lastIndex {
+                    fade(parameters, in: false, gain: gain, from: segment.audioEndTime - halfFade, duration: handle)
+                }
+            }
+
+            let instrumentalParameters = AVMutableAudioMixInputParameters(track: instrumentalTrack)
+            instrumentalParameters.setVolume(backing * headroom, at: .zero)
+            if backing > 0, plan.instrumentalFadeOut > 0 {
+                let fadeStart = max(0, plan.endTime - plan.instrumentalFadeOut)
+                instrumentalParameters.setVolumeRamp(fromStartVolume: backing * headroom, toEndVolume: 0,
+                                                     timeRange: CMTimeRange(start: time(fadeStart), end: time(plan.endTime)))
+            }
+
+            let audioMix = AVMutableAudioMix()
+            audioMix.inputParameters = vocalParameters + [instrumentalParameters]
+            return audioMix
+        }
+        var envelopes: [CMPersistentTrackID: PreviewEnvelope] = [:]
+        for (index, track) in vocalTracks.enumerated() {
+            let parts = plan.validTakes.enumerated().filter { $0.offset % 2 == index }.map { position, take in
+                let segment = plan.segments[take.segmentIndex]
+                return PreviewEnvelope.Part(gain: corrections[position] / PreparedMixTrack.reserve,
+                                            fadeInStart: position == 0 ? nil : segment.audioStartTime - halfFade,
+                                            fadeOutStart: position < lastIndex ? segment.audioEndTime - halfFade : nil)
+            }
+            envelopes[track.trackID] = PreviewEnvelope(parts: parts, crossfade: handle)
+        }
+        var musicCurve = PreviewEnvelope(parts: [.init(gain: 1 / PreparedMixTrack.reserve, fadeInStart: nil, fadeOutStart: nil)],
+                                            crossfade: handle)
         if plan.instrumentalFadeOut > 0 {
-            let fadeStart = max(0, plan.endTime - plan.instrumentalFadeOut)
-            instrumentalParameters.setVolumeRamp(fromStartVolume: plan.instrumentalGain, toEndVolume: 0,
-                                                 timeRange: CMTimeRange(start: time(fadeStart), end: time(plan.endTime)))
+            musicCurve.fadeOutStart = max(0, plan.endTime - plan.instrumentalFadeOut)
+            musicCurve.fadeOutEnd = plan.endTime
         }
+        envelopes[instrumentalTrack.trackID] = musicCurve
 
-        let audioMix = AVMutableAudioMix()
-        audioMix.inputParameters = vocalParameters + [instrumentalParameters]
         let rendered = CGRect(origin: .zero, size: naturalSize).applying(transform)
         let renderSize = CGSize(width: abs(rendered.width), height: abs(rendered.height))
-        let corrections = await aligner.corrections(plan: plan, renderSize: renderSize)
+        let alignments = await aligner.corrections(plan: plan, renderSize: renderSize)
         let videoComposition = dissolves(plan, tracks: videoTracks, duration: composition.duration,
                                          transform: transform, renderSize: renderSize, frameRate: frameRate,
-                                         corrections: corrections)
+                                         corrections: alignments)
         // Keep the recording's own colour space (camera files are tagged, e.g. BT.709 or HLG), so the
         // dissolve doesn't convert every frame on export.
         if let extensions = formats.first.flatMap({ CMFormatDescriptionGetExtensions($0) as? [String: Any] }) {
@@ -155,7 +255,8 @@ nonisolated struct CompingCompositionBuilder {
             videoComposition.colorTransferFunction = extensions[kCVImageBufferTransferFunctionKey as String] as? String
             videoComposition.colorYCbCrMatrix = extensions[kCVImageBufferYCbCrMatrixKey as String] as? String
         }
-        return Output(composition: composition, audioMix: audioMix, videoComposition: videoComposition)
+        return Output(preparedTracks: prepared + [music], composition: composition, audioMix: makeMix(plan.vocalGain, plan.instrumentalGain), previewGainScale: { scale($0, $1) }, previewEnvelopes: envelopes, makeMix: makeMix, videoComposition: videoComposition,
+                      vocalTrackIDs: Set(vocalTracks.map(\.trackID)), musicTrackID: instrumentalTrack.trackID)
     }
 
     /// One take at a time, and a dissolve (outgoing take fading out over the incoming one) centred on

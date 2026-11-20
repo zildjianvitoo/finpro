@@ -2,9 +2,10 @@
 //  PreparationPipelineChecks.swift
 //  finpro
 //
-//  End-to-end song preparation on the Mac: a stereo "song" (centered vocal melody, hard-panned
-//  backing) → CenterChannelStemRepository → CrepeAnalysisRepository → SliceSegments →
+//  End-to-end song preparation on the Mac: a "song" given as separated stems (vocal melody,
+//  backing) → TrimmedStemsFixture → CrepeAnalysisRepository → SliceSegments →
 //  ComputeTransposition → AudioTranspositionRepositoryImpl, via PrepareSongUseCase.
+//  Real separation (htdemucs) has its own checks in HTDemucsSeparationChecks.
 //
 
 import AVFoundation
@@ -27,6 +28,7 @@ nonisolated enum PreparationPipelineChecks {
         ]
         let rate = 48_000.0, length = Int(30 * rate)
         var left = [Float](repeating: 0, count: length), right = left
+        var vocal = [Float](repeating: 0, count: length)
         for i in 0..<length {
             let t = Double(i) / rate
             left[i] = 0.12 * Float(sin(2 * .pi * 110 * t))                 // bass, hard left
@@ -40,20 +42,30 @@ nonisolated enum PreparationPipelineChecks {
                 let voice = 0.3 * envelope * Float(sin(2 * .pi * frequency * t))
                 left[i] += voice
                 right[i] += voice
+                vocal[i] = voice
             }
         }
-        let songURL = directory.appendingPathComponent("song.wav")
-        let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: 2)!
-        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(length))!
-        buffer.frameLength = AVAudioFrameCount(length)
-        left.withUnsafeBufferPointer { buffer.floatChannelData![0].update(from: $0.baseAddress!, count: length) }
-        right.withUnsafeBufferPointer { buffer.floatChannelData![1].update(from: $0.baseAddress!, count: length) }
-        try AVAudioFile(forWriting: songURL, settings: format.settings).write(from: buffer)
+        func write(_ channels: [[Float]], to name: String) throws -> URL {
+            let url = directory.appendingPathComponent(name)
+            let format = AVAudioFormat(standardFormatWithSampleRate: rate, channels: AVAudioChannelCount(channels.count))!
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(length))!
+            buffer.frameLength = AVAudioFrameCount(length)
+            for (index, channel) in channels.enumerated() {
+                channel.withUnsafeBufferPointer { buffer.floatChannelData![index].update(from: $0.baseAddress!, count: length) }
+            }
+            try AVAudioFile(forWriting: url, settings: format.settings).write(from: buffer)
+            return url
+        }
+        let songURL = try write([left, right], to: "song.wav")
+        let backing = zip(left, right).map { $0.0 + $0.1 }.enumerated().map { $0.element - 2 * vocal[$0.offset] }
+        let stems = TrimmedStemsFixture(mixURL: songURL, vocalURL: try write([vocal], to: "vocal.wav"),
+                                        instrumentalURL: try write([backing, backing], to: "backing.wav"),
+                                        directory: directory.appendingPathComponent("stems"))
 
         // A low voice: the melody (C4–A4) should be shifted down.
         let range = VocalRange(lowestMIDI: 45, highestMIDI: 57)
         let useCase = PrepareSongUseCase(
-            separation: CenterChannelStemRepository(directory: directory),
+            separation: stems,
             analysis: CrepeAnalysisRepository(modelURL: modelURL),
             fallbackAnalysis: nil,
             transposition: AudioTranspositionRepositoryImpl(cacheDirectory: directory.appendingPathComponent("transposed")))
@@ -62,7 +74,7 @@ nonisolated enum PreparationPipelineChecks {
         let seconds = Date().timeIntervalSince(started)
 
         try check(song.validate().isEmpty, "PreparedSong is valid: \(song.validate())")
-        try check(song.separationMethod == .centerChannelCancellation, "center-channel method")
+        try check(song.separationMethod == .bundled, "stems passed through as given")
         let notes = song.segments.flatMap(\.targetNotes)
         // The guide is simplified into singable blocks: compare against the simplified melody.
         let simplified = SimplifyGuideUseCase().execute(melody.map {

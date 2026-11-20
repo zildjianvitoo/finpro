@@ -11,6 +11,8 @@
 import SwiftUI
 
 extension Font {
+    /// SF Pro display lettering used by the vocal intro.
+    static func appDisplay(size: CGFloat) -> Font { .system(size: size, weight: .bold) }
     /// Large Title / Bold / 34
     static var appLargeTitle: Font { .largeTitle.weight(.bold) }
     /// Title 1 / SemiBold / 28

@@ -6,7 +6,7 @@
 Build an iOS 18+ Proof of Concept (PoC) application in Swift & SwiftUI for independent Gen Z song cover creators.
 The app eliminates repetitive trial-and-error recording (retaking the entire song from the beginning when making a single pitch mistake) through 5 core mechanisms:
 1. **Vocal Range Test & Auto-Transpose:** The user's comfortable vocal range is measured once. The reference song (guide notes, earphone audio, and backing music) is transposed by semitones to fit that range.
-2. **Reference Separation, Audio-to-MIDI & Auto-Segmentation:** Importing a full reference song (full mix with the original vocals, trimmed to 15–60 s), separating it into a vocal stem and an instrumental stem (see §3 for the two-track strategy), extracting the vocal melody into target MIDI notes, and slicing the song into phrase segments based on breathing pauses/silences.
+2. **Reference Separation, Audio-to-MIDI & Auto-Segmentation:** Importing a full reference song (full mix with the original vocals, trimmed to at least 15 s, up to the whole song), separating it into a vocal stem and an instrumental stem (see §3 for the two-track strategy), extracting the vocal melody into target MIDI notes, and slicing the song into phrase segments based on breathing pauses/silences.
 3. **Continuous Camera Recording + Synced Reference Playback + Live Piano Roll:** Recording a single, uninterrupted 9:16 vertical video (`RawMasterVideo.mov`) while playing the reference audio through earphones and rendering a semi-transparent real-time Piano Roll overlay in the center of the screen.
 4. **Segment Evaluation (no repeat) *(changed 2026-11-12)*:** Evaluating pitch accuracy at the end of each phrase segment. A segment is never repeated: whatever its score, the valid video `CMTimeRange` is logged (status `completed`, the measured score is kept) and playback continues straight into the next segment. The piano roll shows hits in green and misses in red as the notes go by. The earlier auto-rewind (TRY AGAIN below 75% → missed notes, `3.. 2.. 1..`, replay of the segment) was removed.
 5. **Automated Comping & Mixdown (Auto-Cut, Stitch & Mix):** When all segments are sung — or the user ends the session early — slice `RawMasterVideo.mov` using the logged `CMTimeRange`s, place each passed take at its exact position on the song timeline, dissolve the video and crossfade the vocal takes (150 ms) at each cut, mix the user's vocal with the **instrumental (no original vocals)**, and export a single `FinalCoverVideo.mp4` ready for social media upload.
@@ -17,7 +17,7 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
 
 ### 2.1 In Scope (PoC)
 * Vocal range test, auto-transpose (semitone level).
-* Import (Files / Photos / bundled demo), trim 15–60 s with synced lyrics of the chosen part (§5.2), stem separation, guide extraction, segmentation.
+* Import (Files / Photos / bundled demo), trim (at least 15 s, up to the whole song) with synced lyrics of the chosen part (§5.2), stem separation, guide extraction, segmentation.
 * Continuous recording session with live piano roll, evaluation loop, early end with partial export.
 * Comping, vocal + instrumental mixdown, export, preview, share, save to Photos.
 * Debug settings screen for tuning thresholds (§8).
@@ -45,8 +45,8 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
   * **Guide extraction: Spotify Basic Pitch (CoreML)** run on the **vocal stem**, followed by monophonic reduction (§5.3). Bundled as an `.mlpackage`, no SPM dependency. Verify the model license and the CoreML export before committing.
   * **Stem separation — two-track strategy:**
     * **Track A — Guaranteed demo:** a bundled, royalty-free demo song whose stems (`mix`, `vocal`, `instrumental`) were separated **offline on a Mac** (e.g. Demucs) plus a verified guide file. Guarantees the end-to-end demo sounds good. Copyrighted songs must NOT be bundled in the repo/app.
-    * **Track B — On-device separation (decided 2026-11-03): htdemucs (Demucs v4, Meta, MIT) converted to CoreML** for user-imported songs. Only the network is in the model (`HTDemucs.mlpackage`, 58 MB: float16 with float32 normalisation, cross-transformer weights in int8); the demucs STFT/iSTFT and the 7.8 s chunking (25 % overlap) run in Swift with vDSP. Runs on the GPU (`.cpuAndGPU`; the Neural Engine and `.all` are slower or inaccurate for this model). Vocal stem = htdemucs `vocals`; instrumental = drums + bass + other. Measured: melody leakage into the instrumental 0.7 % (Open-Unmix, the first spike's model, 4.9 %); iPhone 17: 30 s in ~4 s, peak memory ~1 GB. If the model can't be used, imported songs use the **center-channel cancellation fallback** (L−R for instrumental, mid channel for vocal guide) with a disclaimer. Details: `docs/test-reports/htdemucs-coreml-spike-2026-11-03.md`.
-  * **Order decided 2026-11-01:** user import comes first (center-channel fallback + CREPE guide on the device), then the Track B spike; the Track A demo is a later safety net.
+    * **Track B — On-device separation (decided 2026-11-03): htdemucs (Demucs v4, Meta, MIT) converted to CoreML** for user-imported songs. Only the network is in the model (`HTDemucs.mlpackage`, 58 MB: float16 with float32 normalisation, cross-transformer weights in int8); the demucs STFT/iSTFT and the 7.8 s chunking (25 % overlap) run in Swift with vDSP. Runs on the GPU (`.cpuAndGPU`; the Neural Engine and `.all` are slower or inaccurate for this model). Vocal stem = htdemucs `vocals`; instrumental = drums + bass + other. Measured: melody leakage into the instrumental 0.7 % (Open-Unmix, the first spike's model, 4.9 %); iPhone 17: 30 s in ~4 s, peak memory ~1 GB. There is no fallback separation: if the model can't be used, preparation fails with an error *(center-channel fallback removed 2026-11-13)*. Details: `docs/test-reports/htdemucs-coreml-spike-2026-11-03.md`.
+  * **Order decided 2026-11-01:** user import comes first (center-channel fallback + CREPE guide on the device), then the Track B spike; the Track A demo is a later safety net. *(The center-channel fallback was removed on 2026-11-13; htdemucs is the only on-device separation.)*
   * **Developer fallback:** a synthesized demo (sine melody as "vocal", simple chord pad as "instrumental", mix = sum) so the pipeline is testable before the Track A asset exists.
 * **Phase 2+:** better ML pitch models, AudioKit, etc. — see `docs/roadmap-akurasi.md`. All swaps happen behind the repository protocols in §6.3.
 
@@ -54,7 +54,7 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
 
 ## 4. End-to-End User & System Workflow
 0. **Step 0 (Vocal Range Test — once, re-testable from Settings):** User reads a speaking baseline, then hums their lowest comfortable note and sings their highest, each held ~1 s. These are exactly three test prompts; no repeated-note screens. The stable pitch is stored as `VocalRange`.
-1. **Step 1 (Import & Trim):** User picks a reference song (full mix) from Files/Photos or loads the bundled demo, then trims it to 15–60 s. The Phase 1 disclaimer (§5.2) is shown.
+1. **Step 1 (Import & Trim):** User picks a reference song (full mix) from Files/Photos or loads the bundled demo, then trims it to at least 15 s (up to the whole song). The Phase 1 disclaimer (§5.2) is shown.
 2. **Step 2 (Offline Preparation):** Stem separation → guide extraction from the vocal stem → segmentation → transposition plan → offline render of transposed earphone mix and transposed instrumental. Progress shown step by step.
 3. **Step 3 (Ready Screen):** Shows segment count, chosen transposition (e.g. "−3 semitones"), and an earphone check. Record is disabled when audio output is the built-in speaker/receiver.
 4. **Step 4 (Uninterrupted Session):** User taps Record. Front camera (9:16) + headset microphone record continuously into `RawMasterVideo.mov`. Pre-roll then Segment 1 plays in the earphones; the piano roll scrolls and the user's live pitch trail is drawn (green = within ±50 cents, red = off).
@@ -73,20 +73,18 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
 
 ### 5.2 Import, Trim & Disclaimer
 * Formats: `.mp3`, `.m4a`, `.wav`, `.mov` (audio track extracted). DRM-protected files must show a clear error.
-* Waveform trimmer, min 15 s, max 60 s.
+* Waveform trimmer, min 15 s, no maximum (up to the whole song). The waveform zooms out after a drag so a long selection still fits.
 * **Synced lyrics (v3.2):** right after import the app looks up time-synced lyrics on **LRCLIB** (`lrclib.net`, free, no key) using the file's title/artist tags, or a guess from the file name ("Artist - Title (Lyric Video)"). The version whose duration is within ±5 s of the file is used, so its line times fit this recording; otherwise "No lyrics found" with a manual title/artist search. Offline or busy service: "Lyrics unavailable", trimming still works.
   * Lines inside the chosen part are lit, the rest dimmed, and the list scrolls to the selection start.
   * **Play Selection** previews the chosen part: the current line is bold and its words fill in karaoke-style. LRC times whole lines only, so word times are estimated from syllable counts (capped so words don't stretch into instrumental breaks).
   * Credit line under the lyrics: matched title/artist, "from LRCLIB", timing may be slightly off.
-  * **Chorus suggestion (v3.3):** the most repeated block of 2+ lyric lines (case, punctuation, accents and vocal fillers ignored) is the chorus. When lyrics arrive and the user hasn't moved a slider, the selection jumps to its first occurrence (1 s lead-in and tail, clamped to 15–60 s) with a "Suggested" label; after manual changes a "Back to Chorus" button restores it. No lyrics → no suggestion (an audio-based fallback is not built).
+  * **Chorus suggestion (v3.3):** the most repeated block of 2+ lyric lines (case, punctuation, accents and vocal fillers ignored) is the chorus. When lyrics arrive and the user hasn't moved a slider, the selection jumps to its first occurrence (1 s lead-in and tail, at least 15 s) with a "Suggested" label; after manual changes a "Back to Chorus" button restores it. No lyrics → no suggestion (an audio-based fallback is not built).
   * No ASR model: the on-device Whisper spike (`docs/test-reports/lyrics-whisper-spike-2026-11-03.md`) needed a 550 MB model to reach 27 % WER on Indonesian.
 * Disclaimer (processing screen + small badge on the recording screen):
   > **Experimental (Phase 1):** The pitch guide is extracted from the original song and may be inaccurate, especially in busy sections.
-* When the center-channel fallback is used, additionally:
-  > Background music uses basic vocal removal. Some original vocals may still be audible.
 
 ### 5.3 Guide Extraction & Segmentation
-* **Extraction input:** the vocal stem (bundled or htdemucs) or the mid channel (fallback).
+* **Extraction input:** the vocal stem (bundled or htdemucs).
 * **Primary — Basic Pitch:** resample to the model's input rate, run inference, take note events (pitch, onset, offset, confidence). Basic Pitch is polyphonic, so apply **monophonic reduction**: at each moment keep only the highest-confidence note, drop notes < 120 ms or below a confidence threshold, merge consecutive same-pitch notes separated by < 50 ms.
 * **Fallback — CREPE:** run `CrepePitchDetector` over the vocal stem every 50 ms → frames below the confidence threshold are unvoiced → stable regions ≥ 120 ms (< ±50 cents variation) become notes. Used when Basic Pitch fails to load or produces no notes.
 * Notes are stored in the **original key**; transposition is applied at display/evaluation time.
@@ -127,11 +125,11 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
 * **Score** = hits / **voiced** evaluated frames when the singer is voiced for ≥ 60% of the evaluated frames; otherwise hits / all evaluated frames (silence = miss). The score is logged with the take and drives no decision (no pass threshold since 2026-11-12). A segment with zero evaluated frames scores 1.0. *(Changed 2026-11-01: on a real song the original singer is voiced only ~74% of the time, so "silence = miss" failed 73% of the original singer's own segments; with this rule and ±80¢ the original passes 100%, while singing 2 semitones off or not singing passes 0%.)*
 * **Missed note** (red on the piano roll) = note whose own hit ratio < 50%; the roll turns a note red once it has gone by without a correct sample.
 * **Timing:** evaluation runs at `segment end + latencyOffset + 150 ms` (see §7.1).
-* **Session start:** the session begins with the silent `3.. 2.. 1..` countdown, then the pre-roll, so the singer and the pitch detector are ready before the first note *(added 2026-11-01 after device testing)*.
+* **Session start:** the session begins with the **pre-roll** of 3.0 s of reference audio before the first segment; when the song gives less, it starts before 0 with silence, so the singer always gets the whole lead-in. A small `Listen… 3 · 2 · 1` under the timer counts down to the first note, and the pitch guide stays visible, so the singer and the pitch detector are ready before the first note *(changed 2026-11-20: replaces the silent `3.. 2.. 1..` countdown added 2026-11-01, which dimmed the screen and hid the guide)*.
 * **After every segment:** playback continues uninterrupted into the next segment; a segment is never repeated *(changed 2026-11-12, auto-rewind removed)*.
-* **Delete last segment (⌫, added 2026-11-12):** after a confirmation, the last finished segment is deleted (the current one when none is finished) and sung again after `3.. 2.. 1..` and the pre-roll; the session pauses while the dialog is open. The deleted take stays in the raw video but is marked removed in the take log (a `.failed` entry for that segment), and `passedTakesPrefix()` returns the **latest** take of each segment, so a re-sung segment replaces the old one.
+* **Delete last segment (⌫, added 2026-11-12):** after a confirmation, the last finished segment is deleted (the current one when none is finished) and sung again after the pre-roll; the session pauses while the dialog is open. The deleted take stays in the raw video but is marked removed in the take log (a `.failed` entry for that segment), and `passedTakesPrefix()` returns the **latest** take of each segment, so a re-sung segment replaces the old one.
 * **Record button ring:** a red ring on the edge of the record button fills with the progress through the song, with a white mark at the start of every segment and at the end of the filled part. While recording the button is a larger translucent disc with a red rounded square (tap to pause); when ready or paused it is a red disc (tap to start or resume).
-* **Pause / resume:** pausing stops playback and scoring; resuming shows `3.. 2.. 1..` (3 s, silent) → **pre-roll** of 2.0 s of reference audio before the current segment start (from 0 if not available) → that segment again, so a take never spans a pause. Pre-roll and countdown are never part of a take's video range.
+* **Pause / resume:** pausing stops playback and scoring; resuming plays the **pre-roll** of 3.0 s of reference audio before the current segment start (starting before 0 with silence when the song gives less) → that segment again, so a take never spans a pause. The pre-roll is never part of a take's video range. A silent countdown before the pre-roll can still be set in Debug Settings (`countdown`, default 0).
 
 ### 5.7 Session End & Partial Export
 * Because progress is sequential, finished segments are always a prefix `1…N`.
@@ -164,7 +162,7 @@ The app eliminates repetitive trial-and-error recording (retaking the entire son
 2. **`AudioImportView` & `PrepViewModel`** — importer, trimmer, disclaimer, step-by-step processing state, ready screen with earphone check.
 3. **`RecordingPianoRollView` & `RecordingViewModel`** — camera preview, piano roll, top bar, End Session dialog.
 4. **`LoopStateController`** — drives the session state machine:
-   `idle → countdown → preRoll → singing(segment) → evaluating → singing(next) … → ended → exporting → done` (pause → paused → countdown → preRoll restarts the current segment)
+   `idle → preRoll → singing(segment) → evaluating → singing(next) … → ended → exporting → done` (pause → paused → preRoll restarts the current segment; an optional `countdown` before `preRoll`, 0 s by default)
 5. **`ExportPreviewView` & `CompingViewModel`** — progress, player, Share, Save.
 6. **`DebugSettingsView`** — edits `PoCConfiguration` (§8).
 
@@ -194,12 +192,12 @@ public struct SongSegment: Identifiable, Sendable, Equatable {
 }
 
 public enum StemSeparationMethod: String, Sendable {
-    case bundled, coreML, centerChannelCancellation, synthesized
+    case bundled, coreML, synthesized
 }
 
 public struct SeparatedStems: Sendable {
     public let mixURL: URL           // Trimmed full mix (earphone guide)
-    public let vocalGuideURL: URL    // Vocal stem or mid channel, used for extraction
+    public let vocalGuideURL: URL    // Vocal stem, used for extraction
     public let instrumentalURL: URL  // No original vocals, used in final mix
     public let method: StemSeparationMethod
 }
@@ -341,7 +339,7 @@ public protocol VideoCompositionRepository: Sendable {
 * **`AutoCompingVideoUseCase`** — builds `CompingCompositionPlan` from `passedTakesPrefix()` and calls `VideoCompositionRepository`.
 
 ### 6.5 Data & Infrastructure Layer
-1. **Stem separation:** `BundledStemsRepository` (Track A demo), `SynthesizedDemoRepository` (developer fallback), `CenterChannelStemRepository` (L−R / mid fallback), `HTDemucsStemSeparationRepository` (htdemucs CoreML + `DemucsSpectrogram`, behind `useCoreMLSeparation`); `SelectingStemSeparationRepository` picks htdemucs and falls back to center-channel.
+1. **Stem separation:** `BundledStemsRepository` (Track A demo), `SynthesizedDemoRepository` (developer fallback), `HTDemucsStemSeparationRepository` (htdemucs CoreML + `DemucsSpectrogram`), used directly for imported songs (no fallback).
 2. **Guide extraction:** `BasicPitchAnalysisRepository` (CoreML + monophonic reduction) and `CrepeAnalysisRepository` (`AVAssetReader` → PCM float → `CrepePitchDetector`), both conforming to `AudioAnalysisRepository` (§5.3). Fallback chosen in `PrepareSongUseCase`.
 3. **`AudioTranspositionRepositoryImpl`** — `AVAudioEngine` offline manual rendering + `AVAudioUnitTimePitch`.
    * **Model prewarm (v3.3):** `ModelPrewarmer` loads CREPE and htdemucs (plus one silent htdemucs window to set up the GPU) on a utility task at app start, so the vocal range test, Preparation and recording don't wait for model loading.
@@ -396,13 +394,12 @@ public protocol VideoCompositionRepository: Sendable {
 | `timingTolerance` | 0.10 s |
 | `missedNoteThreshold` | 0.50 |
 | `segmentGap` / `minSegment` / `maxSegment` | 0.8 s / 3.0 s / 8.0 s |
-| `preRoll` | 2.0 s |
-| `countdown` | 3 s |
+| `preRoll` | 3.0 s *(was 2.0 s; 2026-11-20, may start before 0, saved settings migrated)* |
+| `countdown` | 0 s *(was 3 s; 2026-11-20, replaced by the pre-roll)* |
 | `crossfade` | 0.15 s *(was 0.03 s; v3.3, saved settings migrated)* |
 | `vocalGain` / `instrumentalGain` | 1.0 / 0.8 |
 | `manualLatencyCalibration` | 0 ms |
 | `maxSessionDuration` | 15 min |
-| `useCoreMLSeparation` | true *(htdemucs on the device; center-channel is the automatic fallback)* |
 
 ---
 
@@ -413,7 +410,7 @@ public protocol VideoCompositionRepository: Sendable {
 | DRM-protected or unreadable file | "This file can't be used. Try an MP3, M4A or WAV file." |
 | Trimmed clip < 15 s | Trimmer prevents it |
 | No vocal notes detected | "We couldn't find a vocal melody in this section. Try another part of the song." |
-| Separation fails / too slow | Fall back to center-channel method + disclaimer |
+| Separation fails / too slow | Show the separation error (`separationFailed`); no fallback method since 2026-11-13 |
 | Output is speaker | Record disabled, "Plug in earphones to record" |
 | Low storage | Record disabled, required space shown |
 | Export fails | Error with Retry; raw file kept until a new session starts |

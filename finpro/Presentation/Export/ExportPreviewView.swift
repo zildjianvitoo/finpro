@@ -7,6 +7,7 @@
 //  (7.2). Owner: Zildjian Vito (ZV-13).
 //
 
+import AVFoundation
 import SwiftUI
 import UIKit
 
@@ -20,9 +21,15 @@ struct ExportPreviewView: View {
 
     @State private var viewModel: CompingViewModel
     @State private var player: CoverPlayerController?
+    @State private var showsSound = false
+    /// The pitch guide over the video, with each note green or red (remembered for next time).
+    @AppStorage("previewShowsPitchGuide") private var showsPitchGuide = true
+    @State private var mixerReady = false
+    @State private var mixerError: String?
+    /// Saving the edited sound before leaving failed: the message, offering to leave without it.
+    @State private var soundSaveError: String?
     @State private var page = Page.preview
     @State private var confirmsLeave = false
-    @State private var showsDraftsSoon = false
     /// Shown progress of the save to Photos, which reports none: it runs ahead to `saveRunUp`
     /// while saving and completes when the save does.
     @State private var exportProgress: Double = 0
@@ -34,14 +41,21 @@ struct ExportPreviewView: View {
     let onRetakeClip: (Int) -> Void
     /// Sing on from the first segment not in the cover.
     let onContinue: () -> Void
+    /// Leave dialog: keep the cover on Home as a draft and go home.
+    let onSaveDraft: () -> Void
+    /// Leave dialog: remove the cover from Home and go home.
+    let onDiscard: () -> Void
 
     init(viewModel: CompingViewModel, onRetake: @escaping () -> Void, onStartOver: @escaping () -> Void,
-         onRetakeClip: @escaping (Int) -> Void = { _ in }, onContinue: @escaping () -> Void = {}) {
+         onRetakeClip: @escaping (Int) -> Void = { _ in }, onContinue: @escaping () -> Void = {},
+         onSaveDraft: @escaping () -> Void = {}, onDiscard: @escaping () -> Void = {}) {
         _viewModel = State(initialValue: viewModel)
         self.onRetake = onRetake
         self.onStartOver = onStartOver
         self.onRetakeClip = onRetakeClip
         self.onContinue = onContinue
+        self.onSaveDraft = onSaveDraft
+        self.onDiscard = onDiscard
     }
 
     private let screenInset: CGFloat = 17
@@ -50,6 +64,8 @@ struct ExportPreviewView: View {
     private let videoAspectRatio: CGFloat = 9.0 / 16.0
     private let videoCornerRadius: CGFloat = 12
     private let seekBarInset: CGFloat = 15
+    private let guideInset: CGFloat = 8
+    private let guideRows = 4
     private let seekBarBottom: CGFloat = 20
     private let timelineHeight: CGFloat = 2
     private let scrubbingLineHeight: CGFloat = 4
@@ -75,6 +91,8 @@ struct ExportPreviewView: View {
     private let saveRunUpDuration: TimeInterval = 1.6
     private let exportedAlertDelay: Duration = .milliseconds(350)
 
+    @Environment(\.scenePhase) private var scenePhase
+
     var body: some View {
         Group {
             switch viewModel.exportState {
@@ -89,14 +107,51 @@ struct ExportPreviewView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.screenBackground.ignoresSafeArea())
-        .overlay { if isMerging { merging } }
+        .overlay {
+            if isMerging {
+                merging(title: "Merging your recording…", progress: mergeProgress)
+            } else if page == .preview, let progress = viewModel.soundProgress {
+                merging(title: "Saving sound changes…", progress: progress)
+            }
+        }
+        // A locked phone interrupts the export (AVFoundation -11847), the sound re-export too.
+        .keepsScreenAwake(isMerging || viewModel.soundProgress != nil)
         .animation(.default, value: page)
         .animation(.default, value: isMerging)
-        .task { await viewModel.export() }
+        .animation(.default, value: viewModel.soundProgress == nil)
+        .task {
+            // iOS stops an export started while the app is not in the foreground (screen locked
+            // right as the recording ended, Control Center open): wait until it is.
+            while UIApplication.shared.applicationState != .active {
+                try? await Task.sleep(for: .milliseconds(100))
+                if Task.isCancelled { return }
+            }
+            await viewModel.export()
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active { Task { await viewModel.appBecameActive() } }
+        }
+        .onAppear {
+            // An existing video (draft) is ready before the first frame: no merge, no onChange.
+            if player == nil, viewModel.hasPlayableFile, let url = viewModel.exportedURL {
+                player = CoverPlayerController(url: url)
+            }
+        }
         .onChange(of: viewModel.exportedURL) { _, url in
+            // The sound mixer plays the edited levels live; a re-export with them must not replace it.
+            guard !mixerReady else { return }
             player = url.flatMap { viewModel.hasPlayableFile ? CoverPlayerController(url: $0) : nil }
         }
         .onChange(of: viewModel.saveState) { _, state in saveStateChanged(state) }
+        // Saving with edited sound re-exports first: its real progress fills the border up to the run-up.
+        .onChange(of: viewModel.soundProgress) { _, progress in
+            guard page == .exporting else { return }
+            withAnimation(.linear(duration: 0.2)) { exportProgress = (progress ?? 1) * saveRunUp }
+        }
+        // The purple outline follows the clip that is playing.
+        .onChange(of: player?.currentTime) { _, time in
+            if let time { viewModel.followPlayback(at: time) }
+        }
         .onDisappear { player?.pause() }
         .alert("Video Exported", isPresented: $showsExported) {
             // The confirm role draws a filled button in the tint (our dark purple) on iOS 26.
@@ -137,7 +192,7 @@ struct ExportPreviewView: View {
         if case .exporting(let value) = viewModel.exportState { value } else { 0 }
     }
 
-    private var merging: some View {
+    private func merging(title: String, progress: Double) -> some View {
         ZStack {
             Color.black.opacity(0.6)
                 .ignoresSafeArea()
@@ -146,7 +201,7 @@ struct ExportPreviewView: View {
                     .font(.system(size: mergingIconSize))
                     .symbolEffect(.bounce, options: .repeat(.continuous))
                     .accessibilityHidden(true)
-                Text("Merging your recording… \(mergeProgress.formatted(.percent.precision(.fractionLength(0))))")
+                Text("\(title) \(progress.formatted(.percent.precision(.fractionLength(0))))")
                     .font(.subheadline.weight(.semibold))
                     .monospacedDigit()
             }
@@ -167,12 +222,31 @@ struct ExportPreviewView: View {
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.title3.weight(.medium))
-                        .foregroundStyle(Color.primary800)
+                        .foregroundStyle(Color.primary)
                 }
                 .glassCircleButtonStyle()
                 .accessibilityLabel("Back")
 
                 Spacer()
+
+                Button {
+                    withAnimation(.snappy) { showsPitchGuide.toggle() }
+                } label: {
+                    Image(systemName: showsPitchGuide ? "pianokeys.inverse" : "pianokeys")
+                }
+                .glassCircleButtonStyle()
+                .accessibilityLabel("Pitch guide")
+                .accessibilityValue(showsPitchGuide ? "Shown" : "Hidden")
+                .disabled(!viewModel.hasPlayableFile)
+
+                Button {
+                    showsSound.toggle()
+                } label: {
+                    Image(systemName: "speaker.wave.2")
+                }
+                .glassCircleButtonStyle()
+                .accessibilityLabel("Sound")
+                .disabled(!viewModel.hasPlayableFile)
 
                 Button("Export", action: startExport)
                     .buttonStyle(ExportButtonStyle())
@@ -185,22 +259,56 @@ struct ExportPreviewView: View {
                 .padding(.vertical, 16)
                 .frame(maxHeight: .infinity)
 
-            clipsSheet
+            if showsSound {
+                VStack(alignment: .leading, spacing: 12) {
+                    if !mixerReady { ProgressView() }
+                    volumeSlider("Vocals", value: $viewModel.vocals, icon: "speaker.wave.2.fill")
+                    Divider()
+                    volumeSlider("Music", value: $viewModel.music, icon: "music.note")
+                }
+                .padding(24)
+                .background(Color.secondaryButton)
+                .disabled(!mixerReady)
+                .task {
+                    guard !mixerReady else { return }
+                    do {
+                        try await viewModel.prepareMixer()
+                        try Task.checkCancellation()
+                        let replacement = CoverPlayerController(item: try viewModel.makeMixerItem())
+                        let position = player?.player.currentTime().seconds ?? 0
+                        let wasPlaying = player?.isPlaying == true
+                        player?.pause()
+                        replacement.seek(to: position.isFinite ? position : 0)
+                        player = replacement
+                        if wasPlaying { replacement.play() }
+                        mixerReady = true
+                    } catch {
+                        guard !Task.isCancelled else { return }
+                        showsSound = false
+                        mixerError = error.localizedDescription
+                    }
+                }
+            } else { clipsSheet }
         }
-        .confirmationDialog("Leave recording?", isPresented: $confirmsLeave, titleVisibility: .visible) {
-            // Sing on from the first segment not in the cover; a complete cover records again.
-            Button("Keep Recording", action: viewModel.canContinueRecording ? onContinue : onRetake)
-            Button("Save to Draft") { showsDraftsSoon = true }
-            // Only closes the dialog (design review). Not `.cancel`: iOS 26 hides that button here.
-            Button("Discard", role: .destructive) {}
+        // A centred system alert (it pops in over a dimmed screen), not a dialog: Cancel stays here.
+        .alert("Leave recording?", isPresented: $confirmsLeave) {
+            // The cover is already on Home (saved after each export): keep it as a draft, or remove it.
+            Button("Save to Draft") { saveSoundThen(onSaveDraft) }
+            Button("Discard", role: .destructive, action: onDiscard)
+            Button("Cancel", role: .cancel) {}
         } message: {
-            Text("You have an unfinished take. What would you like to do with it?")
+            Text("Keep this cover as a draft, or discard it?")
         }
-        .alert("Drafts Are Coming Soon", isPresented: $showsDraftsSoon) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text("Saving a cover to finish later isn't available yet.")
-        }
+        .alert("Couldn't Save Sound", isPresented: Binding(get: { soundSaveError != nil }, set: { if !$0 { soundSaveError = nil } })) {
+            Button("Leave Without Changes", role: .destructive) {
+                soundSaveError = nil
+                onSaveDraft()
+            }
+            Button("Cancel", role: .cancel) { soundSaveError = nil }
+        } message: { Text(soundSaveError ?? "") }
+        .alert("Sound unavailable", isPresented: Binding(get: { mixerError != nil }, set: { if !$0 { mixerError = nil } })) {
+            Button("OK") { mixerError = nil }
+        } message: { Text(mixerError ?? "") }
     }
 
     private var coverVideo: some View {
@@ -209,6 +317,13 @@ struct ExportPreviewView: View {
             .frame(maxWidth: videoMaxWidth)
             .overlay { videoContent }
             .clipShape(.rect(cornerRadius: videoCornerRadius, style: .continuous))
+            .overlay(alignment: .top) {
+                if showsPitchGuide, let player {
+                    pitchGuide(player)
+                        .padding(guideInset)
+                        .transition(.opacity)
+                }
+            }
             .overlay(alignment: .bottom) {
                 if let player { seekBar(player) }
             }
@@ -230,6 +345,26 @@ struct ExportPreviewView: View {
                     .foregroundStyle(Color.primary800)
             }
         }
+    }
+
+    /// The song's notes scrolling with the video, green where they were sung well and red where
+    /// they were missed, so the singer sees where to retake. Touches pass through to the video.
+    private func pitchGuide(_ player: CoverPlayerController) -> some View {
+        // Read here so a seek or scrub while paused redraws the guide.
+        let shownTime = player.currentTime
+        let notes = viewModel.guideNotes
+        let focus = notes.filter { $0.end > shownTime }.prefix(PianoRollView.upcomingNoteCount).map(\.midi)
+        return PianoRollView(notes: notes,
+                             trail: [],
+                             noteStyle: .review(hit: viewModel.hitNoteIDs, missed: viewModel.missedNoteIDs),
+                             focusMIDI: Array(focus),
+                             songTime: { player.isPlaying ? player.player.currentTime().seconds : shownTime },
+                             isPaused: !player.isPlaying,
+                             showsVoiceDot: false,
+                             fixedRows: Double(guideRows))
+            .frame(height: PianoRollView.height(rows: CGFloat(guideRows)))
+            .allowsHitTesting(false)
+            .accessibilityLabel("Pitch guide: green notes were sung well, red notes were missed")
     }
 
     private func seekBar(_ player: CoverPlayerController) -> some View {
@@ -311,18 +446,25 @@ struct ExportPreviewView: View {
                 .padding(.horizontal, sheetTitleInset)
                 .accessibilityAddTraits(.isHeader)
 
-            ScrollView(.horizontal) {
-                HStack(alignment: .top, spacing: clipSpacing) {
-                    ForEach(viewModel.clips) { clip in
-                        clipItem(clip)
+            ScrollViewReader { scroller in
+                ScrollView(.horizontal) {
+                    HStack(alignment: .top, spacing: clipSpacing) {
+                        ForEach(viewModel.clips) { clip in
+                            clipItem(clip).id(clip.id)
+                        }
+                        if viewModel.canContinueRecording && !isMerging {
+                            continueTile
+                        }
                     }
-                    if viewModel.canContinueRecording && !isMerging {
-                        continueTile
-                    }
+                    .padding(.horizontal, clipsInset)
                 }
-                .padding(.horizontal, clipsInset)
+                .scrollIndicators(.hidden)
+                // Keep the playing clip in view.
+                .onChange(of: viewModel.selectedClipID) { _, id in
+                    guard let id else { return }
+                    withAnimation { scroller.scrollTo(id, anchor: .center) }
+                }
             }
-            .scrollIndicators(.hidden)
         }
         .padding(.top, 8)
         .padding(.bottom, 8)
@@ -337,10 +479,12 @@ struct ExportPreviewView: View {
 
     private func clipItem(_ clip: CompingViewModel.Clip) -> some View {
         let isSelected = !isMerging && viewModel.selectedClipID == clip.id
+        // Retake shows only on a clip the user tapped, not on one the playing video reached.
+        let showsRetake = isSelected && viewModel.isClipChosen
         return VStack(spacing: 8) {
             Button {
-                // The first tap selects a clip; tapping the selected one (showing Retake) retakes it.
-                if isSelected {
+                // The first tap selects a clip and plays from it; tapping it again (showing Retake) retakes it.
+                if showsRetake {
                     player?.pause()
                     onRetakeClip(clip.id)
                 } else {
@@ -351,7 +495,7 @@ struct ExportPreviewView: View {
                 clipFrame(of: clip)
                     .frame(width: clipWidth, height: clipHeight)
                     .overlay {
-                        if isSelected {
+                        if showsRetake {
                             VStack(spacing: 0) {
                                 Image(systemName: "arrow.trianglehead.counterclockwise")
                                     .font(.title3.weight(.semibold))
@@ -363,8 +507,8 @@ struct ExportPreviewView: View {
                     }
                     .overlay(alignment: .bottom) {
                         if clip.needsRetake && !isMerging {
-                            Text("Needs Retake")
-                                .font(.system(size: 9, weight: .semibold))
+                            Text("Off-pitch")
+                                .font(.caption2)
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
@@ -387,14 +531,14 @@ struct ExportPreviewView: View {
                 Text(viewModel.timeRange(of: clip))
                     .font(.caption2)
                     .monospacedDigit()
-                    .foregroundStyle(Color.secondaryText)
+                    .foregroundStyle(Color.primary300)
                     .lineLimit(1)
                     .fixedSize()
             }
         }
         .frame(width: clipWidth)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Clip \(clip.id + 1), \(viewModel.timeRange(of: clip))\(clip.needsRetake ? ", needs retake" : "")")
+        .accessibilityLabel("Clip \(clip.id + 1), \(viewModel.timeRange(of: clip))\(clip.needsRetake ? ", off pitch" : "")")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityHint(isSelected ? "Double-tap to sing this clip again" : "Double-tap to select")
     }
@@ -463,7 +607,7 @@ struct ExportPreviewView: View {
                 Text("Please don’t close the app or lock your screen.")
                     .font(.footnote)
             }
-            .foregroundStyle(Color.primary800)
+            .foregroundStyle(Color.primaryBrand)
             .multilineTextAlignment(.center)
             .padding(.top, -12)
             .padding(.horizontal, screenInset)
@@ -498,12 +642,59 @@ struct ExportPreviewView: View {
         .overlay(Color.white.opacity(0.3))
     }
 
+    private func volumeSlider(_ title: String, value: Binding<Float>, icon: String) -> some View {
+        let range: ClosedRange<Float> = 0...2
+        func set(_ level: Float) {
+            value.wrappedValue = level
+            viewModel.updatePreviewVolume()
+        }
+        return VStack(alignment: .leading) {
+            Text(title).font(.appSubheadline)
+            HStack {
+                // The end icons jump straight to silent and to the loudest level.
+                volumeEndButton("speaker.slash.fill", label: "Mute \(title)") { set(range.lowerBound) }
+                Slider(value: Binding(get: { value.wrappedValue }, set: set), in: range)
+                    .tint(.blue)
+                    .accessibilityLabel(title)
+                    .accessibilityValue(Double(value.wrappedValue).formatted(.percent))
+                volumeEndButton(icon, label: "\(title) at maximum") { set(range.upperBound) }
+            }
+        }
+    }
+
+    private func volumeEndButton(_ systemName: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .frame(minWidth: 32, minHeight: 44)
+                .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
     private func startExport() {
         player?.pause()
         exportProgress = 0
         page = .exporting
-        withAnimation(.easeOut(duration: saveRunUpDuration)) { exportProgress = saveRunUp }
+        // With edited sound the re-export reports real progress (see onChange of soundProgress).
+        if !viewModel.hasVolumeEdits {
+            withAnimation(.easeOut(duration: saveRunUpDuration)) { exportProgress = saveRunUp }
+        }
         Task { await viewModel.saveToPhotos() }
+    }
+
+    /// Leaving with edited sound: re-export the cover with it first, so Home and the draft keep it.
+    private func saveSoundThen(_ leave: @escaping () -> Void) {
+        guard viewModel.hasVolumeEdits else { return leave() }
+        player?.pause()
+        Task {
+            do {
+                try await viewModel.applyVolumeEdits()
+                leave()
+            } catch {
+                soundSaveError = error.localizedDescription
+            }
+        }
     }
 
     private func saveStateChanged(_ state: CompingViewModel.SaveState) {

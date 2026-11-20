@@ -31,38 +31,20 @@ struct RootView: View {
                             repository: flow.container.vocalRange,
                             configuration: flow.container.configuration,
                             onSaved: flow.vocalRangeSaved),
+                        routeMonitor: flow.container.audioRoute,
                         onDismiss: flow.dismissVocalRange)
                 }
-            case .home:
-                HomeView(viewModel: HomeViewModel(
-                    vocalRangeRepository: flow.container.vocalRange,
-                    onCreateCover: flow.createNewCover,
-                    onRetestVocalRange: flow.retestVocalRange))
-            case .importSong:
-                VStack {
-                    if let error = flow.preparationError { ErrorStateView(error: error) }
-                    if flow.loadingDemo {
-                        ProgressView("Preparing demo keys…")
-                    } else {
-                        ImportSongView(viewModel: makeImportViewModel(), onBack: flow.startOver) {
-                            Task { await flow.loadDemoSong() }
-                        }
-                    }
-                }
+            case .home, .songList, .importSong:
+                if flow.step == .songList || (flow.step == .importSong && flow.importOrigin == .songList) {
+                    songListScreen
+                } else { homeScreen }
             case .chooseKey:
                 if let choices = flow.keyChoices {
                     KeySelectionView(viewModel: KeySelectionViewModel(
                         choices: choices, previewer: flow.container.audioPreview,
-                        onChoose: flow.songPrepared), routeMonitor: flow.container.audioRoute,
-                        onChooseAnother: flow.startOver, onRetest: flow.retestVocalRange)
-                }
-            case .ready:
-                if let song = flow.preparedSong {
-                    ReadyView(song: song, lyrics: flow.recordingLyrics,
-                              routeMonitor: flow.container.audioRoute,
-                              allowsSpeaker: DebugOptions.allowsSpeakerRecording,
-                              onRecord: flow.startRecording, onChooseAnother: flow.startOver,
-                              onChangeKey: flow.changeKey)
+                        renderer: RenderSongKeyUseCase(transposition: flow.container.audioTransposition),
+                        automaticallySelectRecommended: true, onChoose: flow.songPrepared), routeMonitor: flow.container.audioRoute,
+                        onChooseAnother: flow.returnToSongSection, onRetest: flow.retestVocalRange)
                 }
             case .recording:
                 PermissionGate([.camera, .microphone], provider: flow.container.permissions) {
@@ -74,22 +56,22 @@ struct RootView: View {
                 if let plan = flow.compingPlan {
                     ExportPreviewView(viewModel: makeCompingViewModel(plan: plan), onRetake: flow.retakeCover,
                                       onStartOver: flow.startOver, onRetakeClip: flow.retakeClip(segment:),
-                                      onContinue: flow.continueRecording)
+                                      onContinue: flow.continueRecording,
+                                      onSaveDraft: flow.saveCoverAsDraft, onDiscard: flow.discardCover)
                 }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: Binding(get: { flow.step == .importSong }, set: { if !$0 { flow.closeImport() } })) {
+            ImportSongView(viewModel: makeImportViewModel(), onBack: flow.closeImport,
+                           isEditingSavedSong: flow.importEditsSavedSong && flow.selectedLibrarySong != nil)
+        }
         .animation(.default, value: flow.step)
         #if DEBUG
-        .overlay(alignment: .topTrailing) {
-            // Debug builds only, and only on Home: the designed screens have no button there.
-            if flow.step == .home {
-                Button("Debug Settings", systemImage: "slider.horizontal.3") {
-                    showsDebugSettings = true
-                }
-                .labelStyle(.iconOnly)
-                .padding()
-            }
+        // Debug Settings has no button (the designed screens have none): launch with
+        // `-startScreen debugSettings` to open it.
+        .onAppear {
+            if DebugOptions.launchScreen == "debugSettings" { showsDebugSettings = true }
         }
         .sheet(isPresented: $showsDebugSettings, onDismiss: {
             if opensSyncTest {
@@ -118,11 +100,27 @@ struct RootView: View {
         #endif
     }
 
+    private var homeScreen: some View {
+        HomeView(viewModel: HomeViewModel(
+            vocalRangeRepository: flow.container.vocalRange,
+            songLibrary: flow.container.songLibrary, coverLibrary: flow.container.coverLibrary,
+            onSongs: flow.openSongList, onOpenSong: flow.openSong, onOpenDraft: flow.openDraft,
+            onCreateCover: flow.createNewCover,
+            onRetestVocalRange: flow.retestVocalRange))
+    }
+
+    private var songListScreen: some View {
+        SongListView(viewModel: SongListViewModel(library: flow.container.songLibrary,
+                                                previewer: flow.container.audioPreview),
+                     onBack: flow.openHome, onAdd: flow.createNewCover, onOpen: flow.openSong)
+    }
+
     private func makeImportViewModel() -> ImportSongViewModel {
         let container = flow.container
         return ImportSongViewModel(
             inspector: container.audioInspector,
             lyrics: container.lyrics,
+            recognizer: container.songRecognizer,
             previewer: container.audioPreview,
             prepare: PrepareSongUseCase(separation: container.stemSeparation,
                                         analysis: container.audioAnalysis,
@@ -130,6 +128,8 @@ struct RootView: View {
                                         transposition: container.audioTransposition,
                                         configuration: container.configuration),
             vocalRange: { container.vocalRange.load() },
+            library: container.songLibrary, initialSong: flow.selectedLibrarySong,
+            onSavedToList: flow.savedToSongList, onSelectionSaved: flow.sourceSongSaved,
             onPrepared: { flow.keysPrepared($0, lyrics: $1, songName: $2) })
     }
 
@@ -155,9 +155,13 @@ struct RootView: View {
         return CompingViewModel(
             plan: plan,
             songName: flow.songName,
+            existingExport: flow.compingPlanExportURL,
             useCase: AutoCompingVideoUseCase(takeLog: container.takeLog, videoComposition: container.videoComposition),
             videoLibrary: container.videoLibrary,
-            passThreshold: container.configuration.passThreshold)
+            passThreshold: container.configuration.passThreshold,
+            onExported: { flow.coverExported($0, plan: $1) },
+            onSavedToPhotos: flow.coverSavedToPhotos,
+            transposition: flow.preparedSong?.transposition)
     }
 }
 

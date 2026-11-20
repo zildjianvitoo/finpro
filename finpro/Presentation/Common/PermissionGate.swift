@@ -2,8 +2,10 @@
 //  PermissionGate.swift
 //  finpro
 //
-//  Shows `content` only when the given permissions are granted; otherwise explains why
-//  they are needed or how to turn them on in Settings. Owner: Zildjian Vito (ZV-14).
+//  Shows `content` only when the given permissions are granted. Permissions not asked yet are
+//  asked straight away with the system prompts (their reasons are in Info.plist), without a
+//  page of our own first; a refused permission shows how to turn it on in Settings.
+//  Owner: Zildjian Vito (ZV-14).
 //
 //  Usage (in RootView, so feature screens never deal with permissions):
 //      PermissionGate([.camera, .microphone], provider: container.permissions) { RecordingView() }
@@ -30,8 +32,10 @@ struct PermissionGate<Content: View>: View {
                 ProgressView()
             case .granted:
                 content()
-            case .needsRequest(let missing):
-                requestView(missing)
+            case .needsRequest:
+                // The system prompts appear over this; nothing of our own to read or tap.
+                Color.clear
+                    .task { await model.requestMissing() }
             case .denied(let missing):
                 ErrorStateView(error: .permissionDenied(missing), actionTitle: "Open Settings") {
                     if let url = URL(string: UIApplication.openSettingsURLString) {
@@ -45,34 +49,6 @@ struct PermissionGate<Content: View>: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { model.refresh() }
         }
-    }
-
-    private func requestView(_ missing: [MediaPermission]) -> some View {
-        VStack(spacing: 24) {
-            Spacer()
-            HStack(spacing: 16) {
-                ForEach(missing, id: \.self) { permission in
-                    Image(systemName: permission.systemImage)
-                        .font(.largeTitle)
-                }
-            }
-            .foregroundStyle(.tint)
-            Text("Allow access")
-                .font(.title2.bold())
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(missing, id: \.self) { permission in
-                    Text("**\(permission.displayName)** \(permission.reason).")
-                }
-            }
-            .frame(maxWidth: 320, alignment: .leading)
-            Spacer()
-            Button("Continue") {
-                Task { await model.requestMissing() }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-        }
-        .padding()
     }
 }
 

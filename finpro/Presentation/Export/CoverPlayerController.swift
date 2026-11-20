@@ -23,8 +23,10 @@ final class CoverPlayerController {
     @ObservationIgnored private var endObserver: NSObjectProtocol?
     private let refreshInterval = CMTime(value: 1, timescale: 10)
 
-    init(url: URL) {
-        player = AVPlayer(url: url)
+    convenience init(url: URL) { self.init(item: AVPlayerItem(url: url)) }
+
+    init(item: AVPlayerItem) {
+        player = AVPlayer(playerItem: item)
         timeObserver = player.addPeriodicTimeObserver(forInterval: refreshInterval, queue: .main) { [weak self] time in
             MainActor.assumeIsolated { self?.update(time: time) }
         }

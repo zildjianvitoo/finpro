@@ -13,7 +13,8 @@ nonisolated struct ConfigurationStore: @unchecked Sendable {
     /// Bump when a default changes in a way saved settings must pick up, and add the step to `migrate`.
     /// 1 (2026-11-04): first finpro version. PoC settings (versions 2–3) are not carried over:
     /// the new bundle ID starts with empty UserDefaults.
-    static let currentVersion = 1
+    /// 2 (2026-11-20): pre-roll 2 → 3 s and countdown 3 → 0 s (the pre-roll replaced the countdown).
+    static let currentVersion = 2
 
     let defaults: UserDefaults
 
@@ -36,9 +37,14 @@ nonisolated struct ConfigurationStore: @unchecked Sendable {
     }
 
     /// Brings settings saved by an older version up to new defaults. Values the user changed
-    /// themselves are kept. No steps yet (see `currentVersion`).
+    /// themselves are kept.
     static func migrate(_ old: AppConfiguration, from version: Int) -> AppConfiguration {
-        old
+        var configuration = old
+        if version < 2 {
+            if configuration.preRoll == 2.0 { configuration.preRoll = AppConfiguration.default.preRoll }
+            if configuration.countdownSeconds == 3 { configuration.countdownSeconds = AppConfiguration.default.countdownSeconds }
+        }
+        return configuration
     }
 
     func save(_ configuration: AppConfiguration) {

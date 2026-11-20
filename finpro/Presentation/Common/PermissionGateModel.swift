@@ -40,8 +40,14 @@ final class PermissionGateModel {
         }
     }
 
-    /// Asks for every undetermined permission, one system prompt at a time.
+    @ObservationIgnored private var isRequesting = false
+
+    /// Asks for every undetermined permission, one system prompt at a time (once at a time,
+    /// even if the screen appears again while a prompt is up).
     func requestMissing() async {
+        guard !isRequesting else { return }
+        isRequesting = true
+        defer { isRequesting = false }
         for permission in permissions where provider.status(for: permission) == .notDetermined {
             _ = await provider.request(permission)
         }

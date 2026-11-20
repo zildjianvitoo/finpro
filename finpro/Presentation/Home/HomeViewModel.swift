@@ -21,9 +21,15 @@ final class HomeViewModel {
         let date: Date
         let duration: TimeInterval
         let status: Status
-        // TODO(logic): Add video thumbnail URL or asset reference
+        var videoURL: URL? = nil
     }
 
+    let songLibrary: SongLibrary
+    let coverLibrary: CoverLibrary?
+    private let onSongs: () -> Void
+    private let onOpenSong: (SavedSong) -> Void
+    /// Opens a draft cover on the result screen; false when it can't be opened (then it plays).
+    private let onOpenDraft: (UUID) -> Bool
     private let vocalRangeRepository: VocalRangeRepository
     private let onStartCreateCover: () -> Void
     private let onRetestVocalRangeAction: () -> Void
@@ -37,20 +43,40 @@ final class HomeViewModel {
         return "\(low)-\(high)"
     }
 
-    /// Empty until saved covers are wired up; the screen then shows its empty state.
-    // TODO(logic): connect to saved recent covers library / photo album
-    private(set) var recentCovers: [RecentCoverItem]
+    /// Saved exports and partial covers; fixtures can still be injected for previews.
+    private var previewCovers: [RecentCoverItem]
+    var recentCovers: [RecentCoverItem] {
+        guard let coverLibrary else { return previewCovers }
+        return coverLibrary.covers.map {
+            RecentCoverItem(id: $0.id, title: $0.title, date: $0.date, duration: $0.duration,
+                            status: $0.isDraft ? .draft : .finished, videoURL: coverLibrary.url(for: $0))
+        }
+    }
 
     init(
         vocalRangeRepository: VocalRangeRepository,
         recentCovers: [RecentCoverItem] = [],
+        songLibrary: SongLibrary = SongLibrary(), coverLibrary: CoverLibrary? = nil,
+        onSongs: @escaping () -> Void = {},
+        onOpenSong: @escaping (SavedSong) -> Void = { _ in },
+        onOpenDraft: @escaping (UUID) -> Bool = { _ in false },
         onCreateCover: @escaping () -> Void,
         onRetestVocalRange: @escaping () -> Void
     ) {
+        self.songLibrary = songLibrary
+        self.coverLibrary = coverLibrary
+        self.onSongs = onSongs
+        self.onOpenSong = onOpenSong
+        self.onOpenDraft = onOpenDraft
         self.vocalRangeRepository = vocalRangeRepository
-        self.recentCovers = recentCovers
+        self.previewCovers = recentCovers
         self.onStartCreateCover = onCreateCover
         self.onRetestVocalRangeAction = onRetestVocalRange
+    }
+
+    /// True when the cover opened on the result screen (a draft); false when it should just play.
+    func openCover(_ cover: RecentCoverItem) -> Bool {
+        cover.status == .draft && onOpenDraft(cover.id)
     }
 
     func createCoverTapped() {
@@ -61,9 +87,13 @@ final class HomeViewModel {
         onRetestVocalRangeAction()
     }
 
-    func seeAllTapped() {
-        // TODO(logic): open full recent covers list or gallery
+    /// Removes covers from the app (their draft working files are cleaned up at the next launch).
+    func deleteCovers(_ ids: Set<UUID>) {
+        for id in ids { coverLibrary?.delete(id) }
     }
+
+    func songsTapped() { onSongs() }
+    func openSong(_ song: SavedSong) { onOpenSong(song) }
 }
 
 #if DEBUG

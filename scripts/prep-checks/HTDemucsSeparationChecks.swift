@@ -99,25 +99,6 @@ nonisolated enum HTDemucsSeparationChecks {
             try check(false, "trim past the end must throw")
         } catch CoreMLSeparationError.invalidTrim { count += 1 }
 
-        // Selector: htdemucs when on; missing model → center-channel; flag off → center-channel.
-        let center = CenterChannelStemRepository(directory: directory.appendingPathComponent("center"))
-        let missing = HTDemucsStemSeparationRepository(modelURL: directory.appendingPathComponent("missing.mlmodelc"),
-                                                       directory: directory.appendingPathComponent("missing"))
-        func isInside(_ url: URL, _ folder: URL) -> Bool { url.path.hasPrefix(folder.path + "/") }
-        let used = try await SelectingStemSeparationRepository(coreML: repository, centerChannel: center, useCoreML: { true })
-            .separateStems(from: songURL, trimRange: 2...22)
-        try check(used.method == .coreML && isInside(used.vocalGuideURL, cache), "flag on uses htdemucs")
-        let fallback = try await SelectingStemSeparationRepository(coreML: missing, centerChannel: center, useCoreML: { true })
-            .separateStems(from: songURL, trimRange: 2...22)
-        try check(fallback.method == .centerChannelCancellation, "missing model falls back to center-channel")
-        let off = try await SelectingStemSeparationRepository(coreML: repository, centerChannel: center, useCoreML: { false })
-            .separateStems(from: songURL, trimRange: 2...22)
-        try check(off.method == .centerChannelCancellation, "flag off uses center-channel")
-        do {
-            _ = try await SelectingStemSeparationRepository(coreML: repository, centerChannel: center, useCoreML: { true })
-                .separateStems(from: songURL, trimRange: 10...40)
-            try check(false, "invalid trim through the selector must throw")
-        } catch CoreMLSeparationError.invalidTrim { count += 1 }
         print(String(format: "  htdemucs: 20 s in %.2f s, vocals + instrumental vs mix residual %.1f dB, spectrogram round trip %.1e",
                      seconds, residualDB, roundTrip))
         return count
