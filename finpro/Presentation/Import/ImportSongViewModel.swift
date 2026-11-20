@@ -294,7 +294,7 @@ final class ImportSongViewModel {
                 try Task.checkCancellation()
                 guard generation == token else { return }
                 preparedChoices = choices
-                preparedLyrics = Self.lyrics(lyrics, sungAt: choices.guideWords)
+                preparedLyrics = Self.lyrics(lyrics, sungAt: choices.guideWords, shift: choices.lyricLineShift)
                 Self.logPrepared(choices, lyricLines: lyricLines.count, file: audio.url.lastPathComponent, trim: trim)
                 status = .prepared
             } catch is CancellationError {
@@ -398,14 +398,16 @@ final class ImportSongViewModel {
 
     // MARK: - Lyrics
 
-    /// The words moved to where the guide found them sung, so the lyrics card and the pitch guide
-    /// agree. Lines are left as they were when the guide was not built from the lyrics.
-    private static func lyrics(_ lines: [LyricLine], sungAt guideWords: [[LyricGuideNotesUseCase.Word]]) -> [LyricLine] {
+    /// The lines and words moved to where the guide found them sung, so the lyrics card and the
+    /// pitch guide agree. Lines are left as they were when the guide was not built from the lyrics.
+    private static func lyrics(_ lines: [LyricLine], sungAt guideWords: [[LyricGuideNotesUseCase.Word]],
+                               shift: TimeInterval) -> [LyricLine] {
         guard guideWords.count == lines.count else { return lines }
         return zip(lines, guideWords).map { line, sung in
-            guard sung.count == line.words.count else { return line }
-            return LyricLine(id: line.id, text: line.text, start: line.start, end: line.end,
-                             words: zip(line.words, sung).map { LyricWord(text: $0.text, start: $1.start, end: $1.end) })
+            let words = sung.count == line.words.count
+                ? zip(line.words, sung).map { LyricWord(text: $0.text, start: $1.start, end: $1.end) }
+                : line.words.map { LyricWord(text: $0.text, start: $0.start + shift, end: $0.end + shift) }
+            return LyricLine(id: line.id, text: line.text, start: line.start + shift, end: line.end + shift, words: words)
         }
     }
 
@@ -485,6 +487,7 @@ final class ImportSongViewModel {
                 }
                 lyrics = found.map(LyricsState.found) ?? .notFound
                 if !userMovedSelection { useChorusSuggestion() }
+
             } catch is CancellationError {
             } catch {
                 lyrics = .failed(.lyricsUnavailable)

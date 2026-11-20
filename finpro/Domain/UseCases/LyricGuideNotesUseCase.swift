@@ -3,10 +3,15 @@
 //  finpro
 //
 //  Builds the pitch guide from the lyrics: one note per sung word, so every block has its word
-//  (device feedback 2026-11-13). The lyrics only time whole lines, so each line's words are
-//  spread by syllable count over the parts of the line where the vocal guide is actually voiced
-//  (the notes CREPE found), not over the silence or the instrumental around them. Each word's
-//  pitch is the one its voiced part holds longest. Pure: no audio here.
+//  (device feedback 2026-11-13). The lyrics only time whole lines, and often from another
+//  release of the song, so first the lines are moved onto where the vocal guide (the notes CREPE
+//  found) goes from silent to voiced. Then each line's words are spread by syllable count over the line
+//  up to its last voiced moment, a held note and a silent gap counting only up to a cap, so a
+//  long held word no longer pushes the words before it late (device feedback 2026-11-20). Each
+//  word's pitch is the one its voiced part holds longest. Pure: no audio here.
+//
+//  Measured against word timestamps of three songs' vocal stems (A Whole New World, Best Part,
+//  Abadi): median word start error 0.72 s before, 0.19 s after (0.24 s on 15 s clips).
 //
 
 import Foundation
@@ -38,6 +43,8 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
         let notes: [TargetMIDINote]
         /// `words[line][word]`, the same shape as the input lines.
         let words: [[Word]]
+        /// How far the lines were moved to where they are sung (seconds, negative = earlier).
+        var lineShift: TimeInterval = 0
     }
 
     /// A word further than this from the middle pitch of its line is taken as an octave error of
@@ -50,14 +57,39 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
     static let minimumVoicedPerLine: TimeInterval = 0.2
     private static let epsilon: TimeInterval = 1e-6
 
+    // Moving the lines (synced lyrics are often 0.5–1.5 s off for a given recording).
+    /// The lines are tried this far earlier and later. Wider lets a short clip jump to the
+    /// neighbouring phrase.
+    static let lineShiftRange: TimeInterval = 1.5
+    static let lineShiftStep: TimeInterval = 0.05
+    /// A line start fits where the guide is voiced for this long after it and silent before it.
+    static let lineStartWindow: TimeInterval = 0.5
+    /// The pitch tracker's first note of a phrase comes this long after it is sung (a consonant or a
+    /// soft attack has no steady pitch yet), so the lines start this much before it.
+    static let attackLead: TimeInterval = 0.35
+    /// With fewer lines the shift is not reliable and the lines stay where they are.
+    static let minimumLinesForShift = 2
+
+    // Spreading the words over a line.
+    /// A voiced part counts up to this long: a held note is one sung sound, not many syllables.
+    static let heldNoteShare: TimeInterval = 0.2
+    /// A note covering less voice than this is grown to it (inside its word): the tracker often
+    /// hears only the tail of a soft word, and a 0.05 s block can't be seen or sung.
+    static let minimumNoteLength: TimeInterval = 0.3
+    /// A silent part counts up to this long: the tracker misses soft syllables, so a short gap may
+    /// hold one, but a long rest holds none.
+    static let silenceShare: TimeInterval = 0.5
+
     /// `pitchNotes`: the notes found in the vocal guide (original key), any order.
     func execute(pitchNotes: [TargetMIDINote], lines: [Line]) -> Result {
         let pitched = pitchNotes
             .filter { $0.startTime.isFinite && $0.endTime.isFinite && $0.duration > 0 }
             .sorted { $0.startTime < $1.startTime }
+        let shift = Self.lineShift(lines: lines, pitched: pitched)
         var notes: [TargetMIDINote] = []
         var words: [[Word]] = []
-        for line in lines {
+        for unshifted in lines {
+            let line = Line(start: unshifted.start + shift, end: unshifted.end + shift, wordWeights: unshifted.wordWeights)
             let lineWords = sungWords(in: line, pitched: pitched, after: notes.last?.endTime ?? 0)
             notes += lineWords.compactMap(\.note)
             words.append(lineWords)
@@ -74,7 +106,33 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
             }
         }
         words = Self.foldedAgainstNeighbours(words)
-        return Result(notes: words.flatMap { $0.compactMap(\.note) }, words: words)
+        return Result(notes: words.flatMap { $0.compactMap(\.note) }, words: words, lineShift: shift)
+    }
+
+    /// The shift that puts the line starts where the vocal guide goes from silent to voiced, minus
+    /// the attack lead; 0 with too few lines.
+    static func lineShift(lines: [Line], pitched: [TargetMIDINote]) -> TimeInterval {
+        guard lines.count >= minimumLinesForShift, !pitched.isEmpty else { return 0 }
+        func voicedShare(_ from: TimeInterval, _ to: TimeInterval) -> Double {
+            pitched.reduce(0) { $0 + max(0, min($1.endTime, to) - max($1.startTime, from)) } / (to - from)
+        }
+        let steps = Int((lineShiftRange / lineShiftStep).rounded())
+        var best: TimeInterval = 0
+        var bestCost = Double.infinity
+        for step in -steps...steps {
+            let shift = Double(step) * lineShiftStep
+            // A tiny cost per second keeps the smaller shift when two fit equally well.
+            var cost = abs(shift) * 1e-3
+            for line in lines {
+                let time = line.start + shift
+                cost -= voicedShare(time, time + lineStartWindow) - voicedShare(time - lineStartWindow, time)
+            }
+            if cost < bestCost {
+                bestCost = cost
+                best = shift
+            }
+        }
+        return best - attackLead
     }
 
     /// Notes on each side compared with a word in the second octave pass.
@@ -172,33 +230,84 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
                 return Word(start: time, end: time + span * weight / total, note: nil)
             }
         }
+        // From the line's start to its last voiced moment: silent and voiced parts, each counting
+        // only up to its cap.
+        var pieces: [Piece] = []
+        var time = start
+        for part in voiced {
+            // Overlapping pitch notes would make the pieces run backwards: each starts where the last ended.
+            let lower = max(part.lowerBound, time)
+            guard part.upperBound - lower > Self.epsilon else { continue }
+            if lower > time + Self.epsilon {
+                pieces.append(Piece(range: time...lower, share: min(lower - time, Self.silenceShare)))
+            }
+            pieces.append(Piece(range: lower...part.upperBound, share: min(part.upperBound - lower, Self.heldNoteShare)))
+            time = part.upperBound
+        }
+        let shareTotal = pieces.reduce(0) { $0 + $1.share }
         var words: [Word] = []
-        var share = 0.0
+        var done = 0.0
         for weight in weights {
-            let from = position(share / total * voicedTotal, in: voiced, atEnd: false)
-            share += weight
-            let to = position(share / total * voicedTotal, in: voiced, atEnd: true)
-            let note = to - from > Self.epsilon
-                ? dominantPitch(from: from, to: to, in: pitched).map { TargetMIDINote(midiNote: $0, startTime: from, duration: to - from) }
-                : nil
-            words.append(Word(start: from, end: max(from, to), note: note))
+            let from = position(done / total * shareTotal, in: pieces)
+            done += weight
+            let to = max(from, position(done / total * shareTotal, in: pieces))
+            words.append(Word(start: from, end: to, note: noteFor(from: from, to: to, voiced: voiced, pitched: pitched)))
         }
         return words
     }
 
-    /// The song time `offset` seconds into the voiced parts. At a boundary between two parts, the
-    /// start of a word goes to the next part and the end of a word stays at the end of the earlier one.
-    private func position(_ offset: TimeInterval, in voiced: [ClosedRange<TimeInterval>], atEnd: Bool) -> TimeInterval {
-        var remaining = offset
-        for (index, part) in voiced.enumerated() {
-            let length = part.upperBound - part.lowerBound
-            let isLast = index == voiced.count - 1
-            if remaining < length - Self.epsilon || (atEnd && remaining <= length + Self.epsilon) || isLast {
-                return min(part.lowerBound + max(remaining, 0), part.upperBound)
-            }
-            remaining -= length
+    /// The word's note. It starts where the word's voice starts and is held until the next word,
+    /// as a singer holds a word: the word's leading silence (a breath, or a soft start the tracker
+    /// didn't hear) is left out, since a note there is scored as missed even in a good take
+    /// (device feedback 2026-11-20). When the tracker heard only a sliver of the word, the start
+    /// moves back so the note is at least `minimumNoteLength`. A word the tracker heard no pitch
+    /// in (a soft "I" before a phrase) is still sung: it gets a note over its whole time with the
+    /// nearest pitch of its line.
+    private func noteFor(from: TimeInterval, to: TimeInterval, voiced: [ClosedRange<TimeInterval>],
+                         pitched: [TargetMIDINote]) -> TargetMIDINote? {
+        guard to - from > Self.epsilon else { return nil }
+        let inside = voiced.compactMap { part -> ClosedRange<TimeInterval>? in
+            let lower = max(part.lowerBound, from), upper = min(part.upperBound, to)
+            return upper - lower > Self.epsilon ? lower...upper : nil
         }
-        return voiced.last?.upperBound ?? 0
+        if let first = inside.first, let last = inside.last,
+           let midi = dominantPitch(from: from, to: to, in: pitched) {
+            // Long enough to be seen and sung: grown around the voice, inside the word.
+            let length = min(max(last.upperBound - first.lowerBound, Self.minimumNoteLength), to - from)
+            let middle = (first.lowerBound + last.upperBound) / 2
+            let start = min(max(middle - length / 2, from), to - length)
+            return TargetMIDINote(midiNote: midi, startTime: start, duration: to - start)
+        }
+        return nearestPitch(to: from, in: voiced, pitched: pitched)
+            .map { TargetMIDINote(midiNote: $0, startTime: from, duration: to - from) }
+    }
+
+    /// The pitch of the voiced part of the line closest to `time`.
+    private func nearestPitch(to time: TimeInterval, in voiced: [ClosedRange<TimeInterval>], pitched: [TargetMIDINote]) -> Int? {
+        let distance = { (part: ClosedRange<TimeInterval>) in
+            part.contains(time) ? 0 : min(abs(part.lowerBound - time), abs(part.upperBound - time))
+        }
+        guard let part = voiced.min(by: { distance($0) < distance($1) }) else { return nil }
+        return dominantPitch(from: part.lowerBound, to: part.upperBound, in: pitched)
+    }
+
+    private struct Piece {
+        let range: ClosedRange<TimeInterval>
+        /// How much of the line's time it counts for.
+        let share: TimeInterval
+    }
+
+    /// The song time `share` into the pieces, each piece's share mapped evenly onto its time.
+    private func position(_ share: TimeInterval, in pieces: [Piece]) -> TimeInterval {
+        var remaining = share
+        for piece in pieces {
+            if remaining <= piece.share + Self.epsilon {
+                let fraction = piece.share > 0 ? min(max(remaining, 0) / piece.share, 1) : 0
+                return piece.range.lowerBound + fraction * (piece.range.upperBound - piece.range.lowerBound)
+            }
+            remaining -= piece.share
+        }
+        return pieces.last?.range.upperBound ?? 0
     }
 
     /// The pitch held longest between `from` and `to` (nil when nothing is voiced there).

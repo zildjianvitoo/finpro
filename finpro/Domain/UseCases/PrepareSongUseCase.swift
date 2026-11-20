@@ -52,6 +52,8 @@ nonisolated struct PrepareSongUseCase: Sendable {
         /// When the guide was built from the lyrics: where each word is sung, `[line][word]` in the
         /// order of the lines passed in. Empty otherwise.
         var guideWords: [[LyricGuideNotesUseCase.Word]] = []
+        /// How far the lyric lines were moved to where they are sung (`LyricGuideNotesUseCase.Result.lineShift`).
+        var lyricLineShift: TimeInterval = 0
     }
 
     /// Separate and analyse once; render only the best fully fitting keys. With `lyricLines` (on
@@ -75,6 +77,7 @@ nonisolated struct PrepareSongUseCase: Sendable {
                                             vocalRange: vocalRange, simplifies: false,
                                             recommendationLimit: recommendationLimit, progress: progress)
         choices.guideWords = lyricGuide.words
+        choices.lyricLineShift = lyricGuide.lineShift
         return choices
     }
 
