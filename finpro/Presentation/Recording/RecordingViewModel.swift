@@ -76,6 +76,14 @@ final class RecordingViewModel {
     let pass: RecordingPass
     /// Synced lyrics on the song timeline (empty when none were found).
     let lyrics: [LyricLine]
+    /// The word drawn under each guide note; built once, the guide redraws with every pitch sample.
+    @ObservationIgnored private(set) lazy var wordLabels: [UUID: String] = {
+        let plan = song.transposition
+        let notes = song.segments.flatMap(\.targetNotes).map {
+            PianoRollView.Note(id: $0.id, midi: plan.transposed($0), start: $0.startTime, end: $0.endTime)
+        }
+        return GuideWordLabels.make(words: lyrics.flatMap(\.words), notes: notes)
+    }()
     private(set) var status: Status = .starting
     private(set) var loop: LoopStateController
     private(set) var trail: [TrailPoint] = []
@@ -543,6 +551,8 @@ final class RecordingViewModel {
                 && $0.referenceTime < segment.audioEndTime + configuration.pitchHop
         }
         let result = EvaluateSegmentUseCase(configuration: configuration).execute(segment: segment, evaluations: inSegment)
+        let voicedShare = inSegment.isEmpty ? 0 : Double(inSegment.filter { $0.detectedMIDINote != nil }.count) / Double(inSegment.count)
+        Self.noteLog.notice("segment \(index + 1, privacy: .public): score \(result.score, format: .fixed(precision: 2), privacy: .public), missed notes \(result.missedNoteIDs.count, privacy: .public)/\(segment.targetNotes.count, privacy: .public), voiced samples \(voicedShare, format: .fixed(precision: 2), privacy: .public)")
         // The take range is what makes comping possible; never pretend a take was kept without one.
         guard let anchor,
               let referenceZero = capture.fileTime(forCaptureTime: anchor),

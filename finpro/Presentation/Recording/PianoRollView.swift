@@ -361,13 +361,24 @@ struct PianoRollView: View {
                 context.fill(shape, with: .color(color))
             }
             if let word = wordLabels[note.id] {
-                // A word that would run into an earlier one (short notes close together) is left
-                // out; the lyric line under the guide still shows it.
+                // Under the note; a word that would run into an earlier one (short notes close
+                // together, the narrow preview guide) goes above its note instead, or under it
+                // after the earlier word. Only when none fits is it left out (the lyric line under
+                // the guide still shows it).
                 let label = context.resolve(Text(word).font(.system(size: 8 * min(contentZoom, 1.5), weight: .medium))
                     .foregroundStyle(Palette.word))
-                let frame = CGRect(origin: CGPoint(x: rect.minX + 2, y: rect.maxY + 2),
-                                   size: label.measure(in: CGSize(width: CGFloat.infinity, height: .infinity)))
-                if !drawnLabels.contains(where: { $0.insetBy(dx: -labelSpacing, dy: 0).intersects(frame) }) {
+                let size = label.measure(in: CGSize(width: CGFloat.infinity, height: .infinity))
+                let below = CGRect(origin: CGPoint(x: rect.minX + 2, y: rect.maxY + 2), size: size)
+                let above = CGRect(origin: CGPoint(x: rect.minX + 2, y: rect.minY - 2 - size.height), size: size)
+                let collides = { (frame: CGRect) in
+                    drawnLabels.contains { $0.insetBy(dx: -labelSpacing, dy: 0).intersects(frame) }
+                }
+                var candidates = [below, above]
+                if let blocking = drawnLabels.last(where: { $0.insetBy(dx: -labelSpacing, dy: 0).intersects(below) }),
+                   blocking.maxX + labelSpacing < rect.maxX {
+                    candidates.append(below.offsetBy(dx: blocking.maxX + labelSpacing - below.minX, dy: 0))
+                }
+                if let frame = candidates.first(where: { !collides($0) }) {
                     context.draw(label, in: frame)
                     drawnLabels.append(frame)
                 }

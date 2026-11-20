@@ -615,19 +615,7 @@ struct RecordingView: View {
         }
     }
 
-    /// Each lyric word on the note sung at the middle of it. A guide built from the lyrics has one
-    /// note per word at the word's own time, so every note gets its word.
-    private var wordLabels: [UUID: String] {
-        let notes = viewModel.song.segments.flatMap(\.targetNotes)
-        var labels: [UUID: String] = [:]
-        for word in viewModel.lyrics.flatMap(\.words) {
-            let middle = (word.start + word.end) / 2
-            if let note = notes.first(where: { labels[$0.id] == nil && $0.startTime <= middle && middle < $0.endTime }) {
-                labels[note.id] = word.text
-            }
-        }
-        return labels
-    }
+    private var wordLabels: [UUID: String] { viewModel.wordLabels }
 
     private var focusMIDI: [Int] {
         guard let segment = viewModel.loop.currentSegment else { return [] }
