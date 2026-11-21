@@ -89,6 +89,7 @@ struct SongListView: View {
             }
         }
         .background(Color.screenBackground.ignoresSafeArea())
+        .edgeSwipeBack(action: onBack)
         .onDisappear { viewModel.stop() }
         .onChange(of: scenePhase) { _, phase in if phase != .active { viewModel.stop() } }
         .onChange(of: nameFocused) { _, focused in
@@ -149,27 +150,14 @@ struct SongListView: View {
                 else { withRowAnimation { viewModel.play(song) } }
             }
             if expanded {
-                let progress = viewModel.playingID == song.id ? viewModel.playbackTime / max(1, song.duration) : 0
-                GeometryReader { proxy in
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Color.primary800.opacity(0.55))
-                        Capsule().fill(Color.primary500)
-                            .frame(width: max(8, proxy.size.width * min(1, max(0, progress))))
-                    }
-                }
-                .frame(height: 8)
-                .padding(.vertical, AppSpacing.tiny)
-                .transition(.opacity)
-                .accessibilityElement()
-                .accessibilityLabel("Playback position")
-                .accessibilityValue(Text(min(1, max(0, progress)), format: .percent.precision(.fractionLength(0))))
+                seekBar(for: song)
                 HStack {
                     Spacer()
                     Button { viewModel.togglePlayback(song) } label: {
-                        Image(systemName: viewModel.playingID == song.id ? "pause.fill" : "play.fill")
+                        Image(systemName: viewModel.isPlaying(song) ? "pause.fill" : "play.fill")
                             .font(.appTitle2)
                     }
-                    .accessibilityLabel(viewModel.playingID == song.id ? "Pause song" : "Play song")
+                    .accessibilityLabel(viewModel.isPlaying(song) ? "Pause song" : "Play song")
                     Spacer()
                     Button { viewModel.stop(); onOpen(song) } label: { Image(systemName: "waveform").font(.appTitle2) }
                         .accessibilityLabel("Choose song section")
@@ -191,6 +179,54 @@ struct SongListView: View {
             Button("Choose song section") { viewModel.stop(); onOpen(song) }
             Button("Play") { viewModel.togglePlayback(song) }
             Button("Delete", role: .destructive) { viewModel.delete([song.id]) }
+        }
+    }
+
+    /// Scrubbable playback bar inside an expanded song row: drag or tap anywhere on it to seek.
+    private func seekBar(for song: SavedSong) -> some View {
+        let duration = max(1, song.duration)
+        let progress = min(1, max(0, viewModel.playbackTime / duration))
+        let scrubbing = viewModel.isScrubbing && viewModel.expandedID == song.id
+        return GeometryReader { proxy in
+            let width = max(proxy.size.width, 1)
+            let fillWidth = max(8, width * progress)
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.primary800.opacity(0.55))
+                Capsule().fill(Color.primary500)
+                    .frame(width: fillWidth)
+            }
+            .frame(height: scrubbing ? 10 : 8)
+            .overlay(alignment: .leading) {
+                if scrubbing {
+                    Circle().fill(Color.primary500)
+                        .frame(width: 16, height: 16)
+                        .offset(x: min(max(0, width * progress - 8), max(0, width - 16)))
+                }
+            }
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle())
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        viewModel.beginScrubbing(song)
+                        viewModel.scrub(song, to: value.location.x / width)
+                    }
+                    .onEnded { _ in
+                        viewModel.endScrubbing(song)
+                    }
+            )
+        }
+        .frame(height: 28)
+        .padding(.vertical, -6)
+        .animation(.easeOut(duration: 0.15), value: scrubbing)
+        .transition(.opacity)
+        .accessibilityElement()
+        .accessibilityLabel("Playback position")
+        .accessibilityValue(Text(progress, format: .percent.precision(.fractionLength(0))))
+        .accessibilityAdjustableAction { direction in
+            let step: TimeInterval = 5
+            let delta = direction == .increment ? step : -step
+            viewModel.seek(song, to: viewModel.playbackTime + delta)
         }
     }
 }
