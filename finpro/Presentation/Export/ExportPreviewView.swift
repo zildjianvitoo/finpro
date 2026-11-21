@@ -315,6 +315,10 @@ struct ExportPreviewView: View {
                 }
             } else { clipsSheet }
         }
+        .edgeSwipeBack(isEnabled: !confirmsLeave && !showsSound, interactiveSlide: false) {
+            player?.pause()
+            confirmsLeave = true
+        }
         // A centred system alert (it pops in over a dimmed screen), not a dialog: Cancel stays here.
         .alert(keepsCoverOnLeave ? "Save changes?" : "Leave recording?", isPresented: $confirmsLeave) {
             if keepsCoverOnLeave {

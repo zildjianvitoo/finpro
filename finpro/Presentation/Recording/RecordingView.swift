@@ -206,6 +206,9 @@ struct RecordingView: View {
             try? await Task.sleep(for: Self.tipsDelay)
             if !Task.isCancelled { showsTips = true }
         }
+        .edgeSwipeBack(isEnabled: viewModel.loop.phase == .idle && !showsSettings && !showsTips && !showsStopped) {
+            Task { await viewModel.discard() }
+        }
     }
 
     // MARK: - Layout

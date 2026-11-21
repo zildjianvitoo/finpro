@@ -142,6 +142,9 @@ struct OnboardingView: View {
                 .animation(pageAnimation, value: isLastPage)
                 .padding(.horizontal, 25).padding(.top, 16).padding(.bottom, 16)
         }
+        .edgeSwipeBack(isEnabled: currentStep == 0, interactiveSlide: false) {
+            withAnimation { currentStep = -1 }
+        }
     }
 }
 

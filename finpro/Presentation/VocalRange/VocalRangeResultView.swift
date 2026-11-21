@@ -62,6 +62,7 @@ struct VocalRangeResultView: View {
             .padding(.horizontal, 25).padding(.bottom, 16)
         }
         .background(Color.screenBackground.ignoresSafeArea())
+        .edgeSwipeBack(action: onBack)
     }
 
     // Positions from the 2.6 design frame, relative to the top of the safe area (y 62) and the

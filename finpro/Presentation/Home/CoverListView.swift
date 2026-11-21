@@ -103,6 +103,7 @@ struct CoverListView: View {
             }
         }
         .background(Color.screenBackground.ignoresSafeArea())
+        .edgeSwipeBack(isEnabled: !confirmsDelete, action: onBack)
         .animation(.easeInOut(duration: 0.2), value: selecting)
         .animation(.easeInOut(duration: 0.2), value: filter)
         .confirmationDialog(selectedIDs.count == 1 ? "Delete this cover?" : "Delete \(selectedIDs.count) covers?",

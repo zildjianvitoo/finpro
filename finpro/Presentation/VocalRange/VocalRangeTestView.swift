@@ -33,6 +33,7 @@ struct VocalRangeTestView: View {
                 VocalRangeIntroView(onBack: onDismiss) {
                     stage = .warmup
                 }
+                .edgeSwipeBack(isEnabled: onDismiss != nil) { onDismiss?() }
             } else if stage == .result, case .finished(let range) = viewModel.status {
                 VocalRangeResultView(range: range, isFemale: false, onDone: viewModel.save, onRetake: {
                     viewModel.restart()
@@ -43,6 +44,7 @@ struct VocalRangeTestView: View {
                 })
             } else {
                 testStep
+                    .edgeSwipeBack(isEnabled: !showsFailure && !showsEarphoneSetup, interactiveSlide: false, action: back)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -35,9 +35,17 @@ struct RootView: View {
                         onDismiss: flow.dismissVocalRange)
                 }
             case .home, .songList, .importSong:
-                if flow.step == .songList || (flow.step == .importSong && flow.importOrigin == .songList) {
-                    songListScreen
-                } else { homeScreen }
+                let showsSongList = flow.step == .songList || (flow.step == .importSong && flow.importOrigin == .songList)
+                ZStack {
+                    homeScreen
+                        .accessibilityHidden(showsSongList)
+                    if showsSongList {
+                        songListScreen
+                            .transition(.move(edge: .trailing))
+                            .zIndex(1)
+                    }
+                }
+                .animation(.easeInOut(duration: 0.3), value: showsSongList)
             case .chooseKey:
                 if let choices = flow.keyChoices {
                     KeySelectionView(viewModel: KeySelectionViewModel(
@@ -45,6 +53,7 @@ struct RootView: View {
                         renderer: RenderSongKeyUseCase(transposition: flow.container.audioTransposition),
                         automaticallySelectRecommended: true, onChoose: flow.songPrepared), routeMonitor: flow.container.audioRoute,
                         onChooseAnother: flow.returnToSongSection, onRetest: flow.retestVocalRange)
+                    .edgeSwipeBack(action: flow.returnToSongSection)
                 }
             case .recording:
                 PermissionGate([.camera, .microphone], provider: flow.container.permissions) {
