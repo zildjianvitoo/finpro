@@ -2,10 +2,11 @@
 //  PitchGuideIllustrationCard.swift
 //  finpro
 //
-//  The pitch guide card of onboarding page 1, drawn natively so it plays like the real guide:
-//  word notes scroll past the playhead, the voice dot follows the melody, and the part of a note
-//  the dot has passed turns green (one short slip shows red). Laid out in the illustration's
-//  pixels (docs/illustrations/ob1-full.png), scaled by `unit`.
+//  The pitch guide card of onboarding page 1, drawn natively so it matches the latest pitch guide:
+//  word notes scroll past the playhead with centred labels, the lime voice dot follows the melody
+//  and sparkles while on pitch, the part being sung sweeps grey, and each finished bar turns full
+//  green (on pitch) or full red (off pitch — never half red, half green). Laid out in the
+//  illustration's pixels (docs/illustrations/ob1-full.png), scaled by `unit`.
 //
 
 import SwiftUI
@@ -24,8 +25,8 @@ struct PitchGuideIllustrationCard: View {
         let row: Int
         let start: TimeInterval
         let end: TimeInterval
-        /// The first seconds of the note sung off pitch (shown red, the dot below the note).
-        var slip: TimeInterval = 0
+        /// Sung off pitch for the whole note (dot sits below the bar, no sparkle, full red once passed).
+        var isMissed = false
     }
 
     private static let rowNames = ["C4", "B3", "A3", "G3", "F3", "E3", "D3"]
@@ -33,7 +34,7 @@ struct PitchGuideIllustrationCard: View {
     /// One loop of the melody; the second line starts at `secondLineStart`.
     private static let notes: [Note] = [
         Note(word: "A", row: 4, start: 0.0, end: 0.6),
-        Note(word: "whole", row: 3, start: 0.8, end: 1.7, slip: 0.3),
+        Note(word: "whole", row: 3, start: 0.8, end: 1.7, isMissed: true),
         Note(word: "new", row: 1, start: 1.9, end: 2.6),
         Note(word: "world", row: 2, start: 2.8, end: 3.9),
         Note(word: "A", row: 4, start: 4.6, end: 5.0),
@@ -45,8 +46,8 @@ struct PitchGuideIllustrationCard: View {
     ]
     private static let loop: TimeInterval = 10.2
     private static let secondLineStart: TimeInterval = 4.3
-    /// The resting frame: the dot just past the slip of "whole", as in the design.
-    private static let restingTime: TimeInterval = 1.2
+    /// Resting frame (Reduce Motion): "whole" full red, "new" mid-sing with the lime dot sparkling.
+    private static let restingTime: TimeInterval = 2.25
 
     // Layout in illustration pixels.
     private static let cornerRadius: CGFloat = 56
@@ -60,15 +61,18 @@ struct PitchGuideIllustrationCard: View {
     private static let playheadBottom: CGFloat = 512
     private static let pointsPerSecond: CGFloat = 150
     private static let noteHeight: CGFloat = 42
-    private static let dotSize: CGFloat = 58
+    private static let dotSize: CGFloat = 50
     private static let lyricsY: CGFloat = 556
     private static let lyricsStep: CGFloat = 50
 
-    // Colours of the illustration's frosted card.
+    // Colours matching the frosted card and the latest PianoRollView palette.
     private static let cardCentre = Color(red: 146 / 255, green: 89 / 255, blue: 130 / 255)
     private static let cardEdge = Color(red: 206 / 255, green: 181 / 255, blue: 199 / 255)
-    private static let rowLine = Color(white: 201 / 255)
-    private static let playhead = Color(red: 102 / 255, green: 50 / 255, blue: 80 / 255)
+    private static let rowLine = Color.white.opacity(0.45)
+    private static let playhead = Color.primary800
+    private static let noteFill = Color.secondaryButton
+    private static let passedNoteFill = Color.gray
+    private static let voiceDot = Color.secBrand
 
     var body: some View {
         Canvas { context, _ in draw(in: &context) }
@@ -79,6 +83,7 @@ struct PitchGuideIllustrationCard: View {
                     .opacity(0.94)
             )
             .clipShape(RoundedRectangle(cornerRadius: Self.cornerRadius * unit, style: .continuous))
+            .environment(\.colorScheme, .light)
     }
 
     private func draw(in context: inout GraphicsContext) {
@@ -89,12 +94,12 @@ struct PitchGuideIllustrationCard: View {
         // Rows with their note names.
         for (index, name) in Self.rowNames.enumerated() {
             let y = rowY(Double(index))
-            context.draw(Text(name).font(.system(size: 24 * unit, weight: .medium)).foregroundStyle(.white.opacity(0.8)),
+            context.draw(Text(name).font(.system(size: 24 * unit, weight: .medium)).foregroundStyle(.white.opacity(0.85)),
                          at: point(Self.labelX, y))
             var line = Path()
             line.move(to: point(Self.laneStart, y))
             line.addLine(to: point(Self.laneEnd, y))
-            context.stroke(line, with: .color(Self.rowLine), lineWidth: 12 * unit)
+            context.stroke(line, with: .color(Self.rowLine), lineWidth: 8 * unit)
         }
 
         // Notes: this loop and the next, so the melody keeps coming in from the right.
@@ -109,41 +114,47 @@ struct PitchGuideIllustrationCard: View {
                 let x1 = Self.playheadX + CGFloat(end - now) * Self.pointsPerSecond
                 guard x1 > Self.laneStart - Self.noteHeight, x0 < Self.laneEnd + Self.noteHeight else { continue }
                 let y = rowY(Double(note.row))
+                let width = max(Self.noteHeight, x1 - x0)
                 let rect = CGRect(x: x0 * unit, y: (y - Self.noteHeight / 2) * unit,
-                                  width: max(Self.noteHeight, x1 - x0) * unit, height: Self.noteHeight * unit)
+                                  width: width * unit, height: Self.noteHeight * unit)
                 let shape = Path(roundedRect: rect, cornerRadius: rect.height / 2)
-                lane.fill(shape, with: .color(.white))
-                // The sung part: red over the slip, green after it.
-                var sung = lane
-                sung.clip(to: shape)
-                let slipEnd = Self.playheadX + CGFloat(start + note.slip - now) * Self.pointsPerSecond
-                let passed = min(x1, Self.playheadX)
-                if passed > x0 {
-                    let redEnd = min(passed, slipEnd)
-                    if redEnd > x0 {
-                        sung.fill(Path(CGRect(x: x0 * unit, y: rect.minY, width: (redEnd - x0) * unit, height: rect.height)),
-                                  with: .color(.noteMiss))
-                    }
-                    let greenStart = max(x0, slipEnd)
-                    if passed > greenStart {
-                        sung.fill(Path(CGRect(x: greenStart * unit, y: rect.minY, width: (passed - greenStart) * unit, height: rect.height)),
-                                  with: .color(.pitchHit))
+
+                if end <= now {
+                    // Finished bar: whole bar turns solid green (on pitch) or solid red (missed).
+                    lane.fill(shape, with: .color(note.isMissed ? .noteMiss : .pitchHit))
+                } else {
+                    // Upcoming or currently singing: light bar whose passed part sweeps grey, like live recording.
+                    lane.fill(shape, with: .color(Self.noteFill))
+                    let passed = min(x0 + width, Self.playheadX)
+                    if passed > x0 {
+                        var sung = lane
+                        sung.clip(to: shape)
+                        sung.fill(Path(CGRect(x: x0 * unit, y: rect.minY,
+                                              width: (passed - x0) * unit, height: rect.height)),
+                                  with: .color(Self.passedNoteFill))
                     }
                 }
+
+                // Word label centred directly under the bar, matching PianoRollView.
                 lane.draw(Text(note.word).font(.system(size: 24 * unit, weight: .medium)).foregroundStyle(.white),
-                          at: point(x0 + 6, y + Self.noteHeight / 2 + 4), anchor: .topLeading)
+                          at: CGPoint(x: rect.midX, y: rect.maxY + 4 * unit), anchor: .top)
             }
         }
 
-        // Playhead, and the voice dot at the pitch being sung (gliding between notes).
+        // Playhead, and the lime voice dot at the pitch being sung (sparkling while on pitch).
         var playhead = Path()
         playhead.move(to: point(Self.playheadX, Self.playheadTop))
         playhead.addLine(to: point(Self.playheadX, Self.playheadBottom))
         context.stroke(playhead, with: .color(Self.playhead), lineWidth: 10 * unit)
-        let dotRow = voiceRow(at: now)
-        let dot = CGRect(x: (Self.playheadX - Self.dotSize / 2) * unit, y: (rowY(dotRow) - Self.dotSize / 2) * unit,
-                         width: Self.dotSize * unit, height: Self.dotSize * unit)
-        context.fill(Path(ellipseIn: dot), with: .color(.primaryBrand))
+
+        let voice = voiceState(at: now)
+        let center = point(Self.playheadX, rowY(voice.row))
+        let radius = Self.dotSize / 2 * unit
+        if voice.onPitch {
+            sparkle(around: center, radius: radius, at: now, in: &context)
+        }
+        let dot = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+        context.fill(Path(ellipseIn: dot), with: .color(Self.voiceDot.opacity(voice.singing ? 1 : 0.7)))
 
         // Lyrics: the line being sung, then the next one.
         let current = now < Self.secondLineStart ? 0 : 1
@@ -154,17 +165,65 @@ struct PitchGuideIllustrationCard: View {
         }
     }
 
-    /// The row the voice is on: the note's row (a little low during a slip), gliding between notes.
-    private func voiceRow(at now: TimeInterval) -> Double {
+    /// Matching `PianoRollView.sparkle`: pulsing lime glow, expanding rings, and bursting stars.
+    private func sparkle(around center: CGPoint, radius: CGFloat, at now: TimeInterval, in context: inout GraphicsContext) {
+        let pulse = 0.5 + 0.5 * sin(now * 2 * .pi * 2.5)
+        var glow = context
+        glow.addFilter(.blur(radius: radius * 1.1))
+        let glowRadius = radius * (1.9 + 0.45 * pulse)
+        glow.fill(Path(ellipseIn: CGRect(x: center.x - glowRadius, y: center.y - glowRadius,
+                                         width: glowRadius * 2, height: glowRadius * 2)),
+                  with: .color(Self.voiceDot.opacity(0.45 + 0.3 * pulse)))
+
+        for offset in [0.0, 0.5] {
+            let progress = (now / 0.7 + offset).truncatingRemainder(dividingBy: 1)
+            let ringRadius = radius * (1.1 + 1.8 * progress)
+            context.stroke(Path(ellipseIn: CGRect(x: center.x - ringRadius, y: center.y - ringRadius,
+                                                  width: ringRadius * 2, height: ringRadius * 2)),
+                           with: .color(Self.voiceDot.opacity(0.8 * (1 - progress))),
+                           lineWidth: max(1, radius * 0.22 * (1 - progress)))
+        }
+
+        let count = 10
+        let cycle = 0.8
+        let colors: [Color] = [.white, Self.voiceDot, Color(red: 1, green: 0.97, blue: 0.75)]
+        for index in 0..<count {
+            let phase = now / cycle + Double(index) / Double(count)
+            let progress = phase.truncatingRemainder(dividingBy: 1)
+            let round = (phase - progress).rounded()
+            let angle = (Double(index) * 2.399 + round * 1.7).truncatingRemainder(dividingBy: 2 * .pi)
+            let distance = radius * (1.0 + 2.9 * progress)
+            let starCenter = CGPoint(x: center.x + CGFloat(cos(angle)) * distance,
+                                     y: center.y + CGFloat(sin(angle)) * distance)
+            let size = radius * (index.isMultiple(of: 3) ? 1.15 : 0.8) * (1 - progress * 0.5)
+            let spin = Angle.radians(progress * .pi / 2)
+            var star = Path()
+            star.move(to: CGPoint(x: 0, y: -size))
+            star.addQuadCurve(to: CGPoint(x: size, y: 0), control: .zero)
+            star.addQuadCurve(to: CGPoint(x: 0, y: size), control: .zero)
+            star.addQuadCurve(to: CGPoint(x: -size, y: 0), control: .zero)
+            star.addQuadCurve(to: CGPoint(x: 0, y: -size), control: .zero)
+            let placed = star.applying(CGAffineTransform(rotationAngle: spin.radians))
+                .applying(CGAffineTransform(translationX: starCenter.x, y: starCenter.y))
+            let opacity = progress < 0.15 ? progress / 0.15 : 1 - (progress - 0.15) / 0.85
+            context.fill(placed, with: .color(colors[index % colors.count].opacity(opacity)))
+        }
+    }
+
+    /// The voice row and whether it is currently singing on pitch.
+    private func voiceState(at now: TimeInterval) -> (row: Double, singing: Bool, onPitch: Bool) {
         let notes = Self.notes
         if let note = notes.first(where: { $0.start <= now && now < $0.end }) {
-            return Double(note.row) + (now < note.start + note.slip ? 0.5 : 0)
+            let row = Double(note.row) + (note.isMissed ? 0.55 : 0)
+            return (row, true, !note.isMissed)
         }
         let next = notes.first { $0.start > now } ?? notes[0]
         let previous = notes.last { $0.end <= now } ?? notes[notes.count - 1]
+        let prevRow = Double(previous.row) + (previous.isMissed ? 0.55 : 0)
+        let nextRow = Double(next.row) + (next.isMissed ? 0.55 : 0)
         let gapStart = previous.end, gapEnd = next.start > now ? next.start : next.start + Self.loop
         let progress = (now - gapStart) / max(gapEnd - gapStart, .ulpOfOne)
         let eased = progress * progress * (3 - 2 * progress)
-        return Double(previous.row) + (Double(next.row) - Double(previous.row)) * min(max(eased, 0), 1)
+        return (prevRow + (nextRow - prevRow) * min(max(eased, 0), 1), false, false)
     }
 }
