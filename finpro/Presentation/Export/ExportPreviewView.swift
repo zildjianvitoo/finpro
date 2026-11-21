@@ -28,6 +28,8 @@ struct ExportPreviewView: View {
     @State private var mixerError: String?
     /// Saving the edited sound before leaving failed: the message, offering to leave without it.
     @State private var soundSaveError: String?
+    /// Leaving waits for the cover file (exported in the background) before going home.
+    @State private var savingCover = false
     @State private var page = Page.preview
     @State private var confirmsLeave = false
     /// Shown progress of the save to Photos, which reports none: it runs ahead to `saveRunUp`
@@ -45,10 +47,14 @@ struct ExportPreviewView: View {
     let onSaveDraft: () -> Void
     /// Leave dialog: remove the cover from Home and go home.
     let onDiscard: () -> Void
+    /// The cover is already kept (reopened from Home's covers, or saved to Photos): back offers
+    /// Save and Exit (keeps the sound) or Cancel (leaves without it) instead of Save to Draft / Discard.
+    let keepsCoverOnLeave: Bool
 
     init(viewModel: CompingViewModel, onRetake: @escaping () -> Void, onStartOver: @escaping () -> Void,
          onRetakeClip: @escaping (Int) -> Void = { _ in }, onContinue: @escaping () -> Void = {},
-         onSaveDraft: @escaping () -> Void = {}, onDiscard: @escaping () -> Void = {}) {
+         onSaveDraft: @escaping () -> Void = {}, onDiscard: @escaping () -> Void = {},
+         keepsCoverOnLeave: Bool = false) {
         _viewModel = State(initialValue: viewModel)
         self.onRetake = onRetake
         self.onStartOver = onStartOver
@@ -56,15 +62,22 @@ struct ExportPreviewView: View {
         self.onContinue = onContinue
         self.onSaveDraft = onSaveDraft
         self.onDiscard = onDiscard
+        self.keepsCoverOnLeave = keepsCoverOnLeave
     }
 
     private let screenInset: CGFloat = 17
-    private let topBarInset: CGFloat = 13
+    /// Header buttons at y 70, 8 pt under the status bar (design 6.2a).
+    private let topBarInset: CGFloat = 5
     private let videoMaxWidth: CGFloat = 280
     private let videoAspectRatio: CGFloat = 9.0 / 16.0
     private let videoCornerRadius: CGFloat = 12
     private let seekBarInset: CGFloat = 15
     private let guideInset: CGFloat = 8
+    /// Touch width of the full-screen button next to the time.
+    private let fullScreenButtonSize: CGFloat = 36
+    /// The retake mark on a chosen clip (design 6.2a).
+    private let retakeBadgeSize: CGFloat = 28
+    private let retakeVeilOpacity = 0.5
     /// At least 6 lines, as in the recording guide (more when the notes on screen spread wider).
     private let guideRows = RecordingDisplaySettings.guideRows
     private let seekBarBottom: CGFloat = 20
@@ -96,7 +109,8 @@ struct ExportPreviewView: View {
     var body: some View {
         Group {
             switch viewModel.exportState {
-            case .failed(let message):
+            // While the live preview plays, a failed background export surfaces on Export or leave.
+            case .failed(let message) where !viewModel.isLivePreviewReady:
                 failed(message: message)
             default:
                 switch page {
@@ -110,14 +124,17 @@ struct ExportPreviewView: View {
         .overlay {
             if isMerging {
                 merging(title: "Merging your recording…", progress: mergeProgress)
+            } else if savingCover {
+                merging(title: "Saving your cover…", progress: viewModel.soundProgress ?? mergeProgress)
             } else if page == .preview, let progress = viewModel.soundProgress {
                 merging(title: "Saving sound changes…", progress: progress)
             }
         }
         // A locked phone interrupts the export (AVFoundation -11847), the sound re-export too.
-        .keepsScreenAwake(isMerging || viewModel.soundProgress != nil)
+        .keepsScreenAwake(isMerging || viewModel.isExportRunning || viewModel.soundProgress != nil)
         .animation(.default, value: page)
         .animation(.default, value: isMerging)
+        .animation(.default, value: savingCover)
         .animation(.default, value: viewModel.soundProgress == nil)
         .task {
             // iOS stops an export started while the app is not in the foreground (screen locked
@@ -126,7 +143,12 @@ struct ExportPreviewView: View {
                 try? await Task.sleep(for: .milliseconds(100))
                 if Task.isCancelled { return }
             }
-            await viewModel.export()
+            // Play the takes straight away; the file for Home, the draft and Photos exports meanwhile.
+            if player == nil, await viewModel.prepareLivePreview(), let item = try? viewModel.makeMixerItem() {
+                player = CoverPlayerController(item: item)
+                mixerReady = true
+            }
+            viewModel.exportInBackground()
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { Task { await viewModel.appBecameActive() } }
@@ -148,7 +170,17 @@ struct ExportPreviewView: View {
             guard page == .exporting else { return }
             withAnimation(.linear(duration: 0.2)) { exportProgress = (progress ?? 1) * saveRunUp }
         }
-        .onDisappear { player?.pause() }
+        // Export tapped before the background export finished: the border follows it.
+        .onChange(of: mergeProgress) { _, progress in
+            guard page == .exporting, viewModel.isExportRunning else { return }
+            withAnimation(.linear(duration: 0.2)) { exportProgress = progress * saveRunUp }
+        }
+        .onDisappear {
+            player?.pause()
+            // Off to a retake, or discarded: this version's file is not needed (leaving to keep
+            // the cover waits for it first).
+            viewModel.cancelExport()
+        }
         .alert("Video Exported", isPresented: $showsExported) {
             // The confirm role draws a filled button in the tint (our dark purple) on iOS 26.
             if #available(iOS 26, *) {
@@ -172,15 +204,18 @@ struct ExportPreviewView: View {
         } message: {
             Text(saveErrorMessage)
         }
-        .tint(Color.primary800)
+        // Icons and alert buttons: dark plum, light in dark mode (primary800 has no dark variant).
+        .tint(Color.plumNight)
     }
 
     // MARK: - 7.0 Merging
 
+    /// Waiting for the merge before anything can be shown: only when the live preview can't be built.
     private var isMerging: Bool {
+        guard !viewModel.isLivePreviewReady else { return false }
         switch viewModel.exportState {
-        case .idle, .exporting: true
-        case .finished, .failed: false
+        case .idle, .exporting: return true
+        case .finished, .failed: return false
         }
     }
 
@@ -192,10 +227,12 @@ struct ExportPreviewView: View {
         ZStack {
             Color.loadingOverlay.opacity(AppLayout.loadingOverlayOpacity)
                 .ignoresSafeArea()
-            VStack(spacing: AppSpacing.medium) {
+            // Like the preparing screen (design 6.1 / 4.3): the text close under the mascot.
+            VStack(spacing: 0) {
                 LoadingMascotView()
-                LoadingTextView(title: title, progress: progress)
+                LoadingTextView(title: title, progress: progress, font: .appHeadline)
             }
+            .offset(y: -AppSpacing.regular)
             .foregroundStyle(.white)
         }
         .accessibilityElement(children: .combine)
@@ -228,7 +265,7 @@ struct ExportPreviewView: View {
                 .glassCircleButtonStyle()
                 .accessibilityLabel("Pitch guide")
                 .accessibilityValue(showsPitchGuide ? "Shown" : "Hidden")
-                .disabled(!viewModel.hasPlayableFile)
+                .disabled(!viewModel.canPreview)
 
                 Button {
                     showsSound.toggle()
@@ -237,11 +274,11 @@ struct ExportPreviewView: View {
                 }
                 .glassCircleButtonStyle()
                 .accessibilityLabel("Sound")
-                .disabled(!viewModel.hasPlayableFile)
+                .disabled(!viewModel.canPreview)
 
                 Button("Export", action: startExport)
                     .buttonStyle(ExportButtonStyle())
-                    .disabled(!viewModel.hasPlayableFile)
+                    .disabled(!viewModel.canPreview)
             }
             .padding(.horizontal, screenInset)
             .padding(.top, topBarInset)
@@ -253,9 +290,11 @@ struct ExportPreviewView: View {
             if showsSound {
                 VStack(alignment: .leading, spacing: 12) {
                     if !mixerReady { ProgressView() }
-                    volumeSlider("Vocals", value: $viewModel.vocals, icon: "speaker.wave.2.fill")
+                    // Icons and dividers as in design 6.2d.
+                    volumeSlider("Vocals", value: $viewModel.vocals, minIcon: "speaker.wave.1.fill", maxIcon: "speaker.wave.2.fill")
                     Divider()
-                    volumeSlider("Music", value: $viewModel.music, icon: "music.note")
+                    volumeSlider("Music", value: $viewModel.music, minIcon: "music.note.slash", maxIcon: "music.note")
+                    Divider()
                 }
                 .padding(24)
                 .background(Color.secondaryButton)
@@ -282,18 +321,25 @@ struct ExportPreviewView: View {
             } else { clipsSheet }
         }
         // A centred system alert (it pops in over a dimmed screen), not a dialog: Cancel stays here.
-        .alert("Leave recording?", isPresented: $confirmsLeave) {
-            // The cover is already on Home (saved after each export): keep it as a draft, or remove it.
-            Button("Save to Draft") { saveSoundThen(onSaveDraft) }
-            Button("Discard", role: .destructive, action: onDiscard)
-            Button("Cancel", role: .cancel) {}
+        .alert(keepsCoverOnLeave ? "Save changes?" : "Leave recording?", isPresented: $confirmsLeave) {
+            if keepsCoverOnLeave {
+                // A cover reopened from Home or already exported: keep the edited vocal and music volume, or leave it as it was.
+                Button("Save and Exit") { saveCoverThen(onStartOver) }
+                Button("Cancel", role: .cancel, action: onStartOver)
+            } else {
+                // The cover is already on Home (saved after each export): keep it as a draft, or remove it.
+                Button("Save to Draft") { saveCoverThen(onSaveDraft) }
+                Button("Discard", role: .destructive, action: onDiscard)
+                Button("Cancel", role: .cancel) {}
+            }
         } message: {
-            Text("Keep this cover as a draft, or discard it?")
+            Text(keepsCoverOnLeave ? "Save the vocal and music volume you set before leaving?"
+                                 : "Keep this cover as a draft, or discard it?")
         }
-        .alert("Couldn't Save Sound", isPresented: Binding(get: { soundSaveError != nil }, set: { if !$0 { soundSaveError = nil } })) {
+        .alert("Couldn't Save Your Cover", isPresented: Binding(get: { soundSaveError != nil }, set: { if !$0 { soundSaveError = nil } })) {
             Button("Leave Without Changes", role: .destructive) {
                 soundSaveError = nil
-                onSaveDraft()
+                keepsCoverOnLeave ? onStartOver() : onSaveDraft()
             }
             Button("Cancel", role: .cancel) { soundSaveError = nil }
         } message: { Text(soundSaveError ?? "") }
@@ -353,26 +399,17 @@ struct ExportPreviewView: View {
         let shownTime = player.currentTime
         let notes = viewModel.guideNotes
         let focus = notes.filter { $0.end > shownTime }.prefix(PianoRollView.upcomingNoteCount).map(\.midi)
-        let lyricsHeight = viewModel.lyrics.isEmpty ? 0 : RecordingDisplaySettings.guideLyricsHeight
         let songTime: () -> TimeInterval? = { player.isPlaying ? player.player.currentTime().seconds : shownTime }
+        // No lyric lines on the preview (user decision 2026-11-21); the word under each note stays.
         return PianoRollView(notes: notes,
-                             trail: [],
                              noteStyle: .review(hit: viewModel.hitNoteIDs, missed: viewModel.missedNoteIDs),
                              focusMIDI: Array(focus),
                              songTime: songTime,
                              isPaused: !player.isPlaying,
                              showsVoiceDot: false,
                              wordLabels: viewModel.wordLabels,
-                             lyricsHeight: lyricsHeight,
                              fixedRows: Double(guideRows))
-            .overlay(alignment: .bottom) {
-                if !viewModel.lyrics.isEmpty {
-                    RecordingGuideLyricsView(lines: viewModel.lyrics, songTime: songTime)
-                        .frame(height: lyricsHeight)
-                        .padding(.bottom, PianoRollView.bottomInset / 2)
-                }
-            }
-            .frame(height: PianoRollView.height(rows: CGFloat(guideRows), lyricsHeight: lyricsHeight))
+            .frame(height: PianoRollView.height(rows: CGFloat(guideRows)))
             .allowsHitTesting(false)
             .accessibilityLabel("Pitch guide: green notes were sung well, red notes were missed")
     }
@@ -396,6 +433,16 @@ struct ExportPreviewView: View {
                 Text("\(CompingViewModel.clock(player.currentTime)) / \(CompingViewModel.clock(player.duration))")
                     .font(.subheadline)
                     .monospacedDigit()
+
+                // The system player, full screen, with its own controls (shares this player).
+                Button { FullScreenVideoPresenter.present(player.player) } label: {
+                    Image(systemName: "arrow.up.left.and.down.right.and.arrow.up.right.and.down.left")
+                        .font(.title3)
+                        .frame(minWidth: fullScreenButtonSize, minHeight: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Full screen")
             }
             .foregroundStyle(.white)
 
@@ -469,6 +516,8 @@ struct ExportPreviewView: View {
                     .padding(.horizontal, clipsInset)
                 }
                 .scrollIndicators(.hidden)
+                // The chosen clip's border sits outside it; don't cut it off at the top and bottom.
+                .scrollClipDisabled()
                 // Keep the playing clip in view.
                 .onChange(of: viewModel.selectedClipID) { _, id in
                     guard let id else { return }
@@ -506,18 +555,21 @@ struct ExportPreviewView: View {
                     .frame(width: clipWidth, height: clipHeight)
                     .overlay {
                         if showsRetake {
-                            VStack(spacing: 0) {
-                                Image(systemName: "arrow.trianglehead.counterclockwise")
-                                    .font(.title3.weight(.semibold))
-                                Text("Retake")
-                                    .font(.subheadline.weight(.semibold))
+                            // Design 6.2a: the clip fades under a white veil, with a purple pencil
+                            // circle in the middle (tap again to retake it).
+                            // The pencil is cut out of the circle (SF "pencil.circle.fill"), so the faded clip shows through.
+                            ZStack {
+                                Color.white.opacity(retakeVeilOpacity)
+                                Image(systemName: "pencil.circle.fill")
+                                    .font(.system(size: retakeBadgeSize))
+                                    .foregroundStyle(Color.primaryDark)
                             }
-                            .foregroundStyle(Color.secBrand)
                         }
                     }
                     .overlay(alignment: .bottom) {
                         if clip.needsRetake && !isMerging {
-                            Text("Off-pitch")
+                            Text("Needs retake")
+                                .lineLimit(1).minimumScaleFactor(0.8)
                                 .font(.caption2)
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 6)
@@ -528,9 +580,11 @@ struct ExportPreviewView: View {
                     }
                     .clipShape(.rect(cornerRadius: clipCornerRadius, style: .continuous))
                     .overlay {
+                        // Outside the clip (Sketch border position "Outside"), so it does not cover the frame.
                         if isSelected {
-                            RoundedRectangle(cornerRadius: clipCornerRadius, style: .continuous)
+                            RoundedRectangle(cornerRadius: clipCornerRadius + selectedClipBorder, style: .continuous)
                                 .strokeBorder(Color.primaryDark, lineWidth: selectedClipBorder)
+                                .padding(-selectedClipBorder)
                         }
                     }
             }
@@ -548,7 +602,7 @@ struct ExportPreviewView: View {
         }
         .frame(width: clipWidth)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("Clip \(clip.id + 1), \(viewModel.timeRange(of: clip))\(clip.needsRetake ? ", off pitch" : "")")
+        .accessibilityLabel("Clip \(clip.id + 1), \(viewModel.timeRange(of: clip))\(clip.needsRetake ? ", needs retake" : "")")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityHint(isSelected ? "Double-tap to sing this clip again" : "Double-tap to select")
     }
@@ -601,7 +655,7 @@ struct ExportPreviewView: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.title3.weight(.medium))
-                        .foregroundStyle(Color.primary800)
+                        .foregroundStyle(Color.plumNight)
                 }
                 .glassCircleButtonStyle()
                 .accessibilityLabel("Close")
@@ -610,16 +664,16 @@ struct ExportPreviewView: View {
             .padding(.horizontal, screenInset)
             .padding(.top, topBarInset)
 
-            VStack(spacing: 1) {
+            VStack(spacing: AppSpacing.tiny) {
                 Text("Exporting…")
-                    .font(.title3.weight(.semibold))
+                    .font(.appTitle2.weight(.bold))
                     .accessibilityAddTraits(.isHeader)
                 Text("Please don’t close the app or lock your screen.")
-                    .font(.footnote)
+                    .font(.appSubheadline)
             }
             .foregroundStyle(Color.primaryBrand)
             .multilineTextAlignment(.center)
-            .padding(.top, -12)
+            .padding(.top, AppSpacing.medium)
             .padding(.horizontal, screenInset)
 
             Spacer(minLength: 24)
@@ -652,22 +706,22 @@ struct ExportPreviewView: View {
         .overlay(Color.white.opacity(0.3))
     }
 
-    private func volumeSlider(_ title: String, value: Binding<Float>, icon: String) -> some View {
+    private func volumeSlider(_ title: String, value: Binding<Float>, minIcon: String, maxIcon: String) -> some View {
         let range: ClosedRange<Float> = 0...2
         func set(_ level: Float) {
             value.wrappedValue = level
             viewModel.updatePreviewVolume()
         }
         return VStack(alignment: .leading) {
-            Text(title).font(.appSubheadline)
+            Text(title).font(.appBody).padding(.leading, AppSpacing.small)
             HStack {
                 // The end icons jump straight to silent and to the loudest level.
-                volumeEndButton("speaker.slash.fill", label: "Mute \(title)") { set(range.lowerBound) }
+                volumeEndButton(minIcon, label: "Mute \(title)") { set(range.lowerBound) }
                 Slider(value: Binding(get: { value.wrappedValue }, set: set), in: range)
                     .tint(.blue)
                     .accessibilityLabel(title)
                     .accessibilityValue(Double(value.wrappedValue).formatted(.percent))
-                volumeEndButton(icon, label: "\(title) at maximum") { set(range.upperBound) }
+                volumeEndButton(maxIcon, label: "\(title) at maximum") { set(range.upperBound) }
             }
         }
     }
@@ -675,6 +729,7 @@ struct ExportPreviewView: View {
     private func volumeEndButton(_ systemName: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
+                .foregroundStyle(Color.secondary)
                 .frame(minWidth: 32, minHeight: 44)
                 .contentShape(.rect)
         }
@@ -686,23 +741,31 @@ struct ExportPreviewView: View {
         player?.pause()
         exportProgress = 0
         page = .exporting
-        // With edited sound the re-export reports real progress (see onChange of soundProgress).
-        if !viewModel.hasVolumeEdits {
+        // With edited sound, or the background export still running, real progress fills the
+        // border (see onChange of soundProgress and mergeProgress).
+        if viewModel.isExportRunning {
+            exportProgress = mergeProgress * saveRunUp
+        } else if !viewModel.hasVolumeEdits {
             withAnimation(.easeOut(duration: saveRunUpDuration)) { exportProgress = saveRunUp }
         }
         Task { await viewModel.saveToPhotos() }
     }
 
-    /// Leaving with edited sound: re-export the cover with it first, so Home and the draft keep it.
-    private func saveSoundThen(_ leave: @escaping () -> Void) {
-        guard viewModel.hasVolumeEdits else { return leave() }
+    /// Leaving to keep the cover: its file must exist (the background export may still run) and
+    /// carry the edited sound, so Home and the draft keep it.
+    private func saveCoverThen(_ leave: @escaping () -> Void) {
+        guard !viewModel.hasPlayableFile || viewModel.hasVolumeEdits else { return leave() }
         player?.pause()
+        savingCover = true
         Task {
             do {
+                _ = try await viewModel.waitForExport()
                 try await viewModel.applyVolumeEdits()
+                savingCover = false
                 leave()
             } catch {
-                soundSaveError = error.localizedDescription
+                savingCover = false
+                soundSaveError = String(describing: error)
             }
         }
     }
@@ -737,7 +800,7 @@ struct ExportPreviewView: View {
         VStack(spacing: 12) {
             Spacer()
             ErrorStateView(error: .exportFailed(details: message), actionTitle: "Try Again") {
-                Task { await viewModel.export() }
+                viewModel.exportInBackground()
             }
             Spacer()
             Button("Create New Cover", action: onStartOver)

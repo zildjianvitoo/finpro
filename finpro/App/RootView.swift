@@ -49,7 +49,7 @@ struct RootView: View {
             case .recording:
                 PermissionGate([.camera, .microphone], provider: flow.container.permissions) {
                     if let song = flow.preparedSong {
-                        RecordingView(viewModel: makeRecordingViewModel(song: song))
+                        RecordingView(viewModel: makeRecordingViewModel(song: song), tipsSongID: flow.selectedLibrarySongID)
                     }
                 }
             case .export:
@@ -57,7 +57,8 @@ struct RootView: View {
                     ExportPreviewView(viewModel: makeCompingViewModel(plan: plan), onRetake: flow.retakeCover,
                                       onStartOver: flow.startOver, onRetakeClip: flow.retakeClip(segment:),
                                       onContinue: flow.continueRecording,
-                                      onSaveDraft: flow.saveCoverAsDraft, onDiscard: flow.discardCover)
+                                      onSaveDraft: flow.saveCoverAsDraft, onDiscard: flow.discardCover,
+                                      keepsCoverOnLeave: flow.isReopenedCover || flow.isCoverExported)
                 }
             }
         }

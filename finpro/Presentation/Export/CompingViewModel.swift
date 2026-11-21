@@ -4,6 +4,10 @@
 //
 //  Runs the export and the Save to Photos action for ExportPreviewView. Owner: Zildjian Vito (ZV-13).
 //
+//  The preview plays the cover straight from its composition (no file needed), while the file
+//  for Home, the draft and Photos is exported in the background (device feedback 2026-11-21:
+//  waiting for a full merge after every retake was a pain).
+//
 
 import AVFoundation
 import CoreGraphics
@@ -33,7 +37,7 @@ final class CompingViewModel {
         let id: Int
         let start: TimeInterval
         let end: TimeInterval
-        /// Sung below the pass threshold: marked "Off-pitch".
+        /// Sung below the pass threshold: marked "Needs retake".
         let needsRetake: Bool
     }
 
@@ -103,7 +107,11 @@ final class CompingViewModel {
     let songName: String?
     private(set) var exportState: ExportState = .idle
     private(set) var saveState: SaveState = .idle
-    /// A frame of each clip, by segment index; filled once the cover is exported.
+    /// The cover's composition is built, so the preview plays it live while the file exports.
+    private(set) var isLivePreviewReady = false
+    /// The background export of the cover file, while it runs.
+    @ObservationIgnored private var exportTask: Task<Void, Never>?
+    /// A frame of each clip, by segment index; filled once the cover can be shown.
     private(set) var thumbnails: [Int: CGImage] = [:]
     private(set) var selectedClipID: Int?
     /// True when the user tapped the selected clip (it then shows Retake); false when the
@@ -230,6 +238,48 @@ final class CompingViewModel {
         exportedURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
     }
 
+    /// The preview can play: the cover file, or the composition built from the takes.
+    var canPreview: Bool { hasPlayableFile || isLivePreviewReady }
+
+    var isExportRunning: Bool {
+        if case .exporting = exportState { true } else { false }
+    }
+
+    /// Builds the cover's composition so the preview plays it without waiting for the file.
+    /// False when a file already exists (play that) or the takes can't be read (fakes).
+    func prepareLivePreview() async -> Bool {
+        guard !hasPlayableFile else { return false }
+        do { try await prepareMixer() } catch { return false }
+        isLivePreviewReady = true
+        if thumbnails.isEmpty, let editable { await loadThumbnails(from: editable) }
+        return true
+    }
+
+    /// Starts the file export without waiting for it; a running one is reused.
+    @discardableResult
+    func exportInBackground() -> Task<Void, Never> {
+        if let exportTask { return exportTask }
+        let task = Task {
+            await export()
+            exportTask = nil
+        }
+        exportTask = task
+        return task
+    }
+
+    /// The cover file, exporting it first (or waiting for the running export).
+    func waitForExport() async throws -> URL {
+        if !hasPlayableFile { await exportInBackground().value }
+        if case .failed(let message) = exportState { throw CompingError.exportFailed(message) }
+        guard let url = exportedURL else { throw CompingError.exportUnavailable }
+        return url
+    }
+
+    /// Leaving for a retake or discarding: the file of this version is not needed.
+    func cancelExport() {
+        exportTask?.cancel()
+    }
+
     func export() async {
         if case .exporting = exportState { return }
         // Already exported (an existing video was passed in): only the clip frames are missing.
@@ -238,7 +288,7 @@ final class CompingViewModel {
             return
         }
         exportState = .exporting(progress: 0)
-        saveState = .idle
+        if saveState != .saving { saveState = .idle }
         wasInterrupted = false
         do {
             // The view model is MainActor-isolated (so Sendable); holding it until the export ends is fine.
@@ -250,7 +300,9 @@ final class CompingViewModel {
             }
             if FileManager.default.fileExists(atPath: url.path) { onExported(url, plan) }
             exportState = .finished(url)
-            await loadThumbnails(from: url)
+            if thumbnails.isEmpty { await loadThumbnails(from: url) }
+        } catch is CancellationError {
+            exportState = .idle
         } catch {
             if case CompingError.exportInterrupted = error { wasInterrupted = true }
             exportState = .failed(String(describing: error))
@@ -260,7 +312,7 @@ final class CompingViewModel {
     /// The app is active again: an export that iOS interrupted starts over by itself.
     func appBecameActive() async {
         guard wasInterrupted, case .failed = exportState else { return }
-        await export()
+        exportInBackground()
     }
 
     /// A frame from the middle of each clip.
@@ -269,6 +321,18 @@ final class CompingViewModel {
         let frames = await thumbnailProvider.thumbnails(for: url, at: clips.map { ($0.start + $0.end) / 2 })
         for (clip, frame) in zip(clips, frames) {
             if let frame { thumbnails[clip.id] = frame }
+        }
+    }
+
+    /// A frame from the middle of each clip, read from the composition (before the file exists).
+    private func loadThumbnails(from output: CompingCompositionBuilder.Output) async {
+        let generator = AVAssetImageGenerator(asset: output.composition)
+        generator.videoComposition = output.videoComposition
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = AVClipThumbnailProvider.maximumSize
+        for clip in clips {
+            let time = CMTime(seconds: (clip.start + clip.end) / 2, preferredTimescale: CompingCompositionBuilder.timescale)
+            if let frame = try? await generator.image(at: time).image { thumbnails[clip.id] = frame }
         }
     }
 
@@ -303,9 +367,10 @@ final class CompingViewModel {
     }
 
     func saveToPhotos() async {
-        guard exportedURL != nil, saveState != .saving else { return }
+        guard canPreview, saveState != .saving else { return }
         saveState = .saving
         do {
+            _ = try await waitForExport()
             try await applyVolumeEdits()
             guard let url = exportedURL else { throw CompingError.exportUnavailable }
             try await videoLibrary.saveVideo(at: url)
