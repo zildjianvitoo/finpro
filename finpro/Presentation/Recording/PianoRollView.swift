@@ -338,14 +338,14 @@ struct PianoRollView: View {
         guard now != nil else { return }
         // Notes above or below the lines in view stay hidden until the lines glide to them.
         let noteMargin = noteHeight / 2
-        context.clip(to: Path(CGRect(x: labelWidth, y: rowsTop - noteMargin, width: laneWidth + trailInset,
-                                     height: rowsHeight + noteMargin * 2)))
+        let visible = CGRect(x: labelWidth, y: rowsTop - noteMargin, width: laneWidth + trailInset,
+                             height: rowsHeight + noteMargin * 2)
+        context.clip(to: Path(visible))
 
         // Target notes.
         let windowStart = current - Self.visibleDuration * Self.playheadPosition
         let windowEnd = windowStart + Self.visibleDuration
-        var drawnLabels: [CGRect] = []
-        let labelSpacing: CGFloat = 3
+        var drawnNotes: [(id: UUID, rect: CGRect)] = []
         for note in notes where note.end > windowStart && note.start < windowEnd {
             let height = noteHeight
             let rect = CGRect(x: x(note.start), y: y(Double(note.midi)) - height / 2,
@@ -360,28 +360,41 @@ struct PianoRollView: View {
                 let color = missed.contains(note.id) ? Color.noteMiss : hit.contains(note.id) ? Color.pitchHit : Palette.note
                 context.fill(shape, with: .color(color))
             }
-            if let word = wordLabels[note.id] {
-                // Under the note; a word that would run into an earlier one (short notes close
-                // together, the narrow preview guide) goes above its note instead, or under it
-                // after the earlier word. Only when none fits is it left out (the lyric line under
-                // the guide still shows it).
-                let label = context.resolve(Text(word).font(.system(size: 8 * min(contentZoom, 1.5), weight: .medium))
-                    .foregroundStyle(Palette.word))
-                let size = label.measure(in: CGSize(width: CGFloat.infinity, height: .infinity))
-                let below = CGRect(origin: CGPoint(x: rect.minX + 2, y: rect.maxY + 2), size: size)
-                let above = CGRect(origin: CGPoint(x: rect.minX + 2, y: rect.minY - 2 - size.height), size: size)
-                let collides = { (frame: CGRect) in
-                    drawnLabels.contains { $0.insetBy(dx: -labelSpacing, dy: 0).intersects(frame) }
-                }
-                var candidates = [below, above]
-                if let blocking = drawnLabels.last(where: { $0.insetBy(dx: -labelSpacing, dy: 0).intersects(below) }),
-                   blocking.maxX + labelSpacing < rect.maxX {
-                    candidates.append(below.offsetBy(dx: blocking.maxX + labelSpacing - below.minX, dy: 0))
-                }
-                if let frame = candidates.first(where: { !collides($0) }) {
-                    context.draw(label, in: frame)
-                    drawnLabels.append(frame)
-                }
+            drawnNotes.append((note.id, rect))
+        }
+
+        // Words, after every note so a later note never covers one. Under the note; when that spot
+        // runs into another word or another note, or past the panel's edge (short notes close
+        // together, the narrow preview guide, the bottom line), above the note, or under it after
+        // the earlier word. A word that fits nowhere
+        // clear of notes still goes where it misses the other words; only then is it left out (the
+        // lyric line under the guide still shows it).
+        var drawnLabels: [CGRect] = []
+        let labelSpacing: CGFloat = 3
+        for (id, rect) in drawnNotes {
+            guard let word = wordLabels[id] else { continue }
+            let label = context.resolve(Text(word).font(.system(size: 8 * min(contentZoom, 1.5), weight: .medium))
+                .foregroundStyle(Palette.word))
+            let size = label.measure(in: CGSize(width: CGFloat.infinity, height: .infinity))
+            let below = CGRect(origin: CGPoint(x: rect.minX + 2, y: rect.maxY + 2), size: size)
+            let above = CGRect(origin: CGPoint(x: rect.minX + 2, y: rect.minY - 2 - size.height), size: size)
+            let hitsLabel = { (frame: CGRect) in
+                drawnLabels.contains { $0.insetBy(dx: -labelSpacing, dy: 0).intersects(frame) }
+            }
+            let hitsNote = { (frame: CGRect) in
+                drawnNotes.contains { $0.id != id && $0.rect.intersects(frame) }
+                    // Cut off at the panel's top or bottom edge counts as covered too.
+                    || frame.minY < visible.minY || frame.maxY > visible.maxY
+            }
+            var candidates = [below, above]
+            if let blocking = drawnLabels.last(where: { $0.insetBy(dx: -labelSpacing, dy: 0).intersects(below) }),
+               blocking.maxX + labelSpacing < rect.maxX {
+                candidates.append(below.offsetBy(dx: blocking.maxX + labelSpacing - below.minX, dy: 0))
+            }
+            if let frame = candidates.first(where: { !hitsLabel($0) && !hitsNote($0) })
+                ?? candidates.first(where: { !hitsLabel($0) }) {
+                context.draw(label, in: frame)
+                drawnLabels.append(frame)
             }
         }
 
