@@ -144,6 +144,10 @@ struct PianoRollView: View {
                     .fill(Palette.panel)
             }
         }
+        // The panel is always a dark frosted glass card, so its light-on-dark palette tokens
+        // (e.g. `secondaryButton` for labels, words and tint) must resolve in light mode even
+        // when hosted inside a dark-mode screen like Cover Preview.
+        .environment(\.colorScheme, .light)
         .accessibilityElement()
         .accessibilityLabel("Pitch guide")
     }
@@ -237,21 +241,58 @@ struct PianoRollView: View {
     private func targetLines(at current: TimeInterval, fitting rows: Double) -> (center: Double, span: Double) {
         let windowStart = current - Self.visibleDuration * Self.playheadPosition
         let windowEnd = windowStart + Self.visibleDuration
-        func lines(_ midi: [Int]) -> (low: Double, high: Double)? {
-            let positions = midi.map { Self.linePosition(of: Double($0)) }
-            guard let low = positions.min(), let high = positions.max() else { return nil }
-            return (low, high)
+        let nearStart = current + Self.nearWindow.lowerBound
+        let nearEnd = current + Self.nearWindow.upperBound
+
+        var onLow = Double.infinity, onHigh = -Double.infinity
+        var nearLow = Double.infinity, nearHigh = -Double.infinity
+        var upLow = Double.infinity, upHigh = -Double.infinity
+        var upCount = 0
+
+        for note in notes {
+            let inWindow = note.end > windowStart && note.start < windowEnd
+            let inNear = note.end > nearStart && note.start < nearEnd
+            let inUpcoming = note.start >= windowEnd && upCount < Self.upcomingNoteCount
+            guard inWindow || inNear || inUpcoming else { continue }
+            let pos = Self.linePosition(of: Double(note.midi))
+            if inWindow {
+                if pos < onLow { onLow = pos }
+                if pos > onHigh { onHigh = pos }
+            }
+            if inNear {
+                if pos < nearLow { nearLow = pos }
+                if pos > nearHigh { nearHigh = pos }
+            }
+            if inUpcoming {
+                if pos < upLow { upLow = pos }
+                if pos > upHigh { upHigh = pos }
+                upCount += 1
+            }
         }
-        let onScreen = notes.filter { $0.end > windowStart && $0.start < windowEnd }.map(\.midi)
-        let near = notes.filter { $0.end > current + Self.nearWindow.lowerBound && $0.start < current + Self.nearWindow.upperBound }
-            .map(\.midi)
+
+        func focusRange() -> (low: Double, high: Double)? {
+            var low = Double.infinity, high = -Double.infinity
+            for midi in focusMIDI {
+                let pos = Self.linePosition(of: Double(midi))
+                if pos < low { low = pos }
+                if pos > high { high = pos }
+            }
+            return low <= high ? (low, high) : nil
+        }
+
         let maximum = rows + Self.maximumExtraLines
-        // Between phrases, the next notes to sing.
-        let upcoming = notes.filter { $0.start >= windowEnd }.sorted { $0.start < $1.start }
-            .prefix(Self.upcomingNoteCount).map(\.midi)
         let fallback = Self.linePosition(of: 60)
-        var range = lines(onScreen) ?? lines(Array(upcoming)) ?? lines(focusMIDI) ?? (fallback, fallback)
-        if range.high - range.low + 2 > maximum, let nearRange = lines(near) { range = nearRange }
+        var range: (low: Double, high: Double)
+        if onLow <= onHigh {
+            range = (onLow, onHigh)
+        } else if upLow <= upHigh {
+            range = (upLow, upHigh)
+        } else {
+            range = focusRange() ?? (fallback, fallback)
+        }
+        if range.high - range.low + 2 > maximum, nearLow <= nearHigh {
+            range = (nearLow, nearHigh)
+        }
         let span = min(maximum, max(rows, range.high - range.low + 2))
         return ((range.low + range.high) / 2, span)
     }
@@ -337,8 +378,9 @@ struct PianoRollView: View {
             let label = context.resolve(Text(word).font(.system(size: 8 * min(contentZoom, 1.5), weight: .medium))
                 .foregroundStyle(Palette.word))
             let size = label.measure(in: CGSize(width: CGFloat.infinity, height: .infinity))
-            let below = CGRect(origin: CGPoint(x: rect.minX + 2, y: rect.maxY + 2), size: size)
-            let above = CGRect(origin: CGPoint(x: rect.minX + 2, y: rect.minY - 2 - size.height), size: size)
+            let centeredX = rect.midX - size.width / 2
+            let below = CGRect(origin: CGPoint(x: centeredX, y: rect.maxY + 2), size: size)
+            let above = CGRect(origin: CGPoint(x: centeredX, y: rect.minY - 2 - size.height), size: size)
             let hitsLabel = { (frame: CGRect) in
                 drawnLabels.contains { $0.insetBy(dx: -labelSpacing, dy: 0).intersects(frame) }
             }

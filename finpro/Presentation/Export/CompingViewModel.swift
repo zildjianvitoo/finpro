@@ -18,7 +18,7 @@ import Observation
 final class CompingViewModel {
     enum ExportState: Equatable {
         case idle
-        case exporting(progress: Double)
+        case exporting
         case finished(URL)
         case failed(String)
     }
@@ -96,6 +96,8 @@ final class CompingViewModel {
     let plan: CompingCompositionPlan
     /// Notes of the song in the key it was sung in, for the pitch guide over the preview.
     let guideNotes: [PianoRollView.Note]
+    /// Fallback MIDI range for the pitch guide while playing (the roll tracks visible notes live).
+    let initialFocusMIDI: [Int]
     /// Notes of the cover's takes sung well and missed (`TakeAttemptLog.missedNoteIDs`).
     let hitNoteIDs: Set<UUID>
     let missedNoteIDs: Set<UUID>
@@ -106,6 +108,9 @@ final class CompingViewModel {
     /// "Artist - Title" of the imported song, when known.
     let songName: String?
     private(set) var exportState: ExportState = .idle
+    /// Progress (0...1) of the background export, kept separate from `exportState` so progress
+    /// updates don't rebuild the preview screen while the user watches the live composition.
+    private(set) var exportProgress: Double = 0
     private(set) var saveState: SaveState = .idle
     /// The cover's composition is built, so the preview plays it live while the file exports.
     private(set) var isLivePreviewReady = false
@@ -143,6 +148,7 @@ final class CompingViewModel {
         guideNotes = plan.segments.flatMap(\.targetNotes).map {
             PianoRollView.Note(id: $0.id, midi: transposition?.transposed($0) ?? $0.midiNote, start: $0.startTime, end: $0.endTime)
         }
+        initialFocusMIDI = Array(guideNotes.prefix(PianoRollView.upcomingNoteCount).map(\.midi))
         self.lyrics = lyrics
         wordLabels = GuideWordLabels.make(words: lyrics.flatMap(\.words), notes: guideNotes)
         var hit = Set<UUID>(), missed = Set<UUID>()
@@ -287,7 +293,8 @@ final class CompingViewModel {
             if thumbnails.isEmpty { await loadThumbnails(from: url) }
             return
         }
-        exportState = .exporting(progress: 0)
+        exportProgress = 0
+        exportState = .exporting
         if saveState != .saving { saveState = .idle }
         wasInterrupted = false
         do {
@@ -295,10 +302,11 @@ final class CompingViewModel {
             let url = try await useCase.export(plan) { progress in
                 Task { @MainActor in
                     guard case .exporting = self.exportState else { return }
-                    self.exportState = .exporting(progress: progress)
+                    self.exportProgress = progress
                 }
             }
             if FileManager.default.fileExists(atPath: url.path) { onExported(url, plan) }
+            exportProgress = 1
             exportState = .finished(url)
             if thumbnails.isEmpty { await loadThumbnails(from: url) }
         } catch is CancellationError {

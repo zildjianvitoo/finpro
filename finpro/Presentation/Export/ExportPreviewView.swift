@@ -123,9 +123,9 @@ struct ExportPreviewView: View {
         .background(Color.screenBackground.ignoresSafeArea())
         .overlay {
             if isMerging {
-                merging(title: "Merging your recording…", progress: mergeProgress)
+                ObservationScope { merging(title: "Merging your recording…", progress: mergeProgress) }
             } else if savingCover {
-                merging(title: "Saving your cover…", progress: viewModel.soundProgress ?? mergeProgress)
+                ObservationScope { merging(title: "Saving your cover…", progress: viewModel.soundProgress ?? mergeProgress) }
             } else if page == .preview, let progress = viewModel.soundProgress {
                 merging(title: "Saving sound changes…", progress: progress)
             }
@@ -169,11 +169,6 @@ struct ExportPreviewView: View {
         .onChange(of: viewModel.soundProgress) { _, progress in
             guard page == .exporting else { return }
             withAnimation(.linear(duration: 0.2)) { exportProgress = (progress ?? 1) * saveRunUp }
-        }
-        // Export tapped before the background export finished: the border follows it.
-        .onChange(of: mergeProgress) { _, progress in
-            guard page == .exporting, viewModel.isExportRunning else { return }
-            withAnimation(.linear(duration: 0.2)) { exportProgress = progress * saveRunUp }
         }
         .onDisappear {
             player?.pause()
@@ -220,7 +215,7 @@ struct ExportPreviewView: View {
     }
 
     private var mergeProgress: Double {
-        if case .exporting(let value) = viewModel.exportState { value } else { 0 }
+        viewModel.isExportRunning ? viewModel.exportProgress : 0
     }
 
     private func merging(title: String, progress: Double) -> some View {
@@ -395,17 +390,25 @@ struct ExportPreviewView: View {
     /// The song's notes scrolling with the video, green where they were sung well and red where
     /// they were missed, so the singer sees where to retake. Touches pass through to the video.
     private func pitchGuide(_ player: CoverPlayerController) -> some View {
-        // Read here so a seek or scrub while paused redraws the guide.
-        let shownTime = player.currentTime
+        let isPlaying = player.isPlaying
+        // Read `currentTime` only while paused/scrubbing so a seek redraws the guide;
+        // while playing, `TimelineView(.animation)` drives every frame from `player.liveTime()`
+        // without 10 Hz SwiftUI rebuilds.
+        let pausedTime: TimeInterval? = isPlaying ? nil : player.currentTime
         let notes = viewModel.guideNotes
-        let focus = notes.filter { $0.end > shownTime }.prefix(PianoRollView.upcomingNoteCount).map(\.midi)
-        let songTime: () -> TimeInterval? = { player.isPlaying ? player.player.currentTime().seconds : shownTime }
+        let focus: [Int]
+        if let pausedTime {
+            focus = notes.filter { $0.end > pausedTime }.prefix(PianoRollView.upcomingNoteCount).map(\.midi)
+        } else {
+            focus = viewModel.initialFocusMIDI
+        }
+        let songTime: () -> TimeInterval? = { pausedTime ?? player.liveTime() }
         // No lyric lines on the preview (user decision 2026-11-21); the word under each note stays.
         return PianoRollView(notes: notes,
                              noteStyle: .review(hit: viewModel.hitNoteIDs, missed: viewModel.missedNoteIDs),
-                             focusMIDI: Array(focus),
+                             focusMIDI: focus,
                              songTime: songTime,
-                             isPaused: !player.isPlaying,
+                             isPaused: !isPlaying,
                              showsVoiceDot: false,
                              wordLabels: viewModel.wordLabels,
                              fixedRows: Double(guideRows))
@@ -690,6 +693,11 @@ struct ExportPreviewView: View {
             .padding(.horizontal, screenInset)
 
             Spacer(minLength: 24)
+        }
+        // Export tapped before the background export finished: the border follows it.
+        .onChange(of: mergeProgress) { _, progress in
+            guard viewModel.isExportRunning else { return }
+            withAnimation(.linear(duration: 0.2)) { exportProgress = progress * saveRunUp }
         }
     }
 
