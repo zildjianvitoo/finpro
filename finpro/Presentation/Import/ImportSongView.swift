@@ -41,7 +41,7 @@ struct ImportSongView: View {
                     }
                 }
             }
-            .padding(.horizontal, AppSpacing.large).padding(.top, AppSpacing.large).padding(.bottom, AppSpacing.large)
+            .padding(.horizontal, AppSpacing.large).padding(.top, AppSpacing.large).padding(.bottom, AppSpacing.small)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .presentationBackground(.ultraThinMaterial)
@@ -85,14 +85,17 @@ struct ImportSongView: View {
     }
 
     private var preparingScreen: some View {
-        VStack(spacing: AppSpacing.medium) {
+        // Design 4.3: the text close under the mascot, the pair a little above the middle.
+        VStack(spacing: 0) {
             LoadingMascotView()
             // Redrawn a few times a second: the progress moves with time inside a step.
             TimelineView(.periodic(from: .now, by: 0.25)) { _ in
                 LoadingTextView(title: "Preparing your song…",
-                                progress: ((viewModel.preparationProgress?.fraction ?? 0) * 100).rounded() / 100)
+                                progress: ((viewModel.preparationProgress?.fraction ?? 0) * 100).rounded() / 100,
+                                font: .appHeadline)
             }
         }
+        .offset(y: -AppSpacing.regular)
         .foregroundStyle(.white)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
@@ -103,21 +106,23 @@ struct ImportSongView: View {
 
     private var importPrompt: some View {
         VStack(spacing: 0) {
-            Text("Import Song").font(.appHeadline).foregroundStyle(Color.primaryBrand)
+            Text("Import Song").font(.appHeadline).foregroundStyle(Color.plumNight)
                 .padding(.top, AppSpacing.tiny)
             // Design asset (Sketch "TestFlight UT" 4.1, "Music Symbol").
-            Image("ImportMusicNotes").resizable().scaledToFit()
+            // Tinted as a template so it follows the brand colour (light and dark mode).
+            Image("ImportMusicNotes").renderingMode(.template).resizable().scaledToFit()
+                .foregroundStyle(Color.primaryBrand)
                 .frame(width: 64, height: 68)
                 .frame(width: 142, height: 142)
                 .background(Color.white.opacity(0.5), in: RoundedRectangle(cornerRadius: AppRadius.medium))
-                .padding(.top, AppSpacing.regular)
+                .padding(.top, 24)
                 .accessibilityHidden(true)
             Text("Select an audio file containing full vocals and instrumental. We'll use the vocals as your pitch reference.")
                 .font(.appFootnote).foregroundStyle(Color.primaryBrand)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 260)
-                .padding(.top, AppSpacing.regular)
+                .padding(.top, 21)
             Text("Supported formats: MP3, M4A, WAV")
                 .font(.appCaption).foregroundStyle(Color.tertiaryText)
                 .padding(.top, AppSpacing.small)
@@ -135,7 +140,7 @@ struct ImportSongView: View {
     private func sectionPicker(_ audio: ImportedAudio) -> some View {
         VStack(spacing: AppSpacing.regular) {
             Text(isEditingSavedSong ? "Choose Song Section" : "Select Clip")
-                .font(.appHeadline).foregroundStyle(.primary)
+                .font(.appHeadline).foregroundStyle(isEditingSavedSong ? Color.primary : Color.plumNight)
                 .frame(maxWidth: .infinity, minHeight: AppLayout.iconButton)
                 .overlay(alignment: .trailing) {
                     if isEditingSavedSong {
@@ -144,13 +149,14 @@ struct ImportSongView: View {
                             .accessibilityLabel("Use selected section and find key")
                     }
                 }
+            // Select Clip (design 4.4) has the lyrics closer under the title than 3.2c.
             SongSectionLyrics(viewModel: viewModel,
-                              tint: isEditingSavedSong ? .plumInk : .primaryBrand,
-                              dimmedOpacity: isEditingSavedSong ? 0.28 : 0.5)
-                .padding(.top, 20)
+                              tint: isEditingSavedSong ? .plumNight : .primaryBrand,
+                              dimmedOpacity: isEditingSavedSong ? 0.3 : 0.5)
+                .padding(.top, isEditingSavedSong ? 20 : -15)
             Spacer(minLength: 0)
             SongSectionWaveform(viewModel: viewModel, audio: audio)
-                .frame(height: isEditingSavedSong ? 76 : 86)
+                .frame(height: 80)
                 // The waveform scrolls off the sheet's edges (design 4.3).
                 .padding(.horizontal, -AppSpacing.large)
             HStack {
@@ -160,6 +166,7 @@ struct ImportSongView: View {
                 Text("\(time(viewModel.playbackTime ?? viewModel.selectionStart)) / \(time(audio.duration))")
             }
             .font(.appFootnote.weight(.medium)).foregroundStyle(Color.primaryBrand).monospacedDigit()
+            .padding(.top, isEditingSavedSong ? 0 : 11)
             // The sheet keeps its height: an error takes the gap above the buttons instead of adding a row.
             Group {
                 if let error = viewModel.actionError {
@@ -171,8 +178,10 @@ struct ImportSongView: View {
             .frame(maxWidth: .infinity, minHeight: isEditingSavedSong ? AppSpacing.regular : AppSpacing.large)
             Spacer(minLength: 0)
             if !isEditingSavedSong {
-                Button("Start Recording", action: viewModel.prepareSelection).buttonStyle(.appPrimary)
-                Button("Save to Song List", action: viewModel.saveToSongList).buttonStyle(.appSecondary)
+                VStack(spacing: 10) {
+                    Button("Start Recording", action: viewModel.prepareSelection).buttonStyle(.appPrimary)
+                    Button("Save to Song List", action: viewModel.saveToSongList).buttonStyle(.appSecondary)
+                }
             }
         }
     }
