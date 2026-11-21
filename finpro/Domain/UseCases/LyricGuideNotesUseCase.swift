@@ -82,14 +82,26 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
     /// A silent part counts up to this long: the tracker misses soft syllables, so a short gap may
     /// hold one, but a long rest holds none.
     static let silenceShare: TimeInterval = 0.5
+    /// Leading silence kept before a line's first voiced note (enough for a consonant attack,
+    /// without dumping the first word into half a second of silence before the singer enters).
+    static let leadingAttackMargin: TimeInterval = 0.15
+    /// Hold a word's note to the next word when the breath/gap between them is at most this long;
+    /// longer pauses end the note where the voice stops instead of stretching across silence.
+    static let maximumBreathHold: TimeInterval = 0.25
+    /// Silent gap inside a single word beyond which a trailing voiced blip is treated as bleed
+    /// rather than part of the same held note.
+    static let bleedGapThreshold: TimeInterval = 0.45
 
     // Recognized words (on-device speech recognition of the vocal stem).
     /// A line's words are matched against the words recognized from this long before its first
     /// word to this long after the next line's first word.
-    static let recognitionMargin: TimeInterval = 1
+    static let recognitionMargin: TimeInterval = 1.5
     /// A match that would move a word further than this is ignored: it is the same word sung
     /// elsewhere (a backing vocal in brackets, a repeat), not this one.
     static let maximumAnchorMove: TimeInterval = 3
+    /// Shortest duration preserved for a line's last word when trimming its estimated tail to make
+    /// room for an anchored next line.
+    static let minimumWordDuration: TimeInterval = 0.15
 
     /// `pitchNotes`: the notes found in the vocal guide (original key), any order. `recognized`:
     /// words heard in the vocal stem; a lyric word matched to one starts where it was heard, and
@@ -155,59 +167,149 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
 
     /// Moves each line's words onto the recognized words that match them (in order, near the line);
     /// words between two matches keep their spacing, words before the first or after the last match
-    /// move with it. The notes are rebuilt for the moved words. Lines without a match are kept.
+    /// move with it. Recognized `endTime` is preserved so trailing words and line endings don't
+    /// collapse to zero or stretch across pauses and delay the next line.
     private func anchored(_ words: [[Word]], texts: [[String]], recognized: [RecognizedWord],
                           pitched: [TargetMIDINote]) -> [[Word]] {
-        let heard = recognized.flatMap { word in
-            word.text.split(whereSeparator: \.isWhitespace).map { (text: Self.normalized(String($0)), start: word.startTime) }
-        }.filter { !$0.text.isEmpty }.sorted { $0.start < $1.start }
+        struct HeardToken {
+            let index: Int
+            let text: String
+            let start: TimeInterval
+            let end: TimeInterval
+        }
+        var rawHeard: [(text: String, start: TimeInterval, end: TimeInterval)] = []
+        for word in recognized {
+            let parts = word.text.split(whereSeparator: \.isWhitespace)
+                .map { Self.normalized(String($0)) }
+                .filter { !$0.isEmpty }
+            guard !parts.isEmpty else { continue }
+            let wordEnd = max(word.endTime, word.startTime)
+            let step = (wordEnd - word.startTime) / Double(parts.count)
+            for (idx, part) in parts.enumerated() {
+                rawHeard.append((part, word.startTime + Double(idx) * step, word.startTime + Double(idx + 1) * step))
+            }
+        }
+        rawHeard.sort { $0.start < $1.start }
+        let heard = rawHeard.enumerated().map { HeardToken(index: $0.offset, text: $0.element.text, start: $0.element.start, end: $0.element.end) }
+
         var result = words
         var previousEnd = -TimeInterval.infinity
+        var previousLastWordStart = -TimeInterval.infinity
+        var previousWasAnchored = false
+        var lastUsedHeardIndex = -1
+
         for index in words.indices {
             let line = words[index]
             guard let first = line.first, let last = line.last, texts[index].count == line.count else {
                 result[index] = clampedAfter(previousEnd, line: line)
-                previousEnd = max(previousEnd, result[index].last?.end ?? previousEnd)
+                if let lastWord = result[index].last {
+                    previousEnd = max(previousEnd, lastWord.end)
+                    previousLastWordStart = max(previousLastWordStart, lastWord.start)
+                }
+                previousWasAnchored = false
                 continue
             }
             let nextStart = words[(index + 1)...].first { !$0.isEmpty }?.first?.start ?? last.end
-            let window = (first.start - Self.recognitionMargin)...(max(nextStart, first.start) + Self.recognitionMargin)
-            // Not before the previous line has ended: a common word ("your") heard there is that line's.
-            let candidates = heard.filter { window.contains($0.start) && $0.start >= previousEnd }
-            var anchors: [Int: TimeInterval] = [:]
+            let window = (first.start - Self.recognitionMargin)...(max(nextStart, last.end, first.start) + Self.recognitionMargin)
+            // Only consider tokens strictly after any token already matched by an earlier line.
+            // An anchored previous line's held note may be trimmed by at most 0.35 s so a pause-
+            // absorbing token on the next line (e.g. "you" starting where "are" is still held)
+            // doesn't cut into the previous line; an unanchored previous line's estimated tail can
+            // yield back to its last word's minimum duration.
+            let minWordFloor = previousLastWordStart.isFinite
+                ? previousLastWordStart + Self.minimumWordDuration
+                : -TimeInterval.infinity
+            let candidateFloor = (previousWasAnchored && previousEnd.isFinite)
+                ? max(minWordFloor, previousEnd - 0.35)
+                : minWordFloor
+            let candidates = heard.filter {
+                $0.index > lastUsedHeardIndex && window.contains($0.start) && $0.start >= candidateFloor
+            }
+            var anchors: [Int: (start: TimeInterval, end: TimeInterval, tokenIndex: Int)] = [:]
             var lastAnchor = -TimeInterval.infinity
-            for (word, heardIndex) in Self.commonSubsequence(texts[index].map(Self.normalized), candidates.map(\.text)) {
-                let time = candidates[heardIndex].start
+            var highestHeardIndex = lastUsedHeardIndex
+            for (word, candidateIdx) in Self.commonSubsequence(texts[index].map(Self.normalized), candidates.map(\.text)) {
+                let token = candidates[candidateIdx]
                 // In order only: a later lyric word never starts before an earlier one.
-                if time > lastAnchor, abs(time - line[word].start) <= Self.maximumAnchorMove {
-                    anchors[word] = time
-                    lastAnchor = time
+                if token.start > lastAnchor, abs(token.start - line[word].start) <= Self.maximumAnchorMove {
+                    anchors[word] = (token.start, max(token.end, token.start), token.index)
+                    lastAnchor = token.start
+                    highestHeardIndex = max(highestHeardIndex, token.index)
                 }
             }
             guard !anchors.isEmpty else {
                 result[index] = clampedAfter(previousEnd, line: line)
-                previousEnd = max(previousEnd, result[index].last?.end ?? previousEnd)
+                if let lastWord = result[index].last {
+                    previousEnd = max(previousEnd, lastWord.end)
+                    previousLastWordStart = max(previousLastWordStart, lastWord.start)
+                }
+                previousWasAnchored = false
                 continue
             }
+            lastUsedHeardIndex = highestHeardIndex
             let starts = line.map(\.start)
             var moved = starts
             let keys = anchors.keys.sorted()
-            for key in keys { moved[key] = anchors[key]! }
-            let leading = anchors[keys[0]]! - starts[keys[0]]
+            for key in keys { moved[key] = anchors[key]!.start }
+            let leading = anchors[keys[0]]!.start - starts[keys[0]]
             for word in 0..<keys[0] { moved[word] = starts[word] + leading }
-            let trailing = anchors[keys[keys.count - 1]]! - starts[keys[keys.count - 1]]
-            for word in (keys[keys.count - 1] + 1)..<line.count { moved[word] = starts[word] + trailing }
+            let lastKey = keys[keys.count - 1]
+            if lastKey + 1 < line.count {
+                let anchor = anchors[lastKey]!
+                let nextOriginal = starts[lastKey + 1]
+                let expectedNext = max(anchor.end, anchor.start + Self.minimumWordDuration)
+                let shiftedNext = nextOriginal + (anchor.start - starts[lastKey])
+                // Don't let an over-stretched unanchored gap push trailing words past anchor.end.
+                let trailingShift = min(shiftedNext, expectedNext) - nextOriginal
+                for word in (lastKey + 1)..<line.count { moved[word] = starts[word] + trailingShift }
+            }
             for (a, b) in zip(keys, keys.dropFirst()) where b > a + 1 {
                 for word in (a + 1)..<b {
                     let fraction = starts[b] > starts[a] ? (starts[word] - starts[a]) / (starts[b] - starts[a]) : 0
-                    moved[word] = anchors[a]! + fraction * (anchors[b]! - anchors[a]!)
+                    moved[word] = anchors[a]!.start + fraction * (anchors[b]!.start - anchors[a]!.start)
                 }
+            }
+            // If this anchored line genuinely starts slightly before the previous line's estimated
+            // tail, trim the previous line's tail back instead of delaying this line.
+            if index > 0, previousEnd.isFinite, moved[0] < previousEnd,
+               moved[0] >= candidateFloor {
+                result[index - 1] = trimmedBefore(moved[0], line: result[index - 1])
+                previousEnd = moved[0]
             }
             // Forwards only, and never back into the previous line.
             for word in moved.indices {
                 moved[word] = max(moved[word], previousEnd, word > 0 ? moved[word - 1] : -TimeInterval.infinity)
             }
-            let lineEnd = max(last.end, moved[moved.count - 1])
+            let lastWordStart = moved[moved.count - 1]
+            let originalLastDuration = max(last.end - last.start, Self.minimumNoteLength)
+            let hasNextLine = words[(index + 1)...].contains { !$0.isEmpty }
+            let nextLineCeiling: TimeInterval
+            if !hasNextLine {
+                nextLineCeiling = .infinity
+            } else if nextStart > lastWordStart + Self.minimumWordDuration {
+                nextLineCeiling = nextStart
+            } else {
+                // This line's last word moved past the next line's shifted start (e.g. overlapping duet):
+                // give the last word a realistic hold without swallowing the entire next line.
+                nextLineCeiling = lastWordStart + max(originalLastDuration, 0.8)
+            }
+            let lineEnd: TimeInterval
+            if let lastAnchor = anchors[line.count - 1] {
+                var searchCap = min(max(last.end, lastAnchor.end), nextLineCeiling)
+                if lastAnchor.tokenIndex + 1 < heard.count {
+                    let nextToken = heard[lastAnchor.tokenIndex + 1]
+                    if nextToken.end - nextToken.start <= 1.5, nextToken.start >= lastAnchor.end - Self.epsilon {
+                        searchCap = min(searchCap, nextToken.start)
+                    }
+                }
+                let cappedAnchorEnd = min(lastAnchor.end, searchCap)
+                let voiceEnd = Self.contiguousVoicedEnd(from: lastWordStart, anchorEnd: cappedAnchorEnd, in: pitched, upTo: searchCap)
+                lineEnd = max(cappedAnchorEnd, voiceEnd, lastWordStart + Self.minimumWordDuration)
+            } else {
+                let baseEnd = min(max(last.end, lastWordStart + originalLastDuration), nextLineCeiling)
+                let voiceEnd = Self.contiguousVoicedEnd(from: lastWordStart, anchorEnd: min(lastWordStart + originalLastDuration, baseEnd), in: pitched, upTo: baseEnd)
+                lineEnd = max(voiceEnd, lastWordStart + Self.minimumWordDuration)
+            }
             let voiced = pitched.compactMap { note -> ClosedRange<TimeInterval>? in
                 let lower = max(note.startTime, moved[0]), upper = min(note.endTime, lineEnd)
                 return upper - lower > Self.epsilon ? lower...upper : nil
@@ -215,11 +317,55 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
             result[index] = moved.indices.map { word in
                 let from = moved[word]
                 let to = word + 1 < moved.count ? moved[word + 1] : lineEnd
-                return Word(start: from, end: to, note: noteFor(from: from, to: to, voiced: voiced, pitched: pitched))
+                let anchorEnd = anchors[word]?.end
+                return Word(start: from, end: to, note: noteFor(from: from, to: to, voiced: voiced, pitched: pitched, anchorEnd: anchorEnd))
             }
             previousEnd = lineEnd
+            previousLastWordStart = lastWordStart
+            previousWasAnchored = true
         }
         return result
+    }
+
+    /// Trims a previous line's trailing word/note end back to `ceiling` when the next line's
+    /// recognized onset proves the previous line ended earlier than estimated.
+    private func trimmedBefore(_ ceiling: TimeInterval, line: [Word]) -> [Word] {
+        line.map { word in
+            let end = min(word.end, max(word.start, ceiling))
+            let trimmedNote: TargetMIDINote?
+            if let note = word.note {
+                let noteEnd = min(note.endTime, ceiling)
+                let duration = noteEnd - note.startTime
+                trimmedNote = duration > Self.epsilon
+                    ? TargetMIDINote(id: note.id, midiNote: note.midiNote, startTime: note.startTime, duration: duration)
+                    : nil
+            } else {
+                trimmedNote = nil
+            }
+            return Word(start: word.start, end: end, note: trimmedNote)
+        }
+    }
+
+    /// Follows contiguous CREPE voiced notes from `start` (and through `anchorEnd`), stopping
+    /// before any silent gap longer than `bleedGapThreshold` so stray bleed in a rest isn't eaten.
+    private static func contiguousVoicedEnd(from start: TimeInterval, anchorEnd: TimeInterval,
+                                            in pitched: [TargetMIDINote], upTo limit: TimeInterval) -> TimeInterval {
+        var end = max(start, anchorEnd)
+        var foundVoice = false
+        for note in pitched {
+            if note.endTime <= start + Self.epsilon { continue }
+            if note.startTime >= limit { break }
+            let clippedEnd = min(note.endTime, limit)
+            if !foundVoice {
+                if note.startTime - end > Self.bleedGapThreshold { break }
+                foundVoice = true
+                end = max(end, clippedEnd)
+            } else {
+                if note.startTime - end > Self.bleedGapThreshold { break }
+                end = max(end, clippedEnd)
+            }
+        }
+        return end
     }
 
     /// Keeps an unanchored line from overlapping a previous line that recognition moved later.
@@ -370,10 +516,10 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
                 return Word(start: time, end: time + span * weight / total, note: nil)
             }
         }
-        // From the line's start to its last voiced moment: silent and voiced parts, each counting
-        // only up to its cap.
+        // From just before the line's first voice (keeping a brief consonant margin) to its last
+        // voiced moment: silent and voiced parts, each counting only up to its cap.
         var pieces: [Piece] = []
-        var time = start
+        var time = voiced.first.map { max(start, $0.lowerBound - Self.leadingAttackMargin) } ?? start
         for part in voiced {
             // Overlapping pitch notes would make the pieces run backwards: each starts where the last ended.
             let lower = max(part.lowerBound, time)
@@ -404,22 +550,45 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
     /// in (a soft "I" before a phrase) is still sung: it gets a note over its whole time with the
     /// nearest pitch of its line.
     private func noteFor(from: TimeInterval, to: TimeInterval, voiced: [ClosedRange<TimeInterval>],
-                         pitched: [TargetMIDINote]) -> TargetMIDINote? {
+                         pitched: [TargetMIDINote], anchorEnd: TimeInterval? = nil) -> TargetMIDINote? {
         guard to - from > Self.epsilon else { return nil }
         let inside = voiced.compactMap { part -> ClosedRange<TimeInterval>? in
             let lower = max(part.lowerBound, from), upper = min(part.upperBound, to)
             return upper - lower > Self.epsilon ? lower...upper : nil
         }
-        if let first = inside.first, let last = inside.last,
+        if let first = inside.first,
            let midi = dominantPitch(from: from, to: to, in: pitched) {
+            // Follow contiguous voiced parts of this word, stopping before a long silent gap
+            // so stray bleed later in a breath doesn't stretch the note bar across silence.
+            var clusterEnd = first.upperBound
+            for part in inside.dropFirst() {
+                let withinAnchor = anchorEnd.map { part.lowerBound <= $0 + Self.epsilon } ?? false
+                if part.lowerBound - clusterEnd <= Self.bleedGapThreshold || withinAnchor {
+                    clusterEnd = max(clusterEnd, part.upperBound)
+                } else {
+                    break
+                }
+            }
             // Long enough to be seen and sung: grown around the voice, inside the word.
-            let length = min(max(last.upperBound - first.lowerBound, Self.minimumNoteLength), to - from)
-            let middle = (first.lowerBound + last.upperBound) / 2
+            let length = min(max(clusterEnd - first.lowerBound, Self.minimumNoteLength), to - from)
+            let middle = (first.lowerBound + clusterEnd) / 2
             let start = min(max(middle - length / 2, from), to - length)
-            return TargetMIDINote(midiNote: midi, startTime: start, duration: to - start)
+            let voicedEnd = min(to, max(clusterEnd, anchorEnd ?? 0, start + length))
+            // Hold seamlessly to the next word when words flow together; end at the voice when a
+            // clear breath or pause (> maximumBreathHold) follows.
+            let end = (to - voicedEnd > Self.maximumBreathHold) ? voicedEnd : to
+            return TargetMIDINote(midiNote: midi, startTime: start, duration: end - start)
         }
-        return nearestPitch(to: from, in: voiced, pitched: pitched)
-            .map { TargetMIDINote(midiNote: $0, startTime: from, duration: to - from) }
+        return nearestPitch(to: from, in: voiced, pitched: pitched).map { midi in
+            let end: TimeInterval
+            if let anchorEnd {
+                let natural = min(to, max(anchorEnd, from + Self.minimumNoteLength))
+                end = (to - natural > Self.maximumBreathHold) ? natural : to
+            } else {
+                end = to
+            }
+            return TargetMIDINote(midiNote: midi, startTime: from, duration: end - from)
+        }
     }
 
     /// The pitch of the voiced part of the line closest to `time`.
