@@ -9,14 +9,14 @@ import SwiftUI
 
 struct BrandLogoView: View {
     var body: some View {
-        VStack(spacing: 27) {
+        VStack(spacing: 8) {
             Image("BrandMascot")
                 .resizable()
                 .scaledToFit()
-                .frame(height: 100)
+                .frame(height: 105)
                 .accessibilityHidden(true)
 
-            Text("verca")
+            Text("Verca")
                 .font(.appLargeTitle)
                 .foregroundStyle(Color.primaryBrand)
         }
