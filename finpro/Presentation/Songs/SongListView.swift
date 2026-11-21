@@ -13,18 +13,19 @@ struct SongListView: View {
     @State private var renaming: SavedSong?
     @State private var name = ""
     @FocusState private var nameFocused: Bool
+    @FocusState private var searchFocused: Bool
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            HStack(spacing: AppSpacing.medium) {
                 Button(action: onBack) { Image(systemName: "chevron.left") }
                     .buttonStyle(.appIcon(.glass)).accessibilityLabel("Back")
                 Spacer()
                 Button(viewModel.selecting ? "Cancel" : "Select") { withRowAnimation(viewModel.toggleSelectionMode) }
                     .font(.appBody.weight(.medium)).foregroundStyle(Color.primaryBrand)
-                    .glassCapsuleButtonStyle()
+                    .glassPillButtonStyle(height: AppLayout.headerPillHeight, horizontalPadding: 17)
                     .disabled(viewModel.library.songs.isEmpty)
                 if viewModel.selecting {
                     Button(role: .destructive) { viewModel.delete(viewModel.selectedIDs) } label: {
@@ -38,6 +39,8 @@ struct SongListView: View {
                 }
             }
             .padding(.horizontal, 16)
+            // Header buttons at y 70 like the other screens (design 3.2a).
+            .padding(.top, AppSpacing.small)
             Text("Song List").font(.appLargeTitle).foregroundStyle(Color.plumNight)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16).padding(.top, 10).padding(.bottom, 12)
@@ -62,17 +65,26 @@ struct SongListView: View {
             }
             if !viewModel.selecting {
                 HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                    TextField("Search", text: $viewModel.query).autocorrectionDisabled()
+                    Image(systemName: "magnifyingglass").font(.appTitle3)
+                    TextField("Search", text: $viewModel.query,
+                              prompt: Text("Search").foregroundStyle(Color.secondary))
+                        .autocorrectionDisabled()
+                        .focused($searchFocused)
                     if !viewModel.query.isEmpty {
                         Button { viewModel.query = "" } label: { Image(systemName: "xmark.circle.fill") }
                             .accessibilityLabel("Clear search")
+                    } else {
+                        // Design 3.2a: a mic like the system search bar. It opens the keyboard,
+                        // whose dictation key speaks the song name (SwiftUI cannot start dictation).
+                        Button { searchFocused = true } label: { Image(systemName: "mic").font(.appTitle3) }
+                            .accessibilityLabel("Search by voice")
+                            .accessibilityHint("Opens the keyboard; use its dictation key")
                     }
                 }
                 .font(.appBody).foregroundStyle(Color.secondary)
-                .padding(.horizontal, 16).frame(height: 48)
-                .background(Color.searchField.opacity(0.8), in: Capsule())
-                .shadow(color: .black.opacity(0.08), radius: 12, y: 2)
+                .padding(.horizontal, 16).frame(height: 52)
+                // A glass search bar like the system one (design 3.2a).
+                .glassCardBackground(cornerRadius: 26)
                 .padding(.horizontal, 16).padding(.bottom, 12)
             }
         }

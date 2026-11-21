@@ -34,8 +34,11 @@ final class HomeViewModel {
     private let onStartCreateCover: () -> Void
     private let onRetestVocalRangeAction: () -> Void
 
+    /// The saved vocal range, shown on its result screen from the Home pill; nil before the first test.
+    var vocalRange: VocalRange? { vocalRangeRepository.load() }
+
     var vocalRangeText: String {
-        guard let range = vocalRangeRepository.load() else {
+        guard let range = vocalRange else {
             return "Not tested"
         }
         let low = PitchMath.noteName(midi: Int(range.lowestMIDI.rounded()))
@@ -83,6 +86,7 @@ final class HomeViewModel {
         onStartCreateCover()
     }
 
+    /// Redo Test (or the pill before any test): the whole vocal range test, from the intro.
     func vocalRangeTapped() {
         onRetestVocalRangeAction()
     }

@@ -10,6 +10,8 @@ import QuickLook
 struct HomeView: View {
     @State var viewModel: HomeViewModel
     @State private var showsCovers = false
+    /// The saved vocal range's result screen, pushed from the vocal range pill.
+    @State private var showsVocalRange = false
     @State private var previewURL: URL?
     private let createTip = CreateCoverTip()
 
@@ -20,7 +22,10 @@ struct HomeView: View {
                     Text("Covers").font(.appLargeTitle).foregroundStyle(Color.plumNight)
                         .lineLimit(1).minimumScaleFactor(0.7)
                     Spacer(minLength: 0)
-                    Button(action: viewModel.vocalRangeTapped) {
+                    Button {
+                        // Show the saved result; before any test, start the test.
+                        if viewModel.vocalRange != nil { showsVocalRange = true } else { viewModel.vocalRangeTapped() }
+                    } label: {
                         HStack(spacing: 6) {
                             Image(systemName: "waveform")
                             Text(viewModel.vocalRangeText).lineLimit(1).minimumScaleFactor(0.7)
@@ -31,13 +36,13 @@ struct HomeView: View {
                         .padding(.horizontal, 10).frame(height: 44)
                         .background(Color.primary100, in: Capsule())
                     }
-                    .accessibilityLabel("Your vocal range, \(viewModel.vocalRangeText). Retake test")
+                    .accessibilityLabel("Your vocal range, \(viewModel.vocalRangeText)")
                     Button {
                         createTip.invalidate(reason: .actionPerformed)
                         viewModel.createCoverTapped()
                     } label: { Image(systemName: "plus") }
                         .buttonStyle(.appIcon(.primary)).accessibilityLabel("Add a song")
-                        .popoverTip(viewModel.songLibrary.songs.isEmpty ? createTip : nil, arrowEdge: .top)
+                        .modifier(AddSongPopoverTip(tip: viewModel.songLibrary.songs.isEmpty ? createTip : nil))
                         .tipViewStyle(CreateCoverTipStyle())
                 }
                 .padding(.horizontal, 16)
@@ -45,7 +50,7 @@ struct HomeView: View {
                     sectionButton("Songs", action: viewModel.songsTapped)
                     if viewModel.songLibrary.songs.isEmpty {
                         Text("Tap + to add a song and\nstart creating your cover.")
-                            .font(.appBody).foregroundStyle(Color.plumNight)
+                            .font(.appBody).foregroundStyle(Color.primary300)
                             .multilineTextAlignment(.center)
                             .frame(maxWidth: .infinity, minHeight: 116)
                     } else {
@@ -76,17 +81,19 @@ struct HomeView: View {
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 22)
+                // Empty Home (design 3.1a) sits Songs closer to the header than 3.1b.
+                .padding(.top, viewModel.songLibrary.songs.isEmpty ? 1 : 22)
                 VStack(alignment: .leading, spacing: 6) {
                     sectionButton("Your covers") { showsCovers = true }
                     if viewModel.recentCovers.isEmpty {
                         Text("Your cover projects will appear here.")
-                            .font(.appBody).foregroundStyle(Color.plumNight)
+                            .font(.appBody).foregroundStyle(Color.primary300)
                             .frame(maxWidth: .infinity).padding(.top, 42)
                     } else { CoverGridView(covers: viewModel.recentCovers, onTap: open) }
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 24)
+                // Empty Home (design 3.1a): more room under the songs hint.
+                .padding(.top, viewModel.songLibrary.songs.isEmpty ? 56 : 24)
                 .frame(maxWidth: .infinity, alignment: .top)
                 if let error = viewModel.songLibrary.error ?? viewModel.coverLibrary?.error {
                     Text(error.title).font(.appCaption).foregroundStyle(Color.primaryBrand)
@@ -103,7 +110,17 @@ struct HomeView: View {
                     .transition(.move(edge: .trailing))
             }
         }
+        .overlay {
+            if showsVocalRange, let range = viewModel.vocalRange {
+                VocalRangeResultView(range: range, isFemale: false, onDone: {
+                    showsVocalRange = false
+                    viewModel.createCoverTapped()
+                }, onRetake: viewModel.vocalRangeTapped, onBack: { showsVocalRange = false })
+                .transition(.move(edge: .trailing))
+            }
+        }
         .animation(.easeInOut(duration: 0.3), value: showsCovers)
+        .animation(.easeInOut(duration: 0.3), value: showsVocalRange)
     }
 
     private func open(_ cover: HomeViewModel.RecentCoverItem) {
@@ -123,5 +140,18 @@ struct HomeView: View {
             .foregroundStyle(Color.plumNight)
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct AddSongPopoverTip: ViewModifier {
+    let tip: CreateCoverTip?
+
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, *) {
+            // Below the button, the arrow pointing up at it (design 3.1a).
+            content.popoverTip(tip, attachmentAnchor: .rect(.bounds), arrowEdges: .top)
+        } else {
+            content.popoverTip(tip, arrowEdge: .top)
+        }
     }
 }
