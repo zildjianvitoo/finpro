@@ -45,20 +45,12 @@ struct KeySelectionView: View {
                             .frame(maxWidth: .infinity)
                             .accessibilityElement(children: .combine)
                         }
-                        if let notes = viewModel.selectedNotes {
-                            Button(action: viewModel.previewSelected) {
-                                Text("Vocal notes: \(PitchMath.noteName(midi: notes.low)) – \(PitchMath.noteName(midi: notes.high))")
-                                    .font(.appSubheadline).foregroundStyle(Color.primary300)
-                                    .frame(maxWidth: .infinity, minHeight: 44)
-                            }
-                            .buttonStyle(.plain).padding(.top, AppSpacing.section)
-                            .accessibilityLabel("Preview this key with vocals, \(PitchMath.noteName(midi: notes.low)) to \(PitchMath.noteName(midi: notes.high))")
-                            .accessibilityHint("Tap to play or pause the selected key")
-                            if !viewModel.fitsRange {
-                                Text("This key reaches beyond your tested range.")
-                                    .font(.appCaption).foregroundStyle(Color.primaryBrand)
-                                    .frame(maxWidth: .infinity)
-                            }
+                        // No "Vocal notes" line (user decision 2026-11-21); tapping the dial plays the key.
+                        if viewModel.selectedNotes != nil, !viewModel.fitsRange {
+                            Text("This key reaches beyond your tested range.")
+                                .font(.appCaption).foregroundStyle(Color.primaryBrand)
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, AppSpacing.section)
                         }
                     }
                 }
