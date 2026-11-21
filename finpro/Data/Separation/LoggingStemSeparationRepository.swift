@@ -9,11 +9,16 @@
 import Foundation
 import os
 
-nonisolated struct LoggingStemSeparationRepository: StemSeparationRepository, LeadInStemSeparation {
+nonisolated struct LoggingStemSeparationRepository: StemSeparationRepository, LeadInStemSeparation, StemPreseparation {
     let name: String
     let wrapped: any StemSeparationRepository
 
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Separation")
+
+    func preseparate(audioURL: URL, trimRange: ClosedRange<TimeInterval>, leadInDuration: TimeInterval) async {
+        guard let preseparator = wrapped as? any StemPreseparation else { return }
+        await preseparator.preseparate(audioURL: audioURL, trimRange: trimRange, leadInDuration: leadInDuration)
+    }
 
     func separateStems(from audioURL: URL, trimRange: ClosedRange<TimeInterval>) async throws -> SeparatedStems {
         try await logged(duration: trimRange.upperBound - trimRange.lowerBound) {

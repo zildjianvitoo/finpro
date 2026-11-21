@@ -74,7 +74,12 @@ struct ImportSongView: View {
         // Preparing a song can take a minute or more; locking would pause it.
         .keepsScreenAwake(viewModel.isPreparing)
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { viewModel.stopSelectionPreview() }
+            if phase != .active {
+                viewModel.stopSelectionPreview()
+                viewModel.pausePreseparation()
+            } else {
+                viewModel.resumePreseparationIfTrimming()
+            }
         }
         .onDisappear { viewModel.suspend() }
     }

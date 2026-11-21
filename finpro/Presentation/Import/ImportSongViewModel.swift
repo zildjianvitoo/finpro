@@ -106,6 +106,7 @@ final class ImportSongViewModel {
     /// stems) and the lyrics of the chosen part on the prepared song's timeline.
     @ObservationIgnored private let onPrepared: (PrepareSongUseCase.Choices, [LyricLine], String?) -> Void
     @ObservationIgnored private var preparation: Task<Void, Never>?
+    @ObservationIgnored private var preseparation: Task<Void, Never>?
     @ObservationIgnored private var importTask: Task<Void, Never>?
     @ObservationIgnored private let library: SongLibrary?
     @ObservationIgnored private let initialSong: SavedSong?
@@ -189,6 +190,7 @@ final class ImportSongViewModel {
     func picked(_ result: Result<URL, any Error>) {
         guard case .success(let url) = result else { return }
         importTask?.cancel()
+        pausePreseparation()
         stopSelectionPreview()
         lyricsLookup?.cancel()
         recognition?.cancel()
@@ -240,6 +242,7 @@ final class ImportSongViewModel {
         if let cached = saved?.lyrics { lyrics = .found(cached) } else { searchLyrics() }
         if recognizes { recognize(audio) }
         startSelectionPreview()
+        schedulePreseparation(delay: .milliseconds(800))
     }
 
     /// Keeps a durable copy even when the user goes directly to key selection.
@@ -265,12 +268,14 @@ final class ImportSongViewModel {
 
     func saveToSongList() {
         guard audio != nil, persistSelection() else { return }
+        pausePreseparation()
         stopSelectionPreview()
         onSavedToList()
     }
 
     func prepareSelection() {
         guard let audio, let range = vocalRange(), persistSelection() else { return }
+        pausePreseparation()
         stopSelectionPreview()
         generation = UUID()
         let trim = selectionStart...(selectionStart + selectionLength)
@@ -550,6 +555,7 @@ final class ImportSongViewModel {
         selectionLength = suggestion.length
         applyingSuggestion = false
         if wasPlaying { startSelectionPreview() }
+        schedulePreseparation(delay: .milliseconds(400))
     }
 
     /// Whether a lyric line's sung part is (partly) inside the chosen part.
@@ -615,6 +621,7 @@ final class ImportSongViewModel {
         editingSelection = true
         frozenVisibleSeconds = waveformVisibleSeconds
         restartingPreview?.cancel()
+        pausePreseparation()
         stopSelectionPreview()
     }
 
@@ -622,12 +629,38 @@ final class ImportSongViewModel {
         editingSelection = false
         frozenVisibleSeconds = nil
         startSelectionPreview()
+        schedulePreseparation(delay: .milliseconds(600))
+    }
+
+    func pausePreseparation() {
+        preseparation?.cancel()
+        preseparation = nil
+    }
+
+    func resumePreseparationIfTrimming() {
+        guard audio != nil, !editingSelection else { return }
+        schedulePreseparation(delay: .milliseconds(400))
+    }
+
+    private func schedulePreseparation(delay: Duration) {
+        pausePreseparation()
+        guard let audio,
+              let preseparator = prepare.separation as? any StemPreseparation else { return }
+        let trim = selectionStart...(selectionStart + selectionLength)
+        let lead = min(prepare.configuration.preRoll, trim.lowerBound)
+        let leadIn = lead >= PrepareSongUseCase.minimumLeadIn ? lead : 0
+        preseparation = Task(priority: .utility) {
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            await preseparator.preseparate(audioURL: audio.url, trimRange: trim, leadInDuration: leadIn)
+        }
     }
 
     func suspend() {
         recognition?.cancel()
         isIdentifyingSong = false
         lyricsAwaitRecognition = false
+        pausePreseparation()
         stopSelectionPreview()
         restartingPreview?.cancel()
         lyricsLookup?.cancel()
