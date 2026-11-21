@@ -437,5 +437,5 @@ The simulator has no camera, so the result screen there only exercises the fallb
 
 - **Checks passing:** `xcodebuild` (iOS Simulator), `./scripts/check-comping.sh`; simulator fallback path (fixture plan, no files) unchanged.
 - **Not yet verified on a device (as of 2026-11-21):** the Mac's media engine is stronger than an iPhone's, and the simulator uses the Mac's hardware. Check on an iPhone (older ones, A13/A14, are most at risk) that the preview doesn't stutter while the file exports in the first seconds after a recording. If it does: start the export when the preview is paused, or a few seconds after it shows.
-- **Trade-off:** a cover whose export hasn't finished is not on Home yet; if the app is killed in that window, that version is lost (the takes stay in the draft from the last finished export).
+- **Trade-off:** a cover whose export hasn't finished is not on Home yet; if the app is killed in that window, that version is lost (Home keeps the last version whose export finished, if there is one).
 
