@@ -307,10 +307,13 @@ final class ImportSongViewModel {
                 try Task.checkCancellation()
                 guard generation == token else { return }
                 preparedChoices = choices
-                preparedLyrics = Self.lyrics(lyrics, sungAt: choices.guideWords, shift: choices.lyricLineShift)
+                // The part may start earlier than chosen (at the start of the phrase it cut into).
+                preparedLyrics = Self.lyrics(Self.delayed(lyrics, by: choices.clipStartShift),
+                                             sungAt: choices.guideWords, shift: choices.lyricLineShift)
                 Self.logPreparationTiming(duration: trim.upperBound - trim.lowerBound, started: started, finished: finished,
                                           marks: marks.withLock { $0 })
-                Self.logPrepared(choices, lyricLines: lyricLines.count, file: audio.url.lastPathComponent, trim: trim)
+                Self.logPrepared(choices, lyricLines: lyricLines.count, file: audio.url.lastPathComponent,
+                                 trim: (trim.lowerBound - choices.clipStartShift)...trim.upperBound)
                 status = .prepared
             } catch is CancellationError {
                 guard generation == token else { return }
@@ -437,6 +440,15 @@ final class ImportSongViewModel {
                 ? zip(line.words, sung).map { LyricWord(text: $0.text, start: $1.start, end: $1.end) }
                 : line.words.map { LyricWord(text: $0.text, start: $0.start + shift, end: $0.end + shift) }
             return LyricLine(id: line.id, text: line.text, start: line.start + shift, end: line.end + shift, words: words)
+        }
+    }
+
+    /// `lines` moved `seconds` later, for a prepared part that starts that much earlier than chosen.
+    private static func delayed(_ lines: [LyricLine], by seconds: TimeInterval) -> [LyricLine] {
+        guard seconds != 0 else { return lines }
+        return lines.map { line in
+            LyricLine(id: line.id, text: line.text, start: line.start + seconds, end: line.end + seconds,
+                      words: line.words.map { LyricWord(text: $0.text, start: $0.start + seconds, end: $0.end + seconds) })
         }
     }
 

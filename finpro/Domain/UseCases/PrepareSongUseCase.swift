@@ -60,6 +60,10 @@ nonisolated struct PrepareSongUseCase: Sendable {
         /// The song just before the trimmed part, separated but not transposed; rendered into each
         /// key as `PreparedSong.leadIn`. Nil when the part starts at the song's start.
         var leadIn: LeadInStems?
+        /// How many seconds earlier than the requested trim the part starts: the chosen start fell
+        /// inside a sung phrase, so it was moved back to where that phrase begins (`phraseStartBackoff`).
+        /// Times on the requested trim's timeline are this much later on the prepared song's.
+        var clipStartShift: TimeInterval = 0
     }
 
     /// Up to the pre-roll of the song before the trimmed part, so the pre-roll plays the beat
@@ -72,6 +76,18 @@ nonisolated struct PrepareSongUseCase: Sendable {
     /// Shorter than this before the part, the pre-roll stays silent (a click at the start is worse).
     static let minimumLeadIn: TimeInterval = 0.5
 
+    // Moving a start that cuts into a sung phrase (device feedback 2026-11-21: synced lyrics are
+    // often early or late, so a part picked at a line could start mid-phrase and the lead-in
+    // played the line's first words before the part sang them again).
+    /// A voiced note ending this close to the start counts as sung across it.
+    static let phraseEdgeTolerance: TimeInterval = 0.15
+    /// Notes closer than this belong to one phrase (a breath between words is shorter).
+    static let phraseGap: TimeInterval = 0.3
+    /// The start moves back at most this far; a longer phrase is left as chosen.
+    static let maximumPhraseBackoff: TimeInterval = LyricGuideNotesUseCase.lineShiftRange
+    /// Moves shorter than this are not worth separating again.
+    static let minimumPhraseBackoff: TimeInterval = 0.1
+
     /// Separate and analyse once; render only the best fully fitting keys. With `lyricLines` (on
     /// the trimmed timeline), the guide has one note per sung word instead of the raw pitch notes.
     func executeChoices(audioURL: URL, trimRange: ClosedRange<TimeInterval>, vocalRange: VocalRange,
@@ -83,23 +99,25 @@ nonisolated struct PrepareSongUseCase: Sendable {
             throw ContractViolation(contract: "Preparation", message: "Invalid trim range.")
         }
         try Task.checkCancellation()
-        let duration = trimRange.upperBound - trimRange.lowerBound
-        let leadLength = min(configuration.preRoll, trimRange.lowerBound)
-        let wantsLeadIn = leadLength >= Self.minimumLeadIn
 
         progress("Separating vocals and backing music")
-        let stems: SeparatedStems
-        let leadIn: LeadInStems?
-        if let combined = separation as? any LeadInStemSeparation {
-            let result = try await combined.separateStems(from: audioURL, trimRange: trimRange,
-                                                          leadInDuration: wantsLeadIn ? leadLength : 0)
-            stems = result.stems
-            leadIn = result.leadIn.map { LeadInStems(stems: $0, duration: leadLength) }
-        } else {
-            stems = try await separation.separateStems(from: audioURL, trimRange: trimRange)
-            leadIn = wantsLeadIn ? await leadInStems(audioURL: audioURL, trimRange: trimRange, progress: progress) : nil
-        }
+        var trimRange = trimRange
+        var separated = try await separate(audioURL: audioURL, trimRange: trimRange, progress: progress)
         try Task.checkCancellation()
+        // A start inside a sung phrase: start where the phrase starts instead (the chunks are
+        // cached, so separating again mostly reassembles them).
+        let clipStartShift = await phraseStartBackoff(separated.leadIn)
+        if clipStartShift > 0 {
+            trimRange = (trimRange.lowerBound - clipStartShift)...trimRange.upperBound
+            separated = try await separate(audioURL: audioURL, trimRange: trimRange, progress: progress)
+            try Task.checkCancellation()
+        }
+        let (stems, leadIn) = separated
+        let duration = trimRange.upperBound - trimRange.lowerBound
+        let lyricLines = clipStartShift > 0 ? lyricLines.map { line in
+            LyricGuideNotesUseCase.Line(start: line.start + clipStartShift, end: line.end + clipStartShift,
+                                        wordWeights: line.wordWeights, words: line.words)
+        } : lyricLines
 
         // Pitch extraction (CREPE) and word recognition (SpeechTranscriber) both read only the
         // separated vocal stem, so they run in parallel.
@@ -118,17 +136,61 @@ nonisolated struct PrepareSongUseCase: Sendable {
         guard !lyricGuide.notes.isEmpty else {
             // No lyrics: the raw pitch notes, with the tracker's octave errors folded back so the
             // key recommendation does not plan around notes nobody sings.
-            return try await makeChoices(stems: stems, notes: LyricGuideNotesUseCase.foldingOctaveErrors(extracted),
-                                         duration: duration,
-                                         vocalRange: vocalRange, recommendationLimit: recommendationLimit,
-                                         leadIn: leadIn, progress: progress)
+            var choices = try await makeChoices(stems: stems, notes: LyricGuideNotesUseCase.foldingOctaveErrors(extracted),
+                                                duration: duration,
+                                                vocalRange: vocalRange, recommendationLimit: recommendationLimit,
+                                                leadIn: leadIn, progress: progress)
+            choices.clipStartShift = clipStartShift
+            return choices
         }
         var choices = try await makeChoices(stems: stems, notes: lyricGuide.notes, duration: duration,
                                             vocalRange: vocalRange, simplifies: false,
                                             recommendationLimit: recommendationLimit, leadIn: leadIn, progress: progress)
         choices.guideWords = lyricGuide.words
         choices.lyricLineShift = lyricGuide.lineShift
+        choices.clipStartShift = clipStartShift
         return choices
+    }
+
+    /// The trimmed part and the song before it (up to the pre-roll), separated.
+    private func separate(audioURL: URL, trimRange: ClosedRange<TimeInterval>,
+                          progress: @escaping @Sendable (String) -> Void) async throws -> (stems: SeparatedStems, leadIn: LeadInStems?) {
+        let leadLength = min(configuration.preRoll, trimRange.lowerBound)
+        let wantsLeadIn = leadLength >= Self.minimumLeadIn
+        if let combined = separation as? any LeadInStemSeparation {
+            let result = try await combined.separateStems(from: audioURL, trimRange: trimRange,
+                                                          leadInDuration: wantsLeadIn ? leadLength : 0)
+            return (result.stems, result.leadIn.map { LeadInStems(stems: $0, duration: leadLength) })
+        }
+        let stems = try await separation.separateStems(from: audioURL, trimRange: trimRange)
+        let leadIn = wantsLeadIn ? await leadInStems(audioURL: audioURL, trimRange: trimRange, progress: progress) : nil
+        return (stems, leadIn)
+    }
+
+    /// How far before the part the phrase sung across its start begins (seconds), from the pitch
+    /// notes of the lead-in's vocal stem; 0 when nothing is sung across the start, no quiet gap is
+    /// found within `maximumPhraseBackoff`, or the lead-in can't be analysed.
+    private func phraseStartBackoff(_ leadIn: LeadInStems?) async -> TimeInterval {
+        guard let leadIn,
+              let notes = try? await analysis.extractVocalGuideNotes(from: leadIn.stems.vocalGuideURL) else { return 0 }
+        return Self.phraseStartBackoff(notes: notes, leadInDuration: leadIn.duration)
+    }
+
+    /// `notes` on the lead-in's timeline (0 = its start, `leadInDuration` = the part's start).
+    static func phraseStartBackoff(notes: [TargetMIDINote], leadInDuration: TimeInterval) -> TimeInterval {
+        let sorted = notes.filter { $0.duration > 0 && $0.startTime < leadInDuration }.sorted { $0.startTime < $1.startTime }
+        guard let last = sorted.last, last.endTime >= leadInDuration - phraseEdgeTolerance else { return 0 }
+        var phraseStart = last.startTime
+        for note in sorted.dropLast().reversed() {
+            guard phraseStart - note.endTime < phraseGap else { break }
+            phraseStart = min(phraseStart, note.startTime)
+        }
+        // The consonant before the first steady pitch belongs to the phrase too.
+        let start = phraseStart - LyricGuideNotesUseCase.attackLead
+        // No quiet gap inside the lead-in: the phrase may start even earlier, so leave the start alone.
+        guard start > 0 else { return 0 }
+        let backoff = leadInDuration - start
+        return backoff >= minimumPhraseBackoff && backoff <= maximumPhraseBackoff ? backoff : 0
     }
 
     /// Also used by the demo, whose original guide is already known. `simplifies` merges and
