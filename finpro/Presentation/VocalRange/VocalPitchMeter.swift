@@ -3,9 +3,10 @@
 //  finpro
 //
 //  Live pitch on the lowest/highest note steps (design 2.4 / 2.5, revision 2026-11-21): a
-//  vertical bar with a lime dot. The dot follows the voice up and down like a tuner needle
-//  (springy, between the rows too); the note names beside the bar only slide when the dot nears
-//  an end of the bar. While a note is held the dot grows and glows; when it is captured it pops.
+//  vertical bar with a lime dot. The dot sits on the row of the nearest note (the bold name),
+//  springing from row to row as the voice moves (device feedback 2026-11-21: between the rows
+//  it looked off-centre next to the bold name); the note names beside the bar only slide when
+//  the dot nears an end of the bar. While a note is held the dot grows and glows; when it is captured it pops.
 //  The bar glows pink toward the end the singer is looking for (the bottom for the lowest note,
 //  the top for the highest).
 //
@@ -35,8 +36,8 @@ struct VocalPitchMeter: View {
 
     var body: some View {
         let geometry = PitchMeterGeometry(direction: direction)
-        // Silent: the dot drifts back to its home row and fades.
-        let dotMIDI = position?.midi ?? window
+        // On the nearest note's row, level with its bold name. Silent: back to its home row, faded.
+        let dotMIDI = position.map { Double($0.nearestNote) } ?? window
         ZStack(alignment: .topLeading) {
             PitchMeterBar(direction: direction, geometry: geometry)
             PitchMeterLabels(center: window, currentNote: position?.nearestNote, geometry: geometry)
