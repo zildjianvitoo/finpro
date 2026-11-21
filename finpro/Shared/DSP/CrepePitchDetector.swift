@@ -6,6 +6,7 @@
 //  the vocal range test and the guide fallback (PRD §2, team decision 2026-11-01).
 //
 
+import Accelerate
 import AVFoundation
 import CoreML
 import Foundation
@@ -100,7 +101,8 @@ nonisolated final class CrepePitchDetector {
     estimate.centerOffset = Double(offset + 512) / 16000
     guard deviation > Self.minimumRMS else { return estimate }
     let input = try MLMultiArray(shape: [1, 1024], dataType: .float32)
-    for i in 0..<1024 { input[i] = NSNumber(value: Float((frame[i] - mean) / deviation)) }
+    let inputPtr = input.dataPointer.bindMemory(to: Float.self, capacity: 1024)
+    for i in 0..<1024 { inputPtr[i] = Float((frame[i] - mean) / deviation) }
     let features = try MLDictionaryFeatureProvider(dictionary: [
       "audio": MLFeatureValue(multiArray: input)
     ])
@@ -112,19 +114,188 @@ nonisolated final class CrepePitchDetector {
         domain: "CREPE", code: 3,
         userInfo: [NSLocalizedDescriptionKey: "Unexpected CREPE model output."])
     }
-    let values = (0..<360).map { salience[$0].doubleValue }
-    guard let peak = values.indices.max(by: { values[$0] < values[$1] }) else { return estimate }
+    Self.decodeSalience(salience, into: &estimate)
+    return estimate
+  }
+
+  /// Offline batch analysis of a whole mono track: resamples once to 16 kHz, skips silent frames,
+  /// and runs CoreML in batches via raw Float pointers (no per-frame AVAudioConverter or NSNumber boxing).
+  func analyzeTrack(
+    _ samples: [Float],
+    sampleRate: Double,
+    hop: TimeInterval,
+    windowDuration: TimeInterval,
+    batchSize: Int = 64
+  ) throws -> [(time: TimeInterval, estimate: CrepeEstimate)] {
+    guard sampleRate > 0, !samples.isEmpty else { return [] }
+    let window = Int((sampleRate * windowDuration).rounded(.up))
+    let step = max(1, Int((sampleRate * hop).rounded()))
+    guard samples.count >= window else { return [] }
+
+    let resampled = try resampleTo16k(samples, sampleRate: sampleRate)
+    guard resampled.count >= 1024 else { return [] }
+
+    let frameCount = (samples.count - window) / step + 1
+    let halfWindow = windowDuration / 2
+    var results: [(time: TimeInterval, estimate: CrepeEstimate)] = []
+    results.reserveCapacity(frameCount)
+
+    var pendingIndices: [Int] = []
+    var pendingProviders: [MLFeatureProvider] = []
+    pendingIndices.reserveCapacity(batchSize)
+    pendingProviders.reserveCapacity(batchSize)
+
+    func flushBatch() throws {
+      guard !pendingProviders.isEmpty else { return }
+      try Task.checkCancellation()
+      let batch = MLArrayBatchProvider(array: pendingProviders)
+      let outputs = try model.predictions(from: batch, options: MLPredictionOptions())
+      for (slot, resultIndex) in pendingIndices.enumerated() {
+        let out = outputs.features(at: slot)
+        guard let salience = out.featureValue(for: "salience")?.multiArrayValue,
+          salience.count == 360
+        else {
+          throw NSError(
+            domain: "CREPE", code: 3,
+            userInfo: [NSLocalizedDescriptionKey: "Unexpected CREPE model output."])
+        }
+        Self.decodeSalience(salience, into: &results[resultIndex].estimate)
+      }
+      pendingIndices.removeAll(keepingCapacity: true)
+      pendingProviders.removeAll(keepingCapacity: true)
+    }
+
+    var mean: Float = 0
+    var deviation: Float = 0
+    let maxOffset = resampled.count - 1024
+
+    for index in 0..<frameCount {
+      let startSample = index * step
+      let time = Double(startSample) / sampleRate + halfWindow
+      let center16k = Int((time * 16_000).rounded())
+      let offset = min(max(0, center16k - 512), maxOffset)
+
+      let input = try MLMultiArray(shape: [1, 1024], dataType: .float32)
+      let dst = input.dataPointer.bindMemory(to: Float.self, capacity: 1024)
+      resampled.withUnsafeBufferPointer { src in
+        // vDSP_normalize computes mean and population stddev and writes (x - mean) / stddev.
+        vDSP_normalize(src.baseAddress! + offset, 1, dst, 1, &mean, &deviation, 1024)
+      }
+
+      var estimate = CrepeEstimate()
+      estimate.rms = Double(deviation)
+      estimate.centerOffset = halfWindow
+      results.append((time, estimate))
+
+      guard Double(deviation) > Self.minimumRMS, deviation.isFinite else { continue }
+      let provider = try MLDictionaryFeatureProvider(dictionary: [
+        "audio": MLFeatureValue(multiArray: input)
+      ])
+      pendingIndices.append(index)
+      pendingProviders.append(provider)
+      if pendingProviders.count >= batchSize {
+        try flushBatch()
+      }
+    }
+    try flushBatch()
+    return results
+  }
+
+  private func resampleTo16k(_ samples: [Float], sampleRate: Double) throws -> [Float] {
+    if abs(sampleRate - 16_000) < 1e-6 { return samples }
+    guard
+      let sourceFormat = AVAudioFormat(
+        commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false),
+      let targetFormat = AVAudioFormat(
+        commonFormat: .pcmFormatFloat32, sampleRate: 16_000, channels: 1, interleaved: false),
+      let converter = converter(from: sourceFormat, to: targetFormat)
+    else {
+      throw NSError(
+        domain: "CREPE", code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "Unsupported audio format for CREPE."])
+    }
+    converter.primeMethod = .none
+    let expectedOut = Int(ceil(Double(samples.count) * 16_000 / sampleRate)) + 256
+    var outSamples: [Float] = []
+    outSamples.reserveCapacity(expectedOut)
+
+    let chunkSize = 65_536
+    guard
+      let inBuffer = AVAudioPCMBuffer(
+        pcmFormat: sourceFormat, frameCapacity: AVAudioFrameCount(chunkSize)),
+      let outBuffer = AVAudioPCMBuffer(
+        pcmFormat: targetFormat, frameCapacity: AVAudioFrameCount(chunkSize))
+    else {
+      throw NSError(
+        domain: "CREPE", code: 2,
+        userInfo: [NSLocalizedDescriptionKey: "Unsupported audio format for CREPE."])
+    }
+
+    var readOffset = 0
+    var conversionError: NSError?
+    while true {
+      outBuffer.frameLength = 0
+      let status = converter.convert(to: outBuffer, error: &conversionError) { _, state in
+        guard readOffset < samples.count else {
+          state.pointee = .endOfStream
+          return nil
+        }
+        let count = min(chunkSize, samples.count - readOffset)
+        inBuffer.frameLength = AVAudioFrameCount(count)
+        samples.withUnsafeBufferPointer { src in
+          inBuffer.floatChannelData![0].update(from: src.baseAddress! + readOffset, count: count)
+        }
+        readOffset += count
+        state.pointee = .haveData
+        return inBuffer
+      }
+      if let conversionError { throw conversionError }
+      let produced = Int(outBuffer.frameLength)
+      if produced > 0, let ptr = outBuffer.floatChannelData?[0] {
+        outSamples.append(contentsOf: UnsafeBufferPointer(start: ptr, count: produced))
+      }
+      if status == .endOfStream || status == .error || produced == 0 { break }
+    }
+    return outSamples
+  }
+
+  private static func decodeSalience(_ salience: MLMultiArray, into estimate: inout CrepeEstimate) {
+    let values: [Double]
+    if salience.dataType == .float32, salience.strides.last?.intValue == 1 {
+      let ptr = salience.dataPointer.bindMemory(to: Float.self, capacity: 360)
+      var peak = 0
+      var peakValue = ptr[0]
+      for i in 1..<360 where ptr[i] > peakValue {
+        peakValue = ptr[i]
+        peak = i
+      }
+      estimate.confidence = Double(peakValue)
+      guard Double(peakValue) >= Self.confidenceThreshold else { return }
+      var sum = 0.0
+      var weighted = 0.0
+      for i in max(0, peak - 4)...min(359, peak + 4) {
+        let v = Double(ptr[i])
+        sum += v
+        weighted += v * (1997.3794084376191 + 20 * Double(i))
+      }
+      guard sum > 0 else { return }
+      let hz = 10 * pow(2, weighted / sum / 1200)
+      estimate.frequency = hz.isFinite ? hz : nil
+      return
+    } else {
+      values = (0..<360).map { salience[$0].doubleValue }
+    }
+    guard let peak = values.indices.max(by: { values[$0] < values[$1] }) else { return }
     estimate.confidence = values[peak]
-    guard values[peak] >= Self.confidenceThreshold else { return estimate }
+    guard values[peak] >= Self.confidenceThreshold else { return }
     var sum = 0.0
     var weighted = 0.0
     for i in max(0, peak - 4)...min(359, peak + 4) {
       sum += values[i]
       weighted += values[i] * (1997.3794084376191 + 20 * Double(i))
     }
-    guard sum > 0 else { return estimate }
+    guard sum > 0 else { return }
     let hz = 10 * pow(2, weighted / sum / 1200)
     estimate.frequency = hz.isFinite ? hz : nil
-    return estimate
   }
 }

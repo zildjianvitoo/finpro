@@ -12,6 +12,8 @@ import SwiftUI
 
 struct RecordingSettingsSheet: View {
     let viewModel: RecordingViewModel
+    /// Reports the sheet's height, so the recording screen can lift the pitch guide above it.
+    var onHeightChange: (CGFloat) -> Void = { _ in }
 
     /// The sheet is as tall as its content.
     @State private var contentHeight: CGFloat = 400
@@ -54,7 +56,10 @@ struct RecordingSettingsSheet: View {
         .padding(.top, 28)
         .padding(.bottom, 24)
         .frame(maxWidth: .infinity)
-        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { contentHeight = $0 }
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: {
+            contentHeight = $0
+            onHeightChange($0)
+        }
         .presentationDetents([.height(contentHeight)])
         .presentationDragIndicator(.visible)
         .preferredColorScheme(.light)
@@ -80,15 +85,19 @@ struct RecordingSettingsSheet: View {
             Text("Pitch Guide")
                 .font(.appBody)
                 .foregroundStyle(.white)
+            // Small and large "A" at the ends, dots under the track (design 5.2b).
             HStack(spacing: 12) {
-                Image(systemName: "textformat.size.smaller")
+                Text("A").font(.appFootnote.weight(.semibold)).accessibilityHidden(true)
                 Slider(value: $pitchGuideScale, in: 0...1) {
                     Text("Pitch Guide size")
                 }
                 .tint(.blue)
-                Image(systemName: "textformat.size.larger")
+                .overlay(alignment: .bottom) { sliderDots.offset(y: 10) }
+                Text("A").font(.appTitle3.weight(.semibold)).accessibilityHidden(true)
             }
             .foregroundStyle(.white.opacity(0.5))
+            .padding(.top, 8)
+            Rectangle().fill(.white.opacity(0.15)).frame(height: 1).padding(.top, 22)
             // Shown once the user moved or resized the panel on the recording screen.
             if guideFrameWidth > 0 {
                 Button("Reset position and size") {
@@ -103,6 +112,18 @@ struct RecordingSettingsSheet: View {
         .padding(.vertical, 14)
         .background(RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous).fill(rowFill))
     }
+
+    private var sliderDots: some View {
+        HStack {
+            ForEach(0..<Self.sliderDotCount, id: \.self) { index in
+                Circle().frame(width: 3, height: 3)
+                if index < Self.sliderDotCount - 1 { Spacer(minLength: 0) }
+            }
+        }
+        .padding(.horizontal, 14)
+        .accessibilityHidden(true)
+    }
+    private static let sliderDotCount = 8
 
     /// Information that is not in the design but still matters when it applies.
     @ViewBuilder

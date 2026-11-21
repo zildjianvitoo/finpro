@@ -76,7 +76,7 @@ final class KeySelectionViewModel {
             do {
                 // Debounce a drag so intermediate slider positions do not render files.
                 try await Task.sleep(for: .milliseconds(180))
-                let song = try await renderer.execute(base: base, stems: choices.stems, semitones: shift)
+                let song = try await renderer.execute(base: base, stems: choices.stems, semitones: shift, leadIn: choices.leadIn)
                 guard !Task.isCancelled, request == token else { return }
                 rendered[shift] = song
                 selectedSong = song

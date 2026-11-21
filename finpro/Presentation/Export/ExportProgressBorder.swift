@@ -2,8 +2,8 @@
 //  ExportProgressBorder.swift
 //  finpro
 //
-//  The export progress of 7.2, drawn as a border around the video (like CapCut): a dark track
-//  with a lime part that grows clockwise from the top centre. Owner: Zildjian Vito (ZV-13).
+//  The export progress of 6.3, drawn as a border around the video (like CapCut): a light lavender
+//  track with a purple part (the main colour) that grows clockwise from the top centre. Owner: Zildjian Vito (ZV-13).
 //
 
 import SwiftUI
@@ -17,9 +17,9 @@ struct ExportProgressBorder: View {
     var body: some View {
         let shape = BorderPath(cornerRadius: cornerRadius)
         ZStack {
-            shape.stroke(Color.exportTrack, lineWidth: lineWidth)
+            shape.stroke(Color.primary100, lineWidth: lineWidth)
             shape.trim(from: 0, to: min(max(progress, 0), 1))
-                .stroke(Color.secBrand, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .stroke(Color.primaryBrand, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
         }
         .padding(lineWidth / 2)
         .accessibilityElement()

@@ -20,6 +20,8 @@ nonisolated enum CompingError: Error, CustomStringConvertible {
     /// iOS stopped the export (the video hardware was busy or the app left the foreground) and
     /// the retries did not get through.
     case exportInterrupted
+    /// The cover file could not be exported (the message of the failure).
+    case exportFailed(String)
 
     var description: String {
         switch self {
@@ -27,6 +29,7 @@ nonisolated enum CompingError: Error, CustomStringConvertible {
         case .missingTrack(let name): "Missing track: \(name)"
         case .exportUnavailable: "Export session could not be created"
         case .exportInterrupted: "The export was interrupted. Keep Verca open and tap Try Again."
+        case .exportFailed(let message): message
         }
     }
 }

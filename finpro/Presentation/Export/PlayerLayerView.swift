@@ -20,7 +20,8 @@ struct PlayerLayerView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: PlayerUIView, context: Context) {
-        view.playerLayer.player = player
+        // Only when the player changes: setting it again re-attaches the video and can drop frames.
+        if view.playerLayer.player !== player { view.playerLayer.player = player }
     }
 
     final class PlayerUIView: UIView {

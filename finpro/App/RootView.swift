@@ -35,9 +35,17 @@ struct RootView: View {
                         onDismiss: flow.dismissVocalRange)
                 }
             case .home, .songList, .importSong:
-                if flow.step == .songList || (flow.step == .importSong && flow.importOrigin == .songList) {
-                    songListScreen
-                } else { homeScreen }
+                let showsSongList = flow.step == .songList || (flow.step == .importSong && flow.importOrigin == .songList)
+                ZStack {
+                    homeScreen
+                        .accessibilityHidden(showsSongList)
+                    if showsSongList {
+                        songListScreen
+                            .transition(.move(edge: .trailing))
+                            .zIndex(1)
+                    }
+                }
+                .animation(.easeInOut(duration: 0.3), value: showsSongList)
             case .chooseKey:
                 if let choices = flow.keyChoices {
                     KeySelectionView(viewModel: KeySelectionViewModel(
@@ -45,11 +53,12 @@ struct RootView: View {
                         renderer: RenderSongKeyUseCase(transposition: flow.container.audioTransposition),
                         automaticallySelectRecommended: true, onChoose: flow.songPrepared), routeMonitor: flow.container.audioRoute,
                         onChooseAnother: flow.returnToSongSection, onRetest: flow.retestVocalRange)
+                    .edgeSwipeBack(action: flow.returnToSongSection)
                 }
             case .recording:
                 PermissionGate([.camera, .microphone], provider: flow.container.permissions) {
                     if let song = flow.preparedSong {
-                        RecordingView(viewModel: makeRecordingViewModel(song: song))
+                        RecordingView(viewModel: makeRecordingViewModel(song: song), tipsSongID: flow.selectedLibrarySongID)
                     }
                 }
             case .export:
@@ -57,7 +66,8 @@ struct RootView: View {
                     ExportPreviewView(viewModel: makeCompingViewModel(plan: plan), onRetake: flow.retakeCover,
                                       onStartOver: flow.startOver, onRetakeClip: flow.retakeClip(segment:),
                                       onContinue: flow.continueRecording,
-                                      onSaveDraft: flow.saveCoverAsDraft, onDiscard: flow.discardCover)
+                                      onSaveDraft: flow.saveCoverAsDraft, onDiscard: flow.discardCover,
+                                      keepsCoverOnLeave: flow.isReopenedCover || flow.isCoverExported)
                 }
             }
         }
@@ -126,7 +136,8 @@ struct RootView: View {
                                         analysis: container.audioAnalysis,
                                         fallbackAnalysis: nil,
                                         transposition: container.audioTransposition,
-                                        configuration: container.configuration),
+                                        configuration: container.configuration,
+                                        wordRecognition: container.wordRecognition),
             vocalRange: { container.vocalRange.load() },
             library: container.songLibrary, initialSong: flow.selectedLibrarySong,
             onSavedToList: flow.savedToSongList, onSelectionSaved: flow.sourceSongSaved,
@@ -161,7 +172,8 @@ struct RootView: View {
             passThreshold: container.configuration.passThreshold,
             onExported: { flow.coverExported($0, plan: $1) },
             onSavedToPhotos: flow.coverSavedToPhotos,
-            transposition: flow.preparedSong?.transposition)
+            transposition: flow.preparedSong?.transposition,
+            lyrics: flow.recordingLyrics)
     }
 }
 

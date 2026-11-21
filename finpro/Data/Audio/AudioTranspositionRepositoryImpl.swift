@@ -11,6 +11,7 @@
 
 import AVFoundation
 import Foundation
+import os
 
 nonisolated enum AudioTranspositionError: Error, LocalizedError, Equatable {
     case semitonesOutOfRange(Int)
@@ -30,6 +31,7 @@ nonisolated enum AudioTranspositionError: Error, LocalizedError, Equatable {
 }
 
 nonisolated struct AudioTranspositionRepositoryImpl: AudioTranspositionRepository {
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Transposition")
     private static let blockFrames: AVAudioFrameCount = 4096
     /// Extra frames rendered beyond `latency + length` so the pitch unit's tail is fully flushed.
     private static let tailSafetyFrames: AVAudioFramePosition = 8192
@@ -56,9 +58,14 @@ nonisolated struct AudioTranspositionRepositoryImpl: AudioTranspositionRepositor
     // MARK: - Rendering
 
     private static func render(_ audioURL: URL, semitones: Int, cacheDirectory: URL) throws -> URL {
+        let clock = ContinuousClock()
+        let started = clock.now
         let fileManager = FileManager.default
         let outputURL = cacheDirectory.appendingPathComponent(cacheName(for: audioURL, semitones: semitones))
-        if fileManager.fileExists(atPath: outputURL.path) { return outputURL }
+        if fileManager.fileExists(atPath: outputURL.path) {
+            log.notice("transpose \(audioURL.lastPathComponent, privacy: .public) (\(semitones, privacy: .public) st): cache hit")
+            return outputURL
+        }
 
         let inputFile: AVAudioFile
         do { inputFile = try AVAudioFile(forReading: audioURL) } catch {
@@ -96,7 +103,8 @@ nonisolated struct AudioTranspositionRepositoryImpl: AudioTranspositionRepositor
         let latencySeconds = timePitch.auAudioUnit.latency + engine.mainMixerNode.auAudioUnit.latency
         let latencyFrames = AVAudioFramePosition((latencySeconds * format.sampleRate).rounded())
 
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: engine.manualRenderingFormat, frameCapacity: blockFrames) else {
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: engine.manualRenderingFormat, frameCapacity: blockFrames),
+              let slice = AVAudioPCMBuffer(pcmFormat: engine.manualRenderingFormat, frameCapacity: blockFrames) else {
             throw AudioTranspositionError.renderFailed("buffer allocation")
         }
         let settings: [String: Any] = [
@@ -137,7 +145,7 @@ nonisolated struct AudioTranspositionRepositoryImpl: AudioTranspositionRepositor
             if keepFrom >= produced { continue }
             let keepCount = min(produced - keepFrom, totalFrames - written)
             if keepCount > 0 {
-                try write(buffer, from: Int(keepFrom), count: Int(keepCount), to: outputFile)
+                try write(buffer, from: Int(keepFrom), count: Int(keepCount), using: slice, to: outputFile)
                 written += keepCount
             }
         }
@@ -148,7 +156,7 @@ nonisolated struct AudioTranspositionRepositoryImpl: AudioTranspositionRepositor
             for channel in 0..<Int(format.channelCount) {
                 buffer.floatChannelData![channel].update(repeating: 0, count: Int(count))
             }
-            try write(buffer, from: 0, count: Int(count), to: outputFile)
+            try write(buffer, from: 0, count: Int(count), using: slice, to: outputFile)
             written += count
         }
 
@@ -158,13 +166,22 @@ nonisolated struct AudioTranspositionRepositoryImpl: AudioTranspositionRepositor
         } catch {
             throw AudioTranspositionError.renderFailed("store output: \(error.localizedDescription)")
         }
+        let audioSeconds = Double(totalFrames) / max(1, format.sampleRate)
+        let elapsed = (clock.now - started) / .seconds(1)
+        log.notice("transpose \(audioURL.lastPathComponent, privacy: .public) (\(audioSeconds, format: .fixed(precision: 1)) s, \(semitones, privacy: .public) st): \(elapsed, format: .fixed(precision: 2)) s")
         return outputURL
     }
 
-    /// Writes `count` frames of `source` starting at `from` (non-interleaved float).
-    private static func write(_ source: AVAudioPCMBuffer, from: Int, count: Int, to file: AVAudioFile) throws {
-        guard let slice = AVAudioPCMBuffer(pcmFormat: source.format, frameCapacity: AVAudioFrameCount(count)),
-              let src = source.floatChannelData, let dst = slice.floatChannelData else {
+    /// Writes `count` frames of `source` starting at `from` (non-interleaved float), reusing `slice`.
+    private static func write(_ source: AVAudioPCMBuffer, from: Int, count: Int,
+                              using slice: AVAudioPCMBuffer, to file: AVAudioFile) throws {
+        if from == 0 && count == Int(source.frameLength) {
+            do { try file.write(from: source) } catch {
+                throw AudioTranspositionError.renderFailed("write: \(error.localizedDescription)")
+            }
+            return
+        }
+        guard let src = source.floatChannelData, let dst = slice.floatChannelData else {
             throw AudioTranspositionError.renderFailed("slice allocation")
         }
         for channel in 0..<Int(source.format.channelCount) {

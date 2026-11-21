@@ -20,8 +20,12 @@ struct OnboardingView: View {
     var body: some View {
         Group {
             if currentStep == -2 {
-                BrandLogoView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                // Splash (1.1): the logo a little above the middle (top at ~34% of the safe area).
+                GeometryReader { proxy in
+                    BrandLogoView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, proxy.size.height * 0.338)
+                }
                     .task {
                         try? await Task.sleep(for: .seconds(1))
                         guard !Task.isCancelled else { return }
@@ -38,11 +42,11 @@ struct OnboardingView: View {
     }
 
     private var welcome: some View {
-        // Logo in the upper part, as in the 1.2 Welcome Screen design (top at ~23% of the safe area).
+        // Logo in the upper part, as in the 1.2 Welcome Screen design (top at ~30% of the safe area).
         GeometryReader { proxy in
             VStack(spacing: 0) {
                 BrandLogoView()
-                    .padding(.top, proxy.size.height * 0.23)
+                    .padding(.top, proxy.size.height * 0.3)
                 Spacer(minLength: 24)
                 VStack(spacing: 0) {
                     Text("Record covers effortlessly").font(.appTitle2).fontWeight(.bold)
@@ -82,15 +86,10 @@ struct OnboardingView: View {
                 .buttonStyle(.appIcon(.glass))
                 .accessibilityLabel("Back")
                 Spacer()
-                // Kept in the layout on the last page (only faded out), so the header height and
-                // with it the pages don't jump when the last page is reached.
+                // Shown on every page, the last one too (design 1.5).
                 Button("Skip", action: onFinish)
                     .font(.appBody).fontWeight(.medium).foregroundStyle(Color.primary)
                     .glassPillButtonStyle()
-                    .opacity(isLastPage ? 0 : 1)
-                    .disabled(isLastPage)
-                    .accessibilityHidden(isLastPage)
-                    .animation(pageAnimation, value: isLastPage)
             }
             .padding(.horizontal, 16)
 
@@ -142,6 +141,9 @@ struct OnboardingView: View {
                 .accessibilityHidden(!isLastPage)
                 .animation(pageAnimation, value: isLastPage)
                 .padding(.horizontal, 25).padding(.top, 16).padding(.bottom, 16)
+        }
+        .edgeSwipeBack(isEnabled: currentStep == 0, interactiveSlide: false) {
+            withAnimation { currentStep = -1 }
         }
     }
 }

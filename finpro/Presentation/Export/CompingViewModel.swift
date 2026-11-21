@@ -4,6 +4,10 @@
 //
 //  Runs the export and the Save to Photos action for ExportPreviewView. Owner: Zildjian Vito (ZV-13).
 //
+//  The preview plays the cover straight from its composition (no file needed), while the file
+//  for Home, the draft and Photos is exported in the background (device feedback 2026-11-21:
+//  waiting for a full merge after every retake was a pain).
+//
 
 import AVFoundation
 import CoreGraphics
@@ -14,7 +18,7 @@ import Observation
 final class CompingViewModel {
     enum ExportState: Equatable {
         case idle
-        case exporting(progress: Double)
+        case exporting
         case finished(URL)
         case failed(String)
     }
@@ -33,7 +37,7 @@ final class CompingViewModel {
         let id: Int
         let start: TimeInterval
         let end: TimeInterval
-        /// Sung below the pass threshold: marked "Off-pitch".
+        /// Sung below the pass threshold: marked "Needs retake".
         let needsRetake: Bool
     }
 
@@ -92,14 +96,27 @@ final class CompingViewModel {
     let plan: CompingCompositionPlan
     /// Notes of the song in the key it was sung in, for the pitch guide over the preview.
     let guideNotes: [PianoRollView.Note]
+    /// Fallback MIDI range for the pitch guide while playing (the roll tracks visible notes live).
+    let initialFocusMIDI: [Int]
     /// Notes of the cover's takes sung well and missed (`TakeAttemptLog.missedNoteIDs`).
     let hitNoteIDs: Set<UUID>
     let missedNoteIDs: Set<UUID>
+    /// Synced lyrics of the song, shown under the pitch guide (empty when none were found).
+    let lyrics: [LyricLine]
+    /// The word sung on each guide note, drawn under the note.
+    let wordLabels: [UUID: String]
     /// "Artist - Title" of the imported song, when known.
     let songName: String?
     private(set) var exportState: ExportState = .idle
+    /// Progress (0...1) of the background export, kept separate from `exportState` so progress
+    /// updates don't rebuild the preview screen while the user watches the live composition.
+    private(set) var exportProgress: Double = 0
     private(set) var saveState: SaveState = .idle
-    /// A frame of each clip, by segment index; filled once the cover is exported.
+    /// The cover's composition is built, so the preview plays it live while the file exports.
+    private(set) var isLivePreviewReady = false
+    /// The background export of the cover file, while it runs.
+    @ObservationIgnored private var exportTask: Task<Void, Never>?
+    /// A frame of each clip, by segment index; filled once the cover can be shown.
     private(set) var thumbnails: [Int: CGImage] = [:]
     private(set) var selectedClipID: Int?
     /// True when the user tapped the selected clip (it then shows Retake); false when the
@@ -126,10 +143,14 @@ final class CompingViewModel {
          passThreshold: Float = AppConfiguration().passThreshold,
          onExported: @escaping (URL, CompingCompositionPlan) -> Void = { _, _ in },
          onSavedToPhotos: @escaping () -> Void = {},
-         transposition: TranspositionPlan? = nil) {
+         transposition: TranspositionPlan? = nil,
+         lyrics: [LyricLine] = []) {
         guideNotes = plan.segments.flatMap(\.targetNotes).map {
             PianoRollView.Note(id: $0.id, midi: transposition?.transposed($0) ?? $0.midiNote, start: $0.startTime, end: $0.endTime)
         }
+        initialFocusMIDI = Array(guideNotes.prefix(PianoRollView.upcomingNoteCount).map(\.midi))
+        self.lyrics = lyrics
+        wordLabels = GuideWordLabels.make(words: lyrics.flatMap(\.words), notes: guideNotes)
         var hit = Set<UUID>(), missed = Set<UUID>()
         for take in plan.validTakes where plan.segments.indices.contains(take.segmentIndex) {
             let missedHere = Set(take.missedNoteIDs)
@@ -223,6 +244,48 @@ final class CompingViewModel {
         exportedURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
     }
 
+    /// The preview can play: the cover file, or the composition built from the takes.
+    var canPreview: Bool { hasPlayableFile || isLivePreviewReady }
+
+    var isExportRunning: Bool {
+        if case .exporting = exportState { true } else { false }
+    }
+
+    /// Builds the cover's composition so the preview plays it without waiting for the file.
+    /// False when a file already exists (play that) or the takes can't be read (fakes).
+    func prepareLivePreview() async -> Bool {
+        guard !hasPlayableFile else { return false }
+        do { try await prepareMixer() } catch { return false }
+        isLivePreviewReady = true
+        if thumbnails.isEmpty, let editable { await loadThumbnails(from: editable) }
+        return true
+    }
+
+    /// Starts the file export without waiting for it; a running one is reused.
+    @discardableResult
+    func exportInBackground() -> Task<Void, Never> {
+        if let exportTask { return exportTask }
+        let task = Task {
+            await export()
+            exportTask = nil
+        }
+        exportTask = task
+        return task
+    }
+
+    /// The cover file, exporting it first (or waiting for the running export).
+    func waitForExport() async throws -> URL {
+        if !hasPlayableFile { await exportInBackground().value }
+        if case .failed(let message) = exportState { throw CompingError.exportFailed(message) }
+        guard let url = exportedURL else { throw CompingError.exportUnavailable }
+        return url
+    }
+
+    /// Leaving for a retake or discarding: the file of this version is not needed.
+    func cancelExport() {
+        exportTask?.cancel()
+    }
+
     func export() async {
         if case .exporting = exportState { return }
         // Already exported (an existing video was passed in): only the clip frames are missing.
@@ -230,20 +293,24 @@ final class CompingViewModel {
             if thumbnails.isEmpty { await loadThumbnails(from: url) }
             return
         }
-        exportState = .exporting(progress: 0)
-        saveState = .idle
+        exportProgress = 0
+        exportState = .exporting
+        if saveState != .saving { saveState = .idle }
         wasInterrupted = false
         do {
             // The view model is MainActor-isolated (so Sendable); holding it until the export ends is fine.
             let url = try await useCase.export(plan) { progress in
                 Task { @MainActor in
                     guard case .exporting = self.exportState else { return }
-                    self.exportState = .exporting(progress: progress)
+                    self.exportProgress = progress
                 }
             }
             if FileManager.default.fileExists(atPath: url.path) { onExported(url, plan) }
+            exportProgress = 1
             exportState = .finished(url)
-            await loadThumbnails(from: url)
+            if thumbnails.isEmpty { await loadThumbnails(from: url) }
+        } catch is CancellationError {
+            exportState = .idle
         } catch {
             if case CompingError.exportInterrupted = error { wasInterrupted = true }
             exportState = .failed(String(describing: error))
@@ -253,7 +320,7 @@ final class CompingViewModel {
     /// The app is active again: an export that iOS interrupted starts over by itself.
     func appBecameActive() async {
         guard wasInterrupted, case .failed = exportState else { return }
-        await export()
+        exportInBackground()
     }
 
     /// A frame from the middle of each clip.
@@ -262,6 +329,18 @@ final class CompingViewModel {
         let frames = await thumbnailProvider.thumbnails(for: url, at: clips.map { ($0.start + $0.end) / 2 })
         for (clip, frame) in zip(clips, frames) {
             if let frame { thumbnails[clip.id] = frame }
+        }
+    }
+
+    /// A frame from the middle of each clip, read from the composition (before the file exists).
+    private func loadThumbnails(from output: CompingCompositionBuilder.Output) async {
+        let generator = AVAssetImageGenerator(asset: output.composition)
+        generator.videoComposition = output.videoComposition
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = AVClipThumbnailProvider.maximumSize
+        for clip in clips {
+            let time = CMTime(seconds: (clip.start + clip.end) / 2, preferredTimescale: CompingCompositionBuilder.timescale)
+            if let frame = try? await generator.image(at: time).image { thumbnails[clip.id] = frame }
         }
     }
 
@@ -296,9 +375,10 @@ final class CompingViewModel {
     }
 
     func saveToPhotos() async {
-        guard exportedURL != nil, saveState != .saving else { return }
+        guard canPreview, saveState != .saving else { return }
         saveState = .saving
         do {
+            _ = try await waitForExport()
             try await applyVolumeEdits()
             guard let url = exportedURL else { throw CompingError.exportUnavailable }
             try await videoLibrary.saveVideo(at: url)

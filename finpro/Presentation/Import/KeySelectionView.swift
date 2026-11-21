@@ -36,27 +36,28 @@ struct KeySelectionView: View {
                             description: Text("Try a shorter section or test your comfortable vocal range again."))
                         Button("Re-test vocal range", action: onRetest).buttonStyle(.appPrimary)
                     } else {
-                        dial.padding(.top, 68)
-                        if viewModel.isRendering { ProgressView("Preparing key…").frame(maxWidth: .infinity) }
-                        if let notes = viewModel.selectedNotes {
-                            Button(action: viewModel.previewSelected) {
-                                Text("Vocal notes: \(PitchMath.noteName(midi: notes.low)) – \(PitchMath.noteName(midi: notes.high))")
-                                    .font(.appSubheadline).foregroundStyle(Color.primary300)
-                                    .frame(maxWidth: .infinity, minHeight: 44)
+                        dial.padding(.top, AppLayout.keyDialTop).padding(.horizontal, -AppSpacing.regular)
+                        if viewModel.isRendering {
+                            HStack(spacing: AppSpacing.small) {
+                                LoadingMascotView(size: AppLayout.loadingMascotInline)
+                                LoadingTextView(title: "Preparing key…", font: .appSubheadline, shadowed: false).foregroundStyle(Color.primary300)
                             }
-                            .buttonStyle(.plain).padding(.top, AppSpacing.section)
-                            .accessibilityLabel("Preview this key with vocals, \(PitchMath.noteName(midi: notes.low)) to \(PitchMath.noteName(midi: notes.high))")
-                            .accessibilityHint("Tap to play or pause the selected key")
-                            if !viewModel.fitsRange {
-                                Text("This key reaches beyond your tested range.")
-                                    .font(.appCaption).foregroundStyle(Color.primaryBrand)
-                                    .frame(maxWidth: .infinity)
-                            }
+                            .frame(maxWidth: .infinity)
+                            .accessibilityElement(children: .combine)
+                        }
+                        // No "Vocal notes" line (user decision 2026-11-21); tapping the dial plays the key.
+                        if viewModel.selectedNotes != nil, !viewModel.fitsRange {
+                            Text("This key reaches beyond your tested range.")
+                                .font(.appCaption).foregroundStyle(Color.primaryBrand)
+                                .frame(maxWidth: .infinity)
+                                .padding(.top, AppSpacing.section)
                         }
                     }
                 }
-                .padding(.horizontal, AppSpacing.regular).padding(.top, 32).padding(.bottom, 24)
+                .padding(.horizontal, AppSpacing.regular).padding(.top, 15).padding(.bottom, 24)
             }
+            // The dial's backdrop circle runs on behind the button to the bottom of the screen.
+            .scrollClipDisabled()
             // Outside the scroll view: an error appearing must not push the title out of view.
             if let error = viewModel.error {
                 ErrorStateView(error: error)
@@ -83,64 +84,71 @@ struct KeySelectionView: View {
         }
     }
     private var dial: some View {
-        VStack(spacing: AppSpacing.large) {
-            // The badge sits above the recommended key and moves with the dial, so it marks one key
-            // instead of whichever key is in the middle.
-            GeometryReader { proxy in
-                if let recommendation = viewModel.recommendedShift {
-                    let spacing = proxy.size.width * CurvedPitchDial.noteSpacingRatio
-                    let x = proxy.size.width / 2 + CGFloat(Double(recommendation) - dialValue) * spacing
-                    let fraction = abs(x - proxy.size.width / 2) / max(1, proxy.size.width / 2)
-                    Button {
-                        withAnimation(reduceMotion ? nil : .spring(duration: 0.3, bounce: 0.15)) { viewModel.chooseShift(recommendation) }
-                    } label: {
-                        Text("Recommended").font(.appCaption2.weight(.bold)).foregroundStyle(Color.primary500)
-                            .padding(.horizontal, AppSpacing.small).padding(.vertical, AppSpacing.tiny)
-                            .background(Color.secBrand, in: Capsule())
-                            .fixedSize()
+        GeometryReader { proxy in
+            CurvedPitchDial(value: dialValue, center: dialValue, label: { label(Int($0.rounded())) })
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 6)
+                    .onChanged { value in
+                        let initial = dragOrigin ?? viewModel.selectedShift ?? 0
+                        dragOrigin = initial
+                        // Same spacing as the dial's keys along the arc, so the ticks stay under the finger.
+                        let spacing = max(1, proxy.size.width * CurvedPitchDial.noteSpacingRatio)
+                        dragValue = clamped(Double(initial) - Double(value.translation.width / spacing))
                     }
-                    // Follows the curve of the key labels below and fades out near the edges.
-                    .position(x: x, y: proxy.size.height / 2 + fraction * 16)
-                    .opacity(max(0, 1 - Double(max(0, fraction - 0.6)) / 0.3))
-                    .allowsHitTesting(fraction < 0.9)
-                    .accessibilityLabel("Use recommended key \(recommendation)")
-                }
-            }
-            .frame(height: 24)
-            GeometryReader { proxy in
-                CurvedPitchDial(value: dialValue, center: dialValue, label: { label(Int($0.rounded())) })
-                    .contentShape(Rectangle())
-                    .gesture(DragGesture(minimumDistance: 6)
-                        .onChanged { value in
-                            let initial = dragOrigin ?? viewModel.selectedShift ?? 0
-                            dragOrigin = initial
-                            // Same spacing as the dial's notes, so the ticks stay under the finger.
-                            let spacing = max(1, proxy.size.width * CurvedPitchDial.noteSpacingRatio)
-                            dragValue = clamped(Double(initial) - Double(value.translation.width / spacing))
+                    .onEnded { value in
+                        let initial = dragOrigin ?? viewModel.selectedShift ?? 0
+                        let spacing = max(1, proxy.size.width * CurvedPitchDial.noteSpacingRatio)
+                        // A flick carries on a little, like a picker wheel.
+                        let target = Int(clamped(Double(initial) - Double(value.predictedEndTranslation.width / spacing)).rounded())
+                        dragOrigin = nil
+                        withAnimation(reduceMotion ? nil : .spring(duration: 0.3, bounce: 0.15)) {
+                            dragValue = nil
+                            if target != viewModel.selectedShift { viewModel.chooseShift(target) }
                         }
-                        .onEnded { value in
-                            let initial = dragOrigin ?? viewModel.selectedShift ?? 0
-                            let spacing = max(1, proxy.size.width * CurvedPitchDial.noteSpacingRatio)
-                            // A flick carries on a little, like a picker wheel.
-                            let target = Int(clamped(Double(initial) - Double(value.predictedEndTranslation.width / spacing)).rounded())
-                            dragOrigin = nil
-                            withAnimation(reduceMotion ? nil : .spring(duration: 0.3, bounce: 0.15)) {
-                                dragValue = nil
-                                if target != viewModel.selectedShift { viewModel.chooseShift(target) }
-                            }
-                        })
-                    .onTapGesture { viewModel.previewSelected() }
+                    })
+                .onTapGesture { viewModel.previewSelected() }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Selected key")
+                .accessibilityValue(label(viewModel.selectedShift ?? 0))
+                .accessibilityHint("Adjust to change key, or tap to preview with vocals")
+                .accessibilityAdjustableAction { direction in
+                    let step = direction == .increment ? 1 : -1
+                    viewModel.chooseShift(min(6, max(-6, (viewModel.selectedShift ?? 0) + step)))
+                }
+                .overlay(alignment: .topLeading) { recommendedBadge(width: proxy.size.width) }
+        }
+        .sensoryFeedback(.selection, trigger: Int(dialValue.rounded()))
+        .frame(height: CurvedPitchDial.height)
+        // The large light circle behind the dial and the lower half of the screen (design 4.5).
+        .background(alignment: .top) {
+            GeometryReader { proxy in
+                let diameter = proxy.size.width * AppLayout.keyDialBackdropScale
+                Circle().fill(Color.primary100)
+                    .frame(width: diameter, height: diameter)
+                    .position(x: proxy.size.width / 2, y: AppLayout.keyDialBackdropTop + diameter / 2)
             }
-            .sensoryFeedback(.selection, trigger: Int(dialValue.rounded()))
-            .frame(height: AppLayout.dialHeight)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Selected key")
-            .accessibilityValue(label(viewModel.selectedShift ?? 0))
-            .accessibilityHint("Adjust to change key, or tap to preview with vocals")
-            .accessibilityAdjustableAction { direction in
-                let step = direction == .increment ? 1 : -1
-                viewModel.chooseShift(min(6, max(-6, (viewModel.selectedShift ?? 0) + step)))
+            .allowsHitTesting(false)
+        }
+    }
+
+    /// Sits above the recommended key's label and moves with the arc, so it marks one key instead
+    /// of whichever key is in the middle.
+    @ViewBuilder private func recommendedBadge(width: CGFloat) -> some View {
+        if let recommendation = viewModel.recommendedShift {
+            let anchor = CurvedPitchDial.labelAnchor(offset: Double(recommendation) - dialValue, width: width, outset: 30)
+            Button {
+                withAnimation(reduceMotion ? nil : .spring(duration: 0.3, bounce: 0.15)) { viewModel.chooseShift(recommendation) }
+            } label: {
+                Text("Recommended").font(.appCaption2.weight(.bold)).foregroundStyle(Color.primary500)
+                    .padding(.horizontal, AppSpacing.small).padding(.vertical, AppSpacing.tiny)
+                    .background(Color.secBrand, in: Capsule())
+                    .fixedSize()
             }
+            .rotationEffect(anchor.angle)
+            .position(anchor.point)
+            .opacity(anchor.opacity)
+            .allowsHitTesting(anchor.opacity > 0.5)
+            .accessibilityLabel("Use recommended key \(recommendation)")
         }
     }
     private var dialValue: Double { dragValue ?? Double(viewModel.selectedShift ?? 0) }

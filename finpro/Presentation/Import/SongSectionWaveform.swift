@@ -20,6 +20,11 @@ struct SongSectionWaveform: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let barCount = 32
+    /// Width of a solid box edge (3.2c) and the white grip inside it.
+    private let edgeWidth: CGFloat = 10
+    private let gripSize = CGSize(width: 4, height: 27)
+    /// Wide enough to grab an edge with a finger.
+    private let edgeHitWidth: CGFloat = 28
     private var visibleSeconds: TimeInterval { viewModel.waveformVisibleSeconds }
     private var barSeconds: TimeInterval { visibleSeconds / Double(barCount) }
     private var selectionEnd: TimeInterval { viewModel.selectionStart + viewModel.selectionLength }
@@ -36,13 +41,15 @@ struct SongSectionWaveform: View {
             let played = x(viewModel.playbackTime ?? viewModel.selectionStart, width: width, scale: scale)
             ZStack(alignment: .leading) {
                 Color.clear.contentShape(Rectangle())
-                // Only the part already played is tinted (Sketch 3.2c); the rest of the box is open.
-                RoundedRectangle(cornerRadius: AppRadius.extraSmall)
-                    .fill(Color.secondary200)
-                    .frame(width: max(0, min(end, played) - start)).offset(x: start)
                 bars(width: width, height: proxy.size.height, scale: scale)
+                // Only the part already played is tinted, a see-through lime over the bars so they
+                // fade under it (design 4.4); the rest of the box is open.
                 RoundedRectangle(cornerRadius: AppRadius.extraSmall)
-                    .stroke(Color.primary800, lineWidth: 2)
+                    .fill(Color.secBrand.opacity(0.65))
+                    .frame(width: max(0, min(end, played) - start)).offset(x: start)
+                    .allowsHitTesting(false)
+                RoundedRectangle(cornerRadius: AppRadius.extraSmall)
+                    .stroke(Color.plumDeep, lineWidth: 2)
                     .frame(width: max(0, end - start)).offset(x: start)
                     .allowsHitTesting(false)
                 handle(at: start, width: width, scale: scale, leading: true)
@@ -87,7 +94,7 @@ struct SongSectionWaveform: View {
                 let time = (Double(index) + 0.5) * barSeconds
                 let inside = time >= viewModel.selectionStart && time <= selectionEnd
                 Capsule()
-                    .fill(inside ? Color.primary500 : Color.primary200)
+                    .fill(inside ? Color.primary500 : Color.primary300)
                     .frame(width: barWidth, height: max(4, CGFloat(level(at: time)) * height * 0.85))
                     .offset(x: x(time, width: width, scale: scale) - barWidth / 2)
             }
@@ -136,8 +143,8 @@ struct SongSectionWaveform: View {
     }
 
     private func handle(at position: CGFloat, width: CGFloat, scale: CGFloat, leading: Bool) -> some View {
-        Capsule().fill(Color.primary800).frame(width: 3)
-            .frame(width: 28).contentShape(Rectangle()).offset(x: position - 14)
+        edge(leading: leading)
+            .frame(width: edgeHitWidth).contentShape(Rectangle()).offset(x: position - edgeHitWidth / 2)
             .highPriorityGesture(DragGesture(minimumDistance: 1)
                 .onChanged { value in
                     let initial = begin()
@@ -156,6 +163,20 @@ struct SongSectionWaveform: View {
                        by: direction == .increment ? 1 : -1, leading: leading)
                 viewModel.endSelectionEditing()
             }
+    }
+
+    /// A box edge: a solid bar with a white grip, inside the box (3.2c).
+    private func edge(leading: Bool) -> some View {
+        ZStack {
+            UnevenRoundedRectangle(cornerRadii: RectangleCornerRadii(
+                topLeading: leading ? AppRadius.extraSmall : 0, bottomLeading: leading ? AppRadius.extraSmall : 0,
+                bottomTrailing: leading ? 0 : AppRadius.extraSmall, topTrailing: leading ? 0 : AppRadius.extraSmall))
+                .fill(Color.plumDeep)
+            Capsule().fill(.white).frame(width: gripSize.width, height: gripSize.height)
+        }
+        .frame(width: edgeWidth)
+        // Inside the box, so the edge does not hide bars outside the selection.
+        .offset(x: leading ? edgeWidth / 2 : -edgeWidth / 2)
     }
 
     /// Moves one edge, keeping the clip at least 15 s long and inside the song.

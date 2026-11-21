@@ -35,7 +35,7 @@ struct CoverListView: View {
 
     var body: some View {
         VStack(spacing: AppSpacing.medium) {
-            HStack(spacing: AppSpacing.small) {
+            HStack(spacing: AppSpacing.medium) {
                 Button(action: onBack) { Image(systemName: "chevron.left") }
                     .buttonStyle(.appIcon(.glass)).accessibilityLabel("Back")
                 Spacer()
@@ -44,7 +44,7 @@ struct CoverListView: View {
                     selectedIDs = []
                 }
                 .font(.appBody.weight(.medium)).foregroundStyle(Color.primaryBrand)
-                .glassCapsuleButtonStyle()
+                .glassPillButtonStyle(height: AppLayout.headerPillHeight, horizontalPadding: 17)
                 .disabled(viewModel.recentCovers.isEmpty)
                 if selecting {
                     Button(role: .destructive) { confirmsDelete = true } label: {
@@ -59,13 +59,15 @@ struct CoverListView: View {
                 }
             }
             .padding(.horizontal, AppSpacing.regular)
+            // Header buttons at y 70 like the other screens (design 3.3a).
+            .padding(.top, AppSpacing.small)
             // Segmented control (design "Segmented Controls/Dark/3 Segments"): plum thumb on a grey track.
             HStack(spacing: 0) {
                 ForEach(Filter.allCases) { item in
                     Button { filter = item } label: {
                         Text(item.rawValue)
                             .font(.appFootnote.weight(filter == item ? .semibold : .regular))
-                            .foregroundStyle(filter == item ? Color.white : Color.secondary)
+                            .foregroundStyle(Color.white)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .background {
                                 if filter == item {
@@ -80,8 +82,9 @@ struct CoverListView: View {
             .buttonStyle(.plain)
             .padding(2)
             .frame(height: 32)
-            .background(Color(.systemGray5), in: Capsule())
+            .background(Color.segmentTrack, in: Capsule())
             .padding(.horizontal, AppSpacing.regular)
+            .padding(.top, AppSpacing.tiny + 2)
             ScrollView {
                 if covers.isEmpty {
                     Text(filter == .all ? "Your cover projects will appear here." : "No \(filter.rawValue.lowercased()) covers yet.")
@@ -95,11 +98,12 @@ struct CoverListView: View {
                             onOpen(cover)
                         }
                     }
-                    .padding(.horizontal, AppSpacing.regular).padding(.vertical, AppSpacing.small)
+                    .padding(.horizontal, AppSpacing.regular).padding(.top, AppSpacing.medium).padding(.bottom, AppSpacing.small)
                 }
             }
         }
         .background(Color.screenBackground.ignoresSafeArea())
+        .edgeSwipeBack(isEnabled: !confirmsDelete, action: onBack)
         .animation(.easeInOut(duration: 0.2), value: selecting)
         .animation(.easeInOut(duration: 0.2), value: filter)
         .confirmationDialog(selectedIDs.count == 1 ? "Delete this cover?" : "Delete \(selectedIDs.count) covers?",

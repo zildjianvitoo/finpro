@@ -386,13 +386,13 @@ public protocol VideoCompositionRepository: Sendable {
 
 | Key | Default |
 |---|---|
-| `passThreshold` | 0.75 |
+| `passThreshold` | 0.30 *(was 0.75; 2026-11-20, the original vocal passed only 45% of lines at 0.75; saved settings migrated)* |
 | `hitToleranceCents` | 80 *(was 50; changed 2026-11-01 after the real-song experiment)* |
 | `noiseGateDBFS` | −40 |
 | `pitchHop` | 0.05 s |
 | `attackIgnore` | 0.10 s |
 | `timingTolerance` | 0.10 s |
-| `missedNoteThreshold` | 0.50 |
+| `missedNoteThreshold` | 0.30 *(was 0.50; 2026-11-20, saved settings migrated)* |
 | `segmentGap` / `minSegment` / `maxSegment` | 0.8 s / 3.0 s / 8.0 s |
 | `preRoll` | 3.0 s *(was 2.0 s; 2026-11-20, may start before 0, saved settings migrated)* |
 | `countdown` | 0 s *(was 3 s; 2026-11-20, replaced by the pre-roll)* |

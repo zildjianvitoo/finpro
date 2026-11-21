@@ -29,7 +29,7 @@ struct PermissionGate<Content: View>: View {
         Group {
             switch model.state {
             case .checking:
-                ProgressView()
+                LoadingMascotView()
             case .granted:
                 content()
             case .needsRequest:

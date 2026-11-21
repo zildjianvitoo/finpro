@@ -51,6 +51,17 @@ nonisolated enum PreparationChecks {
         assert(output.transposition == down)
         assert(output.segments.flatMap(\.targetNotes).map(\.midiNote) == SimplifyGuideUseCase().execute(notes).map(\.midiNote))
         assert(output.validate().isEmpty)
+        // Lead-in (2026-11-21): a part starting 5 s into the song gets the pre-roll's 3 s before it
+        // in every key; a part at the song's start has none (its pre-roll stays silent).
+        // A range that needs no key change: the checks' renderer only takes shift 0.
+        let fits = VocalRange(lowestMIDI: 60, highestMIDI: 67)
+        let later = try await pipeline.executeChoices(audioURL: fixture.earphoneMixURL, trimRange: 5...(5 + fixture.duration),
+                                                      vocalRange: fits)
+        assert(later.leadIn?.duration == AppConfiguration.default.preRoll)
+        assert(!later.options.isEmpty && later.options.allSatisfy { $0.song.leadIn?.duration == AppConfiguration.default.preRoll })
+        let atStart = try await pipeline.executeChoices(audioURL: fixture.earphoneMixURL, trimRange: 0...fixture.duration,
+                                                        vocalRange: fits)
+        assert(atStart.leadIn == nil && atStart.options.allSatisfy { $0.song.leadIn == nil })
         let silent = PrepareSongUseCase(separation: Stems(), analysis: Guide(empty: true),
                                        fallbackAnalysis: Guide(empty: true), transposition: Renderer())
         do {

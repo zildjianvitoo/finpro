@@ -13,7 +13,8 @@ struct VocalRangeIntroView: View {
         GeometryReader { proxy in
             let titleSize = AppTypography.fittedVocalDisplaySize(width: proxy.size.width - AppSpacing.textInset * 2)
             let lineAdvance = AppTypography.vocalDisplayLineAdvance(size: titleSize)
-            let shapeTop = proxy.size.height * 0.41
+            let ink = AppTypography.vocalDisplayInkInsets(size: titleSize)
+            let shapeTop = proxy.size.height * 0.4
             let shapeHeight = proxy.size.height - shapeTop + proxy.safeAreaInsets.bottom
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
@@ -34,24 +35,26 @@ struct VocalRangeIntroView: View {
                 }
                 .font(.appDisplay(size: titleSize))
                 .foregroundStyle(Color.primaryBrand)
-                .padding(.horizontal, 44)
+                .padding(.leading, 54).padding(.trailing, 44)
                 .padding(.top, 8)
 
                 Spacer(minLength: 16)
 
                 VStack(alignment: .leading, spacing: 0) {
-                    Text("Your").foregroundStyle(Color.white)
+                    Text("Your").foregroundStyle(Color.primary300)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(height: lineAdvance, alignment: .topLeading)
-                    Text("vocal").foregroundStyle(Color.secBrand)
+                    Text("vocal").foregroundStyle(Color.primaryBrand)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(height: lineAdvance, alignment: .topLeading)
-                    Text("range").foregroundStyle(Color.secBrand)
+                    Text("range").foregroundStyle(Color.primaryBrand)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(height: lineAdvance, alignment: .topLeading)
                 }
                 .font(.appDisplay(size: titleSize))
-                .padding(.horizontal, 52)
+                .padding(.horizontal, 55)
+                // Laid out by the ink: the gaps above "Your" and below "range" match (design).
+                .padding(.top, -ink.top).padding(.bottom, -ink.bottom)
                 .accessibilityElement(children: .combine)
 
                 Spacer(minLength: 16)
@@ -64,7 +67,7 @@ struct VocalRangeIntroView: View {
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .topLeading)
             .background(alignment: .topLeading) {
-                VocalIntroBackground().fill(Color.primaryButton)
+                VocalIntroBackground().fill(Color.primary100)
                     .frame(width: proxy.size.width, height: shapeHeight)
                     .offset(y: shapeTop)
                     .allowsHitTesting(false)

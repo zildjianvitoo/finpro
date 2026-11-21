@@ -58,6 +58,12 @@ final class AppFlow {
     /// The Home library entry of the cover being made, so a re-export after a retake or
     /// continue replaces it instead of adding a second one. Cleared when a new cover starts.
     private var savedCoverID: UUID?
+    /// The result screen shows a cover reopened from Home, not one just recorded: leaving it only
+    /// asks whether to keep the sound changes. A new session's result clears it.
+    private(set) var isReopenedCover = false
+    /// The cover on the result screen was saved to Photos and has not changed since: it is
+    /// finished on Home, so leaving keeps it finished instead of making it a draft again.
+    private(set) var isCoverExported = false
     /// The last copy of the cover's working files to `CoverDraftStore`; later saves and deletes wait for it.
     @ObservationIgnored private var draftSave: Task<Void, Never>?
 
@@ -318,6 +324,7 @@ final class AppFlow {
         savedCoverID = id
         // The draft's plan is the one its saved video was exported from.
         compingPlanExportURL = savedCoverURL
+        isReopenedCover = true
         step = .export
         return true
     }
@@ -325,11 +332,13 @@ final class AppFlow {
     /// Final result screen: the cover was saved to Photos, so it counts as finished on Home.
     func coverSavedToPhotos() {
         if let savedCoverID { container.coverLibrary.markFinished(savedCoverID) }
+        isCoverExported = true
     }
 
     /// Final result screen, leave dialog: keep the cover on Home as a draft, then go home.
+    /// A cover already saved to Photos stays finished.
     func saveCoverAsDraft() {
-        if let savedCoverID { container.coverLibrary.markDraft(savedCoverID) }
+        if let savedCoverID, !isCoverExported { container.coverLibrary.markDraft(savedCoverID) }
         startOver()
     }
 
@@ -351,6 +360,9 @@ final class AppFlow {
     func sessionEnded(with plan: CompingCompositionPlan) {
         Contract.assertValid(plan.validate())
         compingPlan = plan
+        isReopenedCover = false
+        // A retake or continue changed the cover after it was saved to Photos.
+        isCoverExported = false
         step = .export
     }
 
@@ -379,6 +391,8 @@ final class AppFlow {
         preparedSong = nil
         compingPlan = nil
         savedCoverID = nil
+        isReopenedCover = false
+        isCoverExported = false
         container.takeLog.clear()
         step = .home
     }

@@ -11,6 +11,7 @@
 import Foundation
 import Observation
 import os
+import Synchronization
 
 @Observable
 final class ImportSongViewModel {
@@ -105,6 +106,7 @@ final class ImportSongViewModel {
     /// stems) and the lyrics of the chosen part on the prepared song's timeline.
     @ObservationIgnored private let onPrepared: (PrepareSongUseCase.Choices, [LyricLine], String?) -> Void
     @ObservationIgnored private var preparation: Task<Void, Never>?
+    @ObservationIgnored private var preseparation: Task<Void, Never>?
     @ObservationIgnored private var importTask: Task<Void, Never>?
     @ObservationIgnored private let library: SongLibrary?
     @ObservationIgnored private let initialSong: SavedSong?
@@ -188,6 +190,7 @@ final class ImportSongViewModel {
     func picked(_ result: Result<URL, any Error>) {
         guard case .success(let url) = result else { return }
         importTask?.cancel()
+        pausePreseparation()
         stopSelectionPreview()
         lyricsLookup?.cancel()
         recognition?.cancel()
@@ -239,6 +242,7 @@ final class ImportSongViewModel {
         if let cached = saved?.lyrics { lyrics = .found(cached) } else { searchLyrics() }
         if recognizes { recognize(audio) }
         startSelectionPreview()
+        schedulePreseparation(delay: .milliseconds(800))
     }
 
     /// Keeps a durable copy even when the user goes directly to key selection.
@@ -264,12 +268,18 @@ final class ImportSongViewModel {
 
     func saveToSongList() {
         guard audio != nil, persistSelection() else { return }
+        lyricsLookup?.cancel()
+        lyricsLookup = nil
+        pausePreseparation()
         stopSelectionPreview()
         onSavedToList()
     }
 
     func prepareSelection() {
         guard let audio, let range = vocalRange(), persistSelection() else { return }
+        lyricsLookup?.cancel()
+        lyricsLookup = nil
+        pausePreseparation()
         stopSelectionPreview()
         generation = UUID()
         let trim = selectionStart...(selectionStart + selectionLength)
@@ -279,35 +289,61 @@ final class ImportSongViewModel {
         preparedLyrics = lyrics
         // The parser spread each line's words by syllable count, so their lengths are the weights.
         let lyricLines = lyrics.map { line in
-            LyricGuideNotesUseCase.Line(start: line.start, end: line.end, wordWeights: line.words.map { $0.end - $0.start })
+            LyricGuideNotesUseCase.Line(start: line.start, end: line.end, wordWeights: line.words.map { $0.end - $0.start },
+                                        words: line.words.map(\.text))
         }
         status = .preparing(step: "Starting…")
         let token = generation
+        let clock = ContinuousClock()
+        let started = clock.now
+        let marks = Mutex<[(step: String, at: ContinuousClock.Instant)]>([])
         preparation = Task { [prepare] in
             do {
                 let choices = try await prepare.executeChoices(audioURL: audio.url, trimRange: trim, vocalRange: range,
                                                                lyricLines: lyricLines, recommendationLimit: 1) { step in
+                    let now = clock.now
+                    marks.withLock { $0.append((step, now)) }
                     Task { @MainActor in
                         if self.generation == token, case .preparing = self.status { self.status = .preparing(step: step) }
                     }
                 }
+                let finished = clock.now
                 try Task.checkCancellation()
                 guard generation == token else { return }
                 preparedChoices = choices
-                preparedLyrics = Self.lyrics(lyrics, sungAt: choices.guideWords)
-                Self.logPrepared(choices, lyricLines: lyricLines.count, file: audio.url.lastPathComponent, trim: trim)
+                // The part may start earlier than chosen (at the start of the phrase it cut into).
+                preparedLyrics = Self.lyrics(Self.delayed(lyrics, by: choices.clipStartShift),
+                                             sungAt: choices.guideWords, shift: choices.lyricLineShift)
+                Self.logPreparationTiming(duration: trim.upperBound - trim.lowerBound, started: started, finished: finished,
+                                          marks: marks.withLock { $0 })
+                Self.logPrepared(choices, lyricLines: lyricLines.count, file: audio.url.lastPathComponent,
+                                 trim: (trim.lowerBound - choices.clipStartShift)...trim.upperBound)
                 status = .prepared
             } catch is CancellationError {
                 guard generation == token else { return }
                 status = .trimming(audio)
             } catch {
                 guard generation == token else { return }
+                Self.log.error("preparation failed: \(String(describing: error), privacy: .public)")
                 status = .failed(Self.userFacing(error))
             }
         }
     }
 
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Preparation")
+
+    /// Total wall-clock time and duration of each preparation step, for profiling on a real phone.
+    private static func logPreparationTiming(duration: TimeInterval, started: ContinuousClock.Instant,
+                                             finished: ContinuousClock.Instant,
+                                             marks: [(step: String, at: ContinuousClock.Instant)]) {
+        let total = (finished - started) / .seconds(1)
+        let steps = marks.indices.map { i -> String in
+            let end = i + 1 < marks.count ? marks[i + 1].at : finished
+            let elapsed = (end - marks[i].at) / .seconds(1)
+            return "\(marks[i].step) \(String(format: "%.2f", elapsed)) s"
+        }.joined(separator: ", ")
+        log.notice("preparation timing: \(duration, format: .fixed(precision: 1)) s in \(total, format: .fixed(precision: 2)) s | \(steps, privacy: .public)")
+    }
 
     /// Which guide the keys were planned on and what came out, to trace a surprising key choice.
     private static func logPrepared(_ choices: PrepareSongUseCase.Choices, lyricLines: Int, file: String,
@@ -398,14 +434,25 @@ final class ImportSongViewModel {
 
     // MARK: - Lyrics
 
-    /// The words moved to where the guide found them sung, so the lyrics card and the pitch guide
-    /// agree. Lines are left as they were when the guide was not built from the lyrics.
-    private static func lyrics(_ lines: [LyricLine], sungAt guideWords: [[LyricGuideNotesUseCase.Word]]) -> [LyricLine] {
+    /// The lines and words moved to where the guide found them sung, so the lyrics card and the
+    /// pitch guide agree. Lines are left as they were when the guide was not built from the lyrics.
+    private static func lyrics(_ lines: [LyricLine], sungAt guideWords: [[LyricGuideNotesUseCase.Word]],
+                               shift: TimeInterval) -> [LyricLine] {
         guard guideWords.count == lines.count else { return lines }
         return zip(lines, guideWords).map { line, sung in
-            guard sung.count == line.words.count else { return line }
-            return LyricLine(id: line.id, text: line.text, start: line.start, end: line.end,
-                             words: zip(line.words, sung).map { LyricWord(text: $0.text, start: $1.start, end: $1.end) })
+            let words = sung.count == line.words.count
+                ? zip(line.words, sung).map { LyricWord(text: $0.text, start: $1.start, end: $1.end) }
+                : line.words.map { LyricWord(text: $0.text, start: $0.start + shift, end: $0.end + shift) }
+            return LyricLine(id: line.id, text: line.text, start: line.start + shift, end: line.end + shift, words: words)
+        }
+    }
+
+    /// `lines` moved `seconds` later, for a prepared part that starts that much earlier than chosen.
+    private static func delayed(_ lines: [LyricLine], by seconds: TimeInterval) -> [LyricLine] {
+        guard seconds != 0 else { return lines }
+        return lines.map { line in
+            LyricLine(id: line.id, text: line.text, start: line.start + seconds, end: line.end + seconds,
+                      words: line.words.map { LyricWord(text: $0.text, start: $0.start + seconds, end: $0.end + seconds) })
         }
     }
 
@@ -484,7 +531,8 @@ final class ImportSongViewModel {
                     return
                 }
                 lyrics = found.map(LyricsState.found) ?? .notFound
-                if !userMovedSelection { useChorusSuggestion() }
+                if case .trimming = status, !userMovedSelection, !editingSelection { useChorusSuggestion() }
+
             } catch is CancellationError {
             } catch {
                 lyrics = .failed(.lyricsUnavailable)
@@ -523,11 +571,18 @@ final class ImportSongViewModel {
         selectionLength = suggestion.length
         applyingSuggestion = false
         if wasPlaying { startSelectionPreview() }
+        schedulePreseparation(delay: .milliseconds(400))
     }
+
+    /// Small boundary tolerance so floating-point overshoot on a previous line's last word never
+    /// pulls that finished line into a selection starting on the next line.
+    private static let lyricBoundaryTolerance: TimeInterval = 0.05
 
     /// Whether a lyric line's sung part is (partly) inside the chosen part.
     func isInSelection(_ line: LyricLine) -> Bool {
-        (line.words.last?.end ?? line.end) > selectionStart && line.start < selectionStart + selectionLength
+        let lineEnd = min(line.words.last?.end ?? line.end, line.end)
+        return lineEnd > selectionStart + Self.lyricBoundaryTolerance
+            && line.start < selectionStart + selectionLength
     }
 
     /// The first line of the chosen part, to scroll to.
@@ -567,7 +622,7 @@ final class ImportSongViewModel {
                     do { try previewer.play(audio.url, from: selectionStart) }
                     catch { actionError = .keyPreviewFailed; break }
                     playbackTime = selectionStart
-                } else { playbackTime = time }
+                } else { playbackTime = max(selectionStart, time) }
             }
             if !Task.isCancelled { stopSelectionPreview() }
         }
@@ -586,8 +641,10 @@ final class ImportSongViewModel {
     func beginSelectionEditing() {
         guard !editingSelection else { return }
         editingSelection = true
+        userMovedSelection = true
         frozenVisibleSeconds = waveformVisibleSeconds
         restartingPreview?.cancel()
+        pausePreseparation()
         stopSelectionPreview()
     }
 
@@ -595,12 +652,38 @@ final class ImportSongViewModel {
         editingSelection = false
         frozenVisibleSeconds = nil
         startSelectionPreview()
+        schedulePreseparation(delay: .milliseconds(600))
+    }
+
+    func pausePreseparation() {
+        preseparation?.cancel()
+        preseparation = nil
+    }
+
+    func resumePreseparationIfTrimming() {
+        guard audio != nil, !editingSelection else { return }
+        schedulePreseparation(delay: .milliseconds(400))
+    }
+
+    private func schedulePreseparation(delay: Duration) {
+        pausePreseparation()
+        guard let audio,
+              let preseparator = prepare.separation as? any StemPreseparation else { return }
+        let trim = selectionStart...(selectionStart + selectionLength)
+        let lead = min(prepare.configuration.preRoll, trim.lowerBound)
+        let leadIn = lead >= PrepareSongUseCase.minimumLeadIn ? lead : 0
+        preseparation = Task(priority: .utility) {
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            await preseparator.preseparate(audioURL: audio.url, trimRange: trim, leadInDuration: leadIn)
+        }
     }
 
     func suspend() {
         recognition?.cancel()
         isIdentifyingSong = false
         lyricsAwaitRecognition = false
+        pausePreseparation()
         stopSelectionPreview()
         restartingPreview?.cancel()
         lyricsLookup?.cancel()

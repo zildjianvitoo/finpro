@@ -33,6 +33,7 @@ struct VocalRangeTestView: View {
                 VocalRangeIntroView(onBack: onDismiss) {
                     stage = .warmup
                 }
+                .edgeSwipeBack(isEnabled: onDismiss != nil) { onDismiss?() }
             } else if stage == .result, case .finished(let range) = viewModel.status {
                 VocalRangeResultView(range: range, isFemale: false, onDone: viewModel.save, onRetake: {
                     viewModel.restart()
@@ -43,6 +44,7 @@ struct VocalRangeTestView: View {
                 })
             } else {
                 testStep
+                    .edgeSwipeBack(isEnabled: !showsFailure && !showsEarphoneSetup, interactiveSlide: false, action: back)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -107,13 +109,17 @@ struct VocalRangeTestView: View {
     private var isWarmup: Bool { stage == .warmup }
     private var isHumming: Bool { stage == .hummingGuide }
     private var isLowest: Bool { stage == .lowest }
+    private var isCaptured: Bool {
+        if case .captured = viewModel.status { return true }
+        return false
+    }
     private var displayMIDI: Float? {
         if case .captured(let note) = viewModel.status { return note }
         return viewModel.liveMIDI
     }
     private var title: String {
         switch stage {
-        case .warmup: "Let's warm up"
+        case .warmup: "Let’s warm up"
         case .hummingGuide: "Humming"
         case .lowest: "Find your lowest\nnote"
         default: "Now, find your\nhighest note"
@@ -140,7 +146,8 @@ struct VocalRangeTestView: View {
     private var testStep: some View {
         GeometryReader { proxy in
             let diameter = min(AppLayout.microphoneDiameter, max(120, proxy.size.height * 0.224))
-            let micCenter = proxy.size.height * 0.76
+            // Mic centre at y 633 of the 874 pt design frames (2.2–2.5).
+            let micCenter = proxy.size.height * 0.734
             let headerHeight = proxy.size.height * (isWarmup ? 0.31 : 0.25)
             let hintHeight: CGFloat = showsEarphonePill ? 32 : 0
             let contentHeight = max(40, micCenter - diameter / 2 - headerHeight - AppSpacing.regular - hintHeight)
@@ -230,10 +237,12 @@ struct VocalRangeTestView: View {
                 .frame(maxWidth: .infinity)
                 .padding(.top, AppSpacing.spacious + AppSpacing.section)
             } else {
-                VocalPitchDial(midi: displayMIDI, referenceMIDI: viewModel.baselineMIDI ?? 57, bandColor: .primary100)
+                VocalPitchMeter(midi: displayMIDI, referenceMIDI: viewModel.baselineMIDI ?? 57,
+                                direction: isLowest ? .lowest : .highest,
+                                holdProgress: viewModel.holdProgress, isCaptured: isCaptured)
                     .id(viewModel.prompt)
                     .frame(maxWidth: .infinity)
-                    .padding(.top, AppSpacing.large)
+                    .padding(.top, AppSpacing.spacious + AppSpacing.tiny)
             }
         }
         // Full width and leading, so the text lines up with the title (a scroll view centres
