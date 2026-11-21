@@ -13,25 +13,15 @@ struct VocalRangeResultView: View {
     let onRetake: () -> Void
     /// Back to the highest-note step, to sing that note again.
     let onBack: () -> Void
+    /// Entrance: the card appears, the mascot peeks up from behind it, then the notes float.
+    @State private var appeared = false
+    @State private var floating = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private func note(_ midi: Float) -> String { PitchMath.noteName(midi: Int(midi.rounded())) }
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(spacing: 16) {
-                HStack {
-                    Button(action: onBack) { Image(systemName: "chevron.left") }
-                        .buttonStyle(.appIcon(.glass)).accessibilityLabel("Back to highest note")
-                    Spacer()
-                }
-                Text("Your vocal range").font(.appLargeTitle.weight(.regular))
-                    .padding(.top, 32)
-                Text("(\(note(range.lowestMIDI))-\(note(range.highestMIDI)))")
-                    .font(.appDisplay(size: 60).weight(.semibold))
-                    .minimumScaleFactor(0.6).lineLimit(1)
-                    .padding(.top, -6)
-            }
-            .foregroundStyle(Color.primaryBrand)
-            .padding(.horizontal, 16)
+            header
             GeometryReader { proxy in
                 let low = min(36, Int(floor(Double(range.lowestMIDI) / 12)) * 12)
                 let high = max(84, Int(ceil(Double(range.highestMIDI) / 12)) * 12)
@@ -62,7 +52,7 @@ struct VocalRangeResultView: View {
                 }
                 .padding(.top, 20)
             }
-            .padding(.horizontal, 16).padding(.top, 110).padding(.bottom, 32)
+            .padding(.horizontal, 16).padding(.top, Self.chartTop).padding(.bottom, 32)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Measured range, \(note(range.lowestMIDI)) to \(note(range.highestMIDI))")
             VStack(spacing: 10) {
@@ -72,5 +62,58 @@ struct VocalRangeResultView: View {
             .padding(.horizontal, 25).padding(.bottom, 16)
         }
         .background(Color.screenBackground.ignoresSafeArea())
+    }
+
+    // Positions from the 2.6 design frame, relative to the top of the safe area (y 62) and the
+    // screen's centre (x 201).
+    private static let headerHeight: CGFloat = 299
+    private static let cardSize = CGSize(width: 280, height: 149)
+    private static let cardTop: CGFloat = 150
+    /// Space between the card and the chart's top line (the chart draws its lines 20 pt down).
+    private static let chartTop: CGFloat = 12
+
+    /// The mascot peeking over the result card, with music notes around (design 2.6).
+    private var header: some View {
+        ZStack(alignment: .top) {
+            Image("ResultNotes").resizable().frame(width: 308, height: 195)
+                .offset(x: -21, y: 24 + (floating ? -6 : 0))
+                .opacity(appeared ? 1 : 0)
+                .accessibilityHidden(true)
+            Image("ResultMascot").resizable().scaledToFit().frame(width: 125, height: 161)
+                .offset(x: -51, y: 18 + (appeared ? 0 : 60))
+                .accessibilityHidden(true)
+            VStack(spacing: 0) {
+                Text("Your vocal range").font(.appLargeTitle.weight(.regular))
+                    .frame(height: 41)
+                Text("(\(note(range.lowestMIDI))-\(note(range.highestMIDI)))")
+                    .font(.appDisplay(size: 60).weight(.semibold))
+                    .minimumScaleFactor(0.6).lineLimit(1)
+                    .padding(.top, 6)
+            }
+            .foregroundStyle(Color.primaryBrand)
+            .padding(.top, 22).padding(.horizontal, AppSpacing.medium)
+            .frame(width: Self.cardSize.width, height: Self.cardSize.height, alignment: .top)
+            .background(Color.secondaryButton, in: RoundedRectangle(cornerRadius: AppRadius.large))
+            .accessibilityElement(children: .combine)
+            .scaleEffect(appeared ? 1 : 0.9)
+            .opacity(appeared ? 1 : 0)
+            .offset(y: Self.cardTop)
+            Image("ResultHands").resizable().scaledToFit().frame(width: 98, height: 34)
+                .offset(x: -57, y: 136 + (appeared ? 0 : 20))
+                .opacity(appeared ? 1 : 0)
+                .accessibilityHidden(true)
+            HStack {
+                Button(action: onBack) { Image(systemName: "chevron.left") }
+                    .buttonStyle(.appIcon(.glass)).accessibilityLabel("Back to highest note")
+                Spacer()
+            }
+            .padding(.horizontal, 16).padding(.top, 8)
+        }
+        .frame(maxWidth: .infinity).frame(height: Self.headerHeight, alignment: .top)
+        .onAppear {
+            guard !reduceMotion else { appeared = true; return }
+            withAnimation(.spring(duration: 0.6, bounce: 0.35).delay(0.1)) { appeared = true }
+            withAnimation(.easeInOut(duration: 1.6).repeatForever(autoreverses: true).delay(0.7)) { floating = true }
+        }
     }
 }
