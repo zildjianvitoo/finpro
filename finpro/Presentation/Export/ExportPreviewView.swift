@@ -148,10 +148,6 @@ struct ExportPreviewView: View {
             guard page == .exporting else { return }
             withAnimation(.linear(duration: 0.2)) { exportProgress = (progress ?? 1) * saveRunUp }
         }
-        // The purple outline follows the clip that is playing.
-        .onChange(of: player?.currentTime) { _, time in
-            if let time { viewModel.followPlayback(at: time) }
-        }
         .onDisappear { player?.pause() }
         .alert("Video Exported", isPresented: $showsExported) {
             // The confirm role draws a filled button in the tint (our dark purple) on iOS 26.
@@ -314,13 +310,21 @@ struct ExportPreviewView: View {
             .clipShape(.rect(cornerRadius: videoCornerRadius, style: .continuous))
             .overlay(alignment: .top) {
                 if showsPitchGuide, let player {
-                    pitchGuide(player)
+                    // Reads the playing time: in its own scope, so the screen isn't rebuilt with it.
+                    ObservationScope { pitchGuide(player) }
                         .padding(guideInset)
                         .transition(.opacity)
                 }
             }
             .overlay(alignment: .bottom) {
-                if let player { seekBar(player) }
+                if let player {
+                    ObservationScope {
+                        seekBar(player)
+                            // The purple outline follows the clip that is playing. Read here, not in
+                            // the screen's body, so the time doesn't rebuild the whole screen.
+                            .onChange(of: player.currentTime) { _, time in viewModel.followPlayback(at: time) }
+                    }
+                }
             }
             .contentShape(Rectangle())
             .onTapGesture { player?.togglePlayback() }
