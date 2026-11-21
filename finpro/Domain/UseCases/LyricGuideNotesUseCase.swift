@@ -166,7 +166,8 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
         for index in words.indices {
             let line = words[index]
             guard let first = line.first, let last = line.last, texts[index].count == line.count else {
-                previousEnd = max(previousEnd, words[index].last?.end ?? previousEnd)
+                result[index] = clampedAfter(previousEnd, line: line)
+                previousEnd = max(previousEnd, result[index].last?.end ?? previousEnd)
                 continue
             }
             let nextStart = words[(index + 1)...].first { !$0.isEmpty }?.first?.start ?? last.end
@@ -184,7 +185,8 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
                 }
             }
             guard !anchors.isEmpty else {
-                previousEnd = max(previousEnd, last.end)
+                result[index] = clampedAfter(previousEnd, line: line)
+                previousEnd = max(previousEnd, result[index].last?.end ?? previousEnd)
                 continue
             }
             let starts = line.map(\.start)
@@ -218,6 +220,29 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
             previousEnd = lineEnd
         }
         return result
+    }
+
+    /// Keeps an unanchored line from overlapping a previous line that recognition moved later.
+    private func clampedAfter(_ floor: TimeInterval, line: [Word]) -> [Word] {
+        guard floor.isFinite, let first = line.first, first.start < floor else { return line }
+        var cursor = floor
+        return line.map { word in
+            let start = max(word.start, cursor)
+            let end = max(start, word.end)
+            cursor = end
+            let trimmedNote: TargetMIDINote?
+            if let note = word.note {
+                let noteStart = max(note.startTime, start)
+                let noteEnd = max(noteStart, note.endTime)
+                let duration = noteEnd - noteStart
+                trimmedNote = duration > Self.epsilon
+                    ? TargetMIDINote(id: note.id, midiNote: note.midiNote, startTime: noteStart, duration: duration)
+                    : nil
+            } else {
+                trimmedNote = nil
+            }
+            return Word(start: start, end: end, note: trimmedNote)
+        }
     }
 
     /// Lower-case letters and digits only, so "you're" matches "youre" and "Part," matches "part".
