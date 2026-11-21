@@ -17,7 +17,7 @@ final class VoiceDotMotion {
     private var position: Double?
     private var lastUpdate: TimeInterval = 0
 
-    /// Moves toward `target` (a MIDI height) and returns where to draw the dot now.
+    /// Moves toward `target` (the dot's y on screen) and returns where to draw the dot now.
     func update(target: Double) -> Double {
         let now = ProcessInfo.processInfo.systemUptime
         let elapsed = now - lastUpdate

@@ -21,7 +21,7 @@ struct PianoRollView: View {
     }
 
     static let visibleDuration: TimeInterval = 4
-    /// The voice dot while no voice is heard (resting on the next note): still visible, but
+    /// The voice dot while no voice is heard (resting in the middle of the panel): still visible, but
     /// clearly not "you are singing this".
     static let restingDotOpacity = 0.55
     static let playheadPosition = 0.25
@@ -80,7 +80,6 @@ struct PianoRollView: View {
     }
 
     let notes: [Note]
-    let trail: [RecordingViewModel.TrailPoint]
     /// Where the lime voice dot sits (smoothed, see VoiceDotFilter); nil hides it.
     var voiceDot: RecordingViewModel.VoiceDot?
     /// How the notes are coloured: while recording, or the results in the cover preview.
@@ -184,44 +183,6 @@ struct PianoRollView: View {
         clipped.clip(to: shape)
         clipped.fill(Path(CGRect(x: bounds.minX, y: bounds.minY, width: passed - bounds.minX, height: bounds.height)),
                      with: .color(Palette.passedNote))
-    }
-
-    /// The voice's recent pitch as a lime comet tail behind the dot: thick and bright at the dot,
-    /// thinner and fading to the left. Breaks where the singer paused. Samples within the green
-    /// tolerance of the note sung then sit on that note, like the dot.
-    private func drawTrail(to dot: CGPoint?, current: TimeInterval, windowStart: TimeInterval, width: CGFloat,
-                           in context: inout GraphicsContext, x: (TimeInterval) -> CGFloat, y: (Double) -> CGFloat) {
-        let length = Self.visibleDuration * Self.playheadPosition
-        let gap = 0.15
-        var points: [(time: TimeInterval, point: CGPoint)?] = []
-        var lastTime: TimeInterval?
-        for sample in trail where sample.songTime >= windowStart && sample.songTime <= current {
-            guard let midi = sample.midi else { points.append(nil); lastTime = nil; continue }
-            if let lastTime, sample.songTime - lastTime > gap { points.append(nil) }
-            var shown = Double(midi)
-            if let note = notes.first(where: { $0.start <= sample.songTime && sample.songTime < $0.end }),
-               abs(shown - Double(note.midi)) * 100 <= Double(NoteTally.toleranceCents) {
-                shown = Double(note.midi)
-            }
-            points.append((sample.songTime, CGPoint(x: x(sample.songTime), y: y(shown))))
-            lastTime = sample.songTime
-        }
-        // Joined to the dot while the voice is heard, so the tail ends where the dot is.
-        if let dot, let lastTime, current - lastTime < gap * 3 { points.append((current, dot)) }
-
-        var previous: (time: TimeInterval, point: CGPoint)?
-        for entry in points {
-            guard let entry else { previous = nil; continue }
-            if let previous {
-                let age = max(0, min(1, (current - entry.time) / length))
-                var segment = Path()
-                segment.move(to: previous.point)
-                segment.addLine(to: entry.point)
-                context.stroke(segment, with: .color(Palette.dot.opacity(0.9 * (1 - age))),
-                               style: StrokeStyle(lineWidth: max(1, width * (1 - 0.7 * age)), lineCap: .round, lineJoin: .round))
-            }
-            previous = entry
-        }
     }
 
     /// While the voice is on the note: a pulsing lime glow behind the dot, a ring spreading out
@@ -398,8 +359,8 @@ struct PianoRollView: View {
             }
         }
 
-        // The voice is a dot at the playhead with a fading trail behind it (trail back on
-        // 2026-11-20, user request). The pitch pipeline lags the song clock by ~0.1 s, so a voice
+        // The voice is a dot at the playhead, without a trail behind it (trail removed again on
+        // 2026-11-21, user request). The pitch pipeline lags the song clock by ~0.1 s, so a voice
         // heard within this long still counts as singing now.
         let dotHold = 0.3
 
@@ -409,41 +370,33 @@ struct PianoRollView: View {
         playhead.addLine(to: CGPoint(x: playheadX, y: rowsTop + rowsHeight))
         context.stroke(playhead, with: .color(Palette.playhead), lineWidth: Self.playheadWidth)
         // The dot never disappears (user decision 2026-11-16). It is drawn like a magnet:
-        // - silent: it rests on the note being sung now, or else the next one, a little faded;
-        // - singing within the green tolerance of that note: it sits exactly on the note;
+        // - silent: it rests in the middle of the panel, a little faded (2026-11-21: not on the
+        //   next note, which read as "sing this");
+        // - singing within the green tolerance of the note being sung: it sits exactly on the note;
         // - singing further off: it shows the voice's real pitch.
         // Every move glides (VoiceDotMotion) instead of jumping.
-        let magnet = notes.first { $0.start <= current && current < $0.end }
-            ?? notes.filter { $0.start > current }.min { $0.start < $1.start }
         guard showsVoiceDot else { return }
+        let magnet = notes.first { $0.start <= current && current < $0.end }
         let singing = voiceDot.map { current - $0.songTime < dotHold } ?? false
-        var dotTarget: Double?
+        var targetY = rowsTop + rowsHeight / 2
         var onPitch = false
         if singing, let voiceDot {
             let sung = Double(voiceDot.midi)
-            if let magnet, current >= magnet.start, abs(sung - Double(magnet.midi)) * 100 <= Double(NoteTally.toleranceCents) {
-                dotTarget = Double(magnet.midi)
+            if let magnet, abs(sung - Double(magnet.midi)) * 100 <= Double(NoteTally.toleranceCents) {
+                targetY = y(Double(magnet.midi))
                 onPitch = true
             } else {
-                dotTarget = sung
+                targetY = y(sung)
             }
-        } else if let magnet {
-            dotTarget = Double(magnet.midi)
-        } else if let voiceDot {
-            dotTarget = Double(voiceDot.midi)
         }
-        if let dotTarget {
-            let midi = dotMotion.update(target: dotTarget)
-            let radius = dotSize / 2
-            // Pinned to the top or bottom line when the voice is outside the lines in view.
-            let dotY = min(max(y(midi), rowsTop + radius), rowsTop + rowsHeight - radius)
-            // On the playhead: the dot is "now"; drawing it at the sample's time made it shake sideways.
-            let dot = CGRect(x: playheadX - radius, y: dotY - radius, width: dotSize, height: dotSize)
-            drawTrail(to: singing ? CGPoint(x: playheadX, y: dotY) : nil, current: current, windowStart: windowStart,
-                      width: dotSize * 0.5, in: &context, x: x, y: { min(max(y($0), rowsTop), rowsTop + rowsHeight) })
-            if onPitch { sparkle(around: CGPoint(x: playheadX, y: dotY), radius: radius, at: current, in: &context) }
-            context.fill(Path(ellipseIn: dot), with: .color(Palette.dot.opacity(singing ? 1 : Self.restingDotOpacity)))
-        }
+        let radius = dotSize / 2
+        // Pinned to the top or bottom line when the voice is outside the lines in view.
+        let dotY = min(max(CGFloat(dotMotion.update(target: Double(targetY))), rowsTop + radius),
+                       rowsTop + rowsHeight - radius)
+        // On the playhead: the dot is "now"; drawing it at the sample's time made it shake sideways.
+        let dot = CGRect(x: playheadX - radius, y: dotY - radius, width: dotSize, height: dotSize)
+        if onPitch { sparkle(around: CGPoint(x: playheadX, y: dotY), radius: radius, at: current, in: &context) }
+        context.fill(Path(ellipseIn: dot), with: .color(Palette.dot.opacity(singing ? 1 : Self.restingDotOpacity)))
     }
 }
 
@@ -452,9 +405,9 @@ struct PianoRollView: View {
         PianoRollView.Note(id: $0.id, midi: $0.midiNote, start: $0.startTime, end: $0.endTime)
     }
     VStack {
-        PianoRollView(notes: notes, trail: [], focusMIDI: notes.prefix(4).map(\.midi), songTime: { 1.5 })
+        PianoRollView(notes: notes, focusMIDI: notes.prefix(4).map(\.midi), songTime: { 1.5 })
             .frame(height: PianoRollView.height(rows: 6))
-        PianoRollView(notes: notes, trail: [], focusMIDI: notes.prefix(4).map(\.midi), songTime: { 1.5 },
+        PianoRollView(notes: notes, focusMIDI: notes.prefix(4).map(\.midi), songTime: { 1.5 },
                       lyricsHeight: 44)
             .frame(height: PianoRollView.height(rows: 6, lyricsHeight: 44))
     }

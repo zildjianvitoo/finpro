@@ -15,6 +15,10 @@ struct RecordingView: View {
     @State private var confirmsEnd = false
     @State private var confirmsDeleteLast = false
     @State private var showsSettings = false
+    /// Height of the open settings sheet, so the pitch guide can sit above it (design 5.2b).
+    @State private var settingsSheetHeight: CGFloat = 0
+    /// Space between the lifted pitch guide and the settings sheet.
+    private let guideSheetGap: CGFloat = 20
     /// The recording tips, shown as a system alert before the first take.
     @State private var showsTips = false
     /// A stopped session (no earphones, interrupted, failed) as a system alert.
@@ -35,21 +39,19 @@ struct RecordingView: View {
     @AppStorage(RecordingDisplaySettings.guideFrameHeightKey) private var guideFrameHeight = 0.0
     /// The pitch guide's default place (under the camera, above the controls), measured.
     @State private var defaultGuideFrame = CGRect.zero
-    @State private var showsBluetoothBanner = false
 
     /// Measurements of the design (iPhone 17 Pro, 402 × 874 pt).
     private let backButtonSize: CGFloat = 44
-    /// The design puts the back button 1 pt under the status bar; a little more air reads better.
-    private let topBarInset: CGFloat = 9
-    private let bluetoothWarningDuration: Duration = .seconds(5)
+    /// The back button and timer sit right under the status bar (design 5.2a, revision 2026-11-21).
+    private let topBarInset: CGFloat = 0
     private let lyricsCardGap: CGFloat = 8
     private let lyricsCardInset: CGFloat = 33
     private let pitchGuideMaxWidth: CGFloat = 316
     /// The controls row is as tall as the record button, so the button stays inside the 9:16 frame;
-    /// the gap is the design's 22 less the 6 pt the button used to stick out above its row.
-    private let guideControlsGap: CGFloat = 16
+    /// the pitch guide ends 13 pt above the record button's 68 pt frame (design 5.2a).
+    private let guideControlsGap: CGFloat = 7
     private let recordButtonSize: CGFloat = 80
-    private let controlsBottomInset: CGFloat = 9
+    private let controlsBottomInset: CGFloat = 3
     private let settingsButtonSize: CGFloat = 50
     private let deleteGlyphSize: CGFloat = 28
     private let doneGlyphSize: CGFloat = 36
@@ -73,8 +75,19 @@ struct RecordingView: View {
     private let preRollCountSize: CGFloat = 36
     private let preRollInfoGap: CGFloat = 8
 
-    init(viewModel: RecordingViewModel) {
+    /// The song library entry being recorded, to show the tips once per song; nil shows them.
+    let tipsSongID: UUID?
+    @AppStorage(RecordingDisplaySettings.tipsShownSongsKey) private var tipsShownSongs = ""
+
+    init(viewModel: RecordingViewModel, tipsSongID: UUID? = nil) {
         _viewModel = State(initialValue: viewModel)
+        self.tipsSongID = tipsSongID
+    }
+
+    private var showsTipsForThisSong: Bool {
+        guard viewModel.pass.isSession else { return false }
+        guard let tipsSongID else { return true }
+        return !RecordingDisplaySettings.contains(tipsSongID, in: tipsShownSongs)
     }
 
     var body: some View {
@@ -84,7 +97,7 @@ struct RecordingView: View {
             let insets = outer.safeAreaInsets
             let layout = VideoLayout(size: CGSize(width: outer.size.width + insets.leading + insets.trailing,
                                                   height: outer.size.height + insets.top + insets.bottom),
-                                     top: insets.top)
+                                     top: insets.top, bottom: insets.bottom)
             ZStack(alignment: .top) {
                 Color.black
                 cameraLayer(layout)
@@ -141,11 +154,16 @@ struct RecordingView: View {
                  ? "Segment \(viewModel.completedCount) will be sung again from the start."
                  : "The current segment will start again.")
         }
-        .sheet(isPresented: $showsSettings) { RecordingSettingsSheet(viewModel: viewModel) }
         .alert("Quick Recording Tips", isPresented: $showsTips) {
-            Button("Let’s Record") { Task { await viewModel.beginRecording() } }
+            Button("Let’s Record") {
+                if let tipsSongID { tipsShownSongs = RecordingDisplaySettings.adding(tipsSongID, to: tipsShownSongs) }
+                Task { await viewModel.beginRecording() }
+            }
         } message: {
             Text("Wear wired headphones, keep your camera steady, and find a quiet spot for the best result.")
+        }
+        .sheet(isPresented: $showsSettings) {
+            RecordingSettingsSheet(viewModel: viewModel) { settingsSheetHeight = $0 }
         }
         .alert(stoppedError?.title ?? "", isPresented: $showsStopped, presenting: stoppedError) { _ in
             // The way forward takes the cancel role, so iOS adds no extra Cancel that would leave
@@ -181,6 +199,9 @@ struct RecordingView: View {
         }
         .task(id: viewModel.status == .ready) {
             guard viewModel.status == .ready else { showsTips = false; return }
+            // Only before the first recording of a song: a retake, continuing, or the same song
+            // again starts with the record button instead.
+            guard showsTipsForThisSong else { return }
             // UIKit refuses an alert while the screen is still sliding in; wait for it to settle.
             try? await Task.sleep(for: Self.tipsDelay)
             if !Task.isCancelled { showsTips = true }
@@ -194,6 +215,8 @@ struct RecordingView: View {
     private struct VideoLayout {
         let size: CGSize
         let top: CGFloat
+        /// The home indicator's area, which a sheet also covers.
+        var bottom: CGFloat = 0
 
         var videoHeight: CGFloat { min(size.width * 16 / 9, size.height - top) }
     }
@@ -322,6 +345,11 @@ struct RecordingView: View {
                              frame: guideFrameBinding) { size in
                     pitchGuide(zoom: guideFrameWidth > 0 ? size.height / defaultGuideFrame.height : 1)
                 }
+                // While the settings sheet is open the guide rises above it, so a new size shows
+                // at once (design 5.2b).
+                .offset(y: settingsLift(sheetTop: layout.size.height - layout.bottom))
+                .animation(reduceMotion ? nil : .snappy, value: showsSettings)
+                .animation(reduceMotion ? nil : .snappy, value: settingsSheetHeight)
             }
         }
         // Above everything, right under the timer: lower down they were hidden by a moved or
@@ -329,13 +357,20 @@ struct RecordingView: View {
         .overlay(alignment: .top) {
             VStack(spacing: preRollInfoGap) {
                 phaseInfo
-                bluetoothWarning
             }
             .padding(.top, layout.top + topBarInset + backButtonSize + preRollInfoGap)
             .allowsHitTesting(false)
         }
         .animation(.snappy, value: lyricsInGuide)
         .animation(.snappy, value: showsLyrics)
+    }
+
+    /// How far the pitch guide moves up while the settings sheet covers it (0 when it is clear).
+    /// `sheetTop` is where a sheet of the reported height begins, before its own height.
+    private func settingsLift(sheetTop: CGFloat) -> CGFloat {
+        guard showsSettings, settingsSheetHeight > 0 else { return 0 }
+        let bottom = guideFrameWidth > 0 ? guideFrameY + guideFrameHeight : defaultGuideFrame.maxY
+        return min(0, sheetTop - settingsSheetHeight - guideSheetGap - bottom)
     }
 
     private static let overlaySpace = "recordingOverlay"
@@ -355,7 +390,6 @@ struct RecordingView: View {
 
     private func pitchGuide(zoom: CGFloat) -> some View {
         PianoRollView(notes: pianoRollNotes,
-                      trail: viewModel.trail,
                       voiceDot: viewModel.voiceDot,
                       focusMIDI: focusMIDI,
                       songTime: viewModel.displaySongTime,
@@ -373,31 +407,6 @@ struct RecordingView: View {
                         .padding(.bottom, PianoRollView.bottomInset / 2)
                 }
             }
-    }
-
-    @ViewBuilder
-    /// Shown for `bluetoothWarningDuration` each time Bluetooth earphones become the route, then
-    /// it slides away (it stayed for the whole session before).
-    private var bluetoothWarning: some View {
-        ZStack {
-            if showsBluetoothBanner {
-                Label("Wired earphones give the best sync", systemImage: "airpodspro")
-                    .font(.appCaption)
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(.orange.opacity(0.85), in: .capsule)
-                    .transition(reduceMotion ? .opacity : .move(edge: .top).combined(with: .opacity).combined(with: .scale(scale: 0.9)))
-            }
-        }
-        .animation(reduceMotion ? .easeInOut(duration: 0.2) : .spring(duration: 0.45, bounce: 0.25), value: showsBluetoothBanner)
-        .task(id: viewModel.showsBluetoothWarning) {
-            showsBluetoothBanner = viewModel.showsBluetoothWarning
-            guard showsBluetoothBanner else { return }
-            try? await Task.sleep(for: bluetoothWarningDuration)
-            guard !Task.isCancelled else { return }
-            showsBluetoothBanner = false
-        }
     }
 
     private var topBar: some View {

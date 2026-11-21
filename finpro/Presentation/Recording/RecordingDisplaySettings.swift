@@ -11,6 +11,16 @@ import SwiftUI
 
 enum RecordingDisplaySettings {
     static let showsLyricsKey = "recording.showsLyrics"
+    /// Songs whose first recording already showed "Quick Recording Tips" (UUIDs, comma separated).
+    static let tipsShownSongsKey = "recording.tipsShownSongs"
+
+    static func contains(_ id: UUID, in list: String) -> Bool {
+        list.split(separator: ",").contains { $0 == id.uuidString }
+    }
+
+    static func adding(_ id: UUID, to list: String) -> String {
+        contains(id, in: list) ? list : (list.isEmpty ? id.uuidString : list + "," + id.uuidString)
+    }
     static let lyricsOpacityKey = "recording.lyricsOpacity"
     static let showsPitchGuideKey = "recording.showsPitchGuide"
     static let pitchGuideOpacityKey = "recording.pitchGuideOpacity"
