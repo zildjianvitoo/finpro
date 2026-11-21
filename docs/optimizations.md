@@ -1,4 +1,13 @@
-# Lyric guide timing and scoring: what we optimized (2026-11-20)
+# Optimizations
+
+This document records measured optimizations made to `finpro`'s audio preparation pipeline, pitch guide, lyrics alignment, and cover preview.
+
+- **2026-11-20:** Lyric guide timing, recognized-word anchoring, scoring thresholds, and cover preview.
+- **2026-11-21:** Song preparation speed (HTDemucs, CREPE, stage parallelism, song-level chunk cache, trimmer pre-separation) and 120 s guide-note overlap fix.
+
+---
+
+# 2026-11-20 — Lyric guide timing and scoring
 
 This note records every optimization made on 2026-11-20 to the pitch guide's notes, the lyrics under the guide, and the cover preview. It also gives the measured effect of each one.
 
@@ -168,10 +177,11 @@ Notes alone can't tell a run of decoration on one syllable from separate syllabl
 - Scoring at the 0.30 threshold is unchanged: 100% and 96% of lines pass for the original vocal.
 - No notes overlap.
 
-### Not yet verified
+### Not yet verified (as of 2026-11-20)
 
 - `SpeechTranscriber` doesn't run on the simulator ("unsupported"), where the app skips it and prepares as before. The real behaviour, model download time and timing on an iPhone still need a device test. The `WordRecognition` log category shows what happened.
 - Whether `SpeechTranscriber` needs the speech recognition permission on iOS. The app never asks for it. If it is needed, recognition fails, the app falls back, and the log says so.
+- **Update (2026-11-21):** Verified on a physical iPhone 17 (iOS 26.6.1) — `SpeechTranscriber` works without requesting speech permission, installs `en_US` automatically, and transcribes 30 s / 60 s / 120 s vocal stems in `0.49 s / 0.84 s / 1.50 s` (see the 2026-11-21 section below).
 
 ## 3. Guide notes and scoring
 
@@ -249,3 +259,130 @@ The domain check `LyricGuideNotesUseCaseChecks` was updated and now has 38 check
 - **Separation on short selections.** A short selection is separated on its own, so its CREPE notes differ from those of the same part in a longer selection.
 - **Device check pending.** The scoring change still needs a check on the device, using the per-clip `Notes` log.
 - **English syllable count.** The lyric parser counts vowel groups, so a silent "e" adds a syllable: "life" and "you're" count as 2. A fix needs language detection, because Indonesian words like "sore" pronounce the final "e".
+
+
+---
+
+# 2026-11-21 — Song preparation speed and stability
+
+This section records the preparation pipeline optimizations and 120 s bug fix completed on 2026-11-21 on branch `integration` (commits `c9e5a3c`, `25d8318`, and `d5137d2`), verified on a physical iPhone 17 (iOS 26.6.1).
+
+## Summary
+
+All end-to-end numbers below were measured on a physical **iPhone 17** (`iOS 26.6.1`) using *A Whole New World (End Title)* (MP3, English lyrics with `SpeechTranscriber` active):
+
+| Selection length | Baseline | Phase 1 (`25d8318`) | Phase 2 (`d5137d2`) | Improvement |
+|---|---|---|---|---|
+| **30 s** | 6.16 s *(~4.7 s warm)* | **2.79 s** *(0 st)* | — | **−55%** *(−41% warm)* |
+| **60 s** | 8.12 s *(−1 st)* | **5.44 s** *(−1 st)* | — | **−33%** |
+| **120 s** | ~15.2 s *(14.53 s before crash)* | **9.91 s** *(−2 st)* | **7.07 s** *(−2 st, 8/19 chunks pre-warmed)* | **−53% (>2× faster)** |
+
+Per-stage breakdown on 120 s selections (iPhone 17):
+
+| Stage | Baseline (119.5 s) | Phase 1 (120.1 s) | Phase 2 (120.2 s) |
+|---|---|---|---|
+| **HTDemucs separation** | 10.19 s (21 chunks) + 0.52 s lead-in | 7.84 s (18 chunks, single pass) | **5.08 s** (11 computed + 8 cached, decode `0.00 s`) |
+| **CREPE pitch extraction** | 2.56 s *(read `0.96 s`, infer `1.57 s`)* | 1.04 s *(read `0.00 s`, infer `1.01 s`)* | **0.99 s** *(read `0.00 s`, infer `0.96 s`)* |
+| **Word recognition (`SpeechTranscriber`)** | 1.26 s *(sequential)* | 1.52 s *(parallel with CREPE → `1.60 s` wall)* | **1.50 s** *(parallel with CREPE → `1.57 s` wall)* |
+| **Transposition (4 WAVs)** | *(not reached due to crash)* | 0.43 s *(parallel)* | **0.40 s** *(parallel)* |
+| **Peak memory** | 927 MB | 917 MB | **946 MB** *(2,688 MB available)* |
+
+## 1. How it was measured
+
+- **Device timing logs.** Detailed stage and sub-stage timings were logged to `Library/Logs/events.log` across `[Preparation]`, `[Separation]`, `[Analysis]`, `[WordRecognition]`, and `[Transposition]`, then pulled from the physical iPhone 17 via `xcrun devicectl device copy from`.
+- **Why device instead of simulator.** The iOS Simulator runs CoreML HTDemucs on CPU (~3.2–4.5 s/chunk instead of ~0.38 s/chunk on iPhone 17 Metal GPU) and marks `SpeechTranscriber` as unsupported, so all latency profiling used the physical iPhone 17.
+- **Correctness & seam checks.** Every phase was verified against `./scripts/check-contracts.sh`, `./scripts/check-domain.sh`, `./scripts/check-prep.sh`, and a Mac MP3 seam benchmark comparing cached chunk assembly against direct decode.
+
+## 2. Bug fix: 120 s overlapping notes (`c9e5a3c`)
+
+### Problem
+
+Preparing a 120 s clip of *A Whole New World* failed with `"The keys couldn't be prepared"` right after word recognition.
+
+`LyricGuideNotesUseCase.anchored` shifted line *i* forward using `SpeechTranscriber` word anchors past the start of line *i + 1*. When line *i + 1* had no matched anchors (`anchors.isEmpty`) or a word-count mismatch, it returned early without clamping against the previous line's new end time. `SliceSegmentsUseCase` then rejected the overlapping notes (`"Guide must be monophonic before segmentation."`).
+
+### Change
+
+- Added `clampedAfter(_:line:)` in `LyricGuideNotesUseCase.swift` and applied it before returning unanchored or mismatched-count lines, preserving strict monotonicity across all lines.
+- Added error logging in `ImportSongViewModel.prepareSelection()` so preparation failures always record the underlying error in `events.log`.
+
+### Result
+
+120 s preparation completed with 0 errors across all subsequent runs.
+
+## 3. Phase 1 — Single-pass HTDemucs lead-in, batched CREPE, and parallel stages (`25d8318`)
+
+### Problem
+
+Baseline profiling on iPhone 17 (60 s: `8.12 s`, 120 s: `~15.2 s`) showed five compounding bottlenecks:
+1. **Duplicate HTDemucs pass for lead-in.** `PrepareSongUseCase` called `separateStems` twice: once for the trim range and a second time for the 3 s lead-in right before it (`+0.48–0.52 s` plus extra file I/O).
+2. **HTDemucs chunk & iSTFT overhead.** 25% chunk overlap produced 21 chunks for 120 s, ran 4 iSTFTs per chunk (even though vocals are written as mono), used scalar Swift loops for complex deinterleaving, and wrote stems slowly (`0.93 s` on 120 s).
+3. **CREPE per-frame overhead.** `CrepeAnalysisRepository` read samples in a scalar Swift loop (`0.96 s` on 120 s), resampled/normalized per frame, boxed `Float` values into `NSNumber` for CoreML `MLMultiArray`, and invoked CoreML 1 frame at a time (2,400 calls for 120 s).
+4. **Sequential pipeline stages.** CREPE and `SpeechTranscriber` ran back-to-back on the same vocal stem, and transposition rendered 4 files (`mix`, `instrumental`, `leadInMix`, `leadInInstrumental`) sequentially.
+
+### Change
+
+- **Single-pass lead-in separation (`LeadInStemSeparation.swift`, `HTDemucsStemSeparationRepository.swift`, `PrepareSongUseCase.swift`):**
+  - Added optional capability protocol `LeadInStemSeparation` in `Domain/UseCases/` (no locked contract changes).
+  - Separated `[leadInStart, trimEnd]` in one pass and sliced `leadIn` + `main` stems directly from memory.
+- **Faster HTDemucs DSP & chunking (`HTDemucsStemSeparationRepository.swift`):**
+  - Reduced chunk overlap from 25% to 12.5% (~0.975 s overlap; 18 chunks instead of 21 for 120 s) and fixed a tail-chunk alignment edge case.
+  - Averaged vocal L/R in the complex frequency domain before iSTFT (3 iSTFTs per chunk instead of 4).
+  - Replaced scalar deinterleave loops with Accelerate `vDSP_ctoz` and sped up stem writing (`0.93 s → 0.06 s` on 120 s).
+- **Batched, zero-boxing CREPE (`CrepePitchDetector.swift`, `CrepeAnalysisRepository.swift`):**
+  - Bulk `UnsafeBufferPointer` / `vDSP` mono reading (`0.96 s → 0.00 s` on 120 s).
+  - Single-pass track resample to 16 kHz, `vDSP_normalize`, raw `Float` pointer CoreML I/O (zero `NSNumber` boxing), and batched `model.predictions(from:)` with batch size 64.
+- **Stage parallelism (`PrepareSongUseCase.swift`, `AudioTranspositionRepositoryImpl.swift`):**
+  - Ran `CREPE` and `SpeechTranscriber` concurrently via `async let`.
+  - Rendered all transposed stem files (`mix`, `instrumental`, `leadInMix`, `leadInInstrumental`) in parallel and reused the slice `AVAudioPCMBuffer` during offline rendering.
+
+### Result
+
+- **30 s:** `6.16 s` (cold) / `~4.7 s` (warm) → **`2.79 s`**
+- **60 s:** `8.12 s` → **`5.44 s`** (−33%)
+- **120 s:** `~15.2 s` → **`9.91 s`** (−35%)
+- **CREPE 120 s:** `2.56 s` → **`1.04 s`** (**2.5× faster**; completely hidden behind `SpeechTranscriber`'s `1.52 s` when run in parallel).
+- **Quality (`check-prep.sh`):** HTDemucs mix residual remained `-24.9 dB` (unchanged); CREPE worst edge error remained `32 ms` (unchanged).
+
+## 4. Phase 2 — Song-level chunk cache and background trimmer pre-separation (`d5137d2`)
+
+### Problem
+
+Even after Phase 1, HTDemucs CoreML inference (`7.84 s` on 120 s) accounted for ~79% of total preparation time, while the user already spends several seconds listening to the preview and adjusting trim handles before tapping confirm.
+
+A naive trim-range cache misses whenever the user moves a handle by even 0.1 s, and direct `AVAssetReader.timeRange` seeking on MP3 files introduces ~12 ms frame-boundary drift (`maxDiff 0.044`), which corrupts overlap-add seams across cached chunks.
+
+### Change
+
+- **Optional pre-separation protocol (`StemPreseparation.swift`):**
+  - Added `StemPreseparation` in `Domain/UseCases/` (`preseparate(audioURL:trimRange:leadInDuration:)`) and forwarded it through `LoggingStemSeparationRepository`.
+- **Sample-exact song decode + fixed chunk grid (`HTDemucsStemSeparationRepository.swift`):**
+  - Decodes each song once via streaming (<2 MB RAM) to an atomically moved 44.1 kHz stereo Float32 file at `Caches/HTDemucsSeparation/chunks/<songKey>/source.caf`, eliminating MP3 seek drift (`-34.6 dB` seam residual across shifted trims).
+  - Aligns all HTDemucs inference to a fixed song-timeline chunk grid (`segmentSamples = 343_980`, `chunkStride = 300_982`, `edgeMargin = 4096`), storing each separated chunk losslessly as `<k>.bin` (~4.13 MB) with LRU eviction keeping the 3 most recent songs (`maxCachedSongChunkFolders = 3`).
+  - Added a private `actor ChunkCoordinator` to serialize Metal/CoreML execution and deduplicate in-flight decodes and chunk tasks. Foreground `separateStems` awaits any in-flight work for the same chunk and falls back cleanly (`try?`) if a cancelled background attempt failed.
+- **Trimmer lifecycle scheduling (`ImportSongViewModel.swift`, `ImportSongView.swift`):**
+  - Runs pre-separation at `.utility` priority after opening a song (0.8 s delay), after chorus suggestion (0.4 s), after `endSelectionEditing()` (0.6 s), and when returning to `.active`.
+  - Immediately cancels/pauses pre-separation during slider drags (`beginSelectionEditing()`), on `prepareSelection()`, `saveToSongList()`, `picked()`, `suspend()`, and whenever `scenePhase != .active` (preventing iOS background GPU termination).
+
+### Result
+
+- **iPhone 17 (120.2 s, normal trimmer flow):**
+  - Background pre-separation finished `source.caf` decoding and warmed **8 of 19 chunks** (~`0.66 s/chunk` at `.utility` QoS) with smooth trimmer audio preview and scrubbing.
+  - On confirm: HTDemucs computed only the remaining 11 chunks in **`5.08 s`** (`decode 0.00 s`), bringing total 120.2 s preparation to **`7.07 s`** (**−53% / >2× faster** vs baseline; **−29%** vs Phase 1).
+  - If the user picks 120 s and taps confirm immediately with 0 s wait, behavior gracefully matches Phase 1 (`~9.9 s`) without errors or races.
+  - Re-trimming a nearby range on the same song reuses cached chunks on disk and finishes separation in under 1–2 s.
+- **Peak memory:** `946 MB` (well within device headroom; 2,688 MB available).
+
+## 5. Device verification of `SpeechTranscriber`
+
+Resolved the open device-verification item from 2026-11-20 on a physical iPhone 17 (iOS 26.6.1):
+- `SpeechTranscriber` runs without requesting iOS speech recognition permission.
+- `en_US` installs automatically; first-run setup took `1.44 s`, and subsequent runs took `0.05–0.08 s` setup.
+- On-device transcription latency: `0.49 s` (30 s, 33 words), `0.84 s` (60.5 s, 79 words), `1.50 s` (120.2 s, 143 words).
+
+## 6. Checks, limits, and trade-offs
+
+- **Checks passing:** `xcodebuild` (iOS Simulator), `./scripts/check-contracts.sh`, `./scripts/check-domain.sh`, and `./scripts/check-prep.sh` (`htdemucs: 20 s in 1.67 s, residual -24.9 dB`; `CREPE: 60 s in 0.30 s, worst edge error 32 ms`; `pipeline: 0.07 s`).
+- **Pre-separation QoS (`.utility`):** Intentionally kept at `.utility` (`~0.66 s/chunk` vs `~0.38 s/chunk` foreground) so trimmer audio playback and handle dragging stay glitch-free. Raising to `.medium` could warm more chunks in the same trimmer window (~14–16 chunks, pushing 120 s toward ~4 s) at the cost of higher foreground GPU/CPU contention.
+- **Chunk cache storage:** Each cached chunk is ~4.13 MB (a 2-minute range is ~19 chunks ≈ 78 MB plus `source.caf`), stored in `Library/Caches` (purgeable by iOS) and bounded to the 3 most recent songs via LRU pruning.
+- **First-launch CoreML compilation:** Cold first-launch `prewarm` on iPhone 17 still compiles CoreML models once per install/update (`CREPE ~14–16 s`, `htdemucs ~4.2 s` in background on app launch); subsequent launches prewarm in `CREPE 0.05–0.08 s` and `htdemucs ~1.25 s`.
