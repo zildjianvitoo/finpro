@@ -570,9 +570,15 @@ final class ImportSongViewModel {
         schedulePreseparation(delay: .milliseconds(400))
     }
 
+    /// Small boundary tolerance so floating-point overshoot on a previous line's last word never
+    /// pulls that finished line into a selection starting on the next line.
+    private static let lyricBoundaryTolerance: TimeInterval = 0.05
+
     /// Whether a lyric line's sung part is (partly) inside the chosen part.
     func isInSelection(_ line: LyricLine) -> Bool {
-        (line.words.last?.end ?? line.end) > selectionStart && line.start < selectionStart + selectionLength
+        let lineEnd = min(line.words.last?.end ?? line.end, line.end)
+        return lineEnd > selectionStart + Self.lyricBoundaryTolerance
+            && line.start < selectionStart + selectionLength
     }
 
     /// The first line of the chosen part, to scroll to.
@@ -612,7 +618,7 @@ final class ImportSongViewModel {
                     do { try previewer.play(audio.url, from: selectionStart) }
                     catch { actionError = .keyPreviewFailed; break }
                     playbackTime = selectionStart
-                } else { playbackTime = time }
+                } else { playbackTime = max(selectionStart, time) }
             }
             if !Task.isCancelled { stopSelectionPreview() }
         }

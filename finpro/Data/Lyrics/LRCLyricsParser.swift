@@ -53,11 +53,14 @@ nonisolated enum LRCLyricsParser {
         let weights = tokens.map { Double(syllables($0)) }
         let total = weights.reduce(0, +)
         let span = min(end - start, total * maxSecondsPerSyllable)
-        var time = start
-        return zip(tokens, weights).map { token, weight in
-            let length = span * weight / total
-            defer { time += length }
-            return LyricWord(text: token, start: time, end: time + length)
+        let spanEnd = min(end, start + span)
+        var cumulativeWeight = 0.0
+        return zip(tokens, weights).enumerated().map { index, pair in
+            let (token, weight) = pair
+            let wordStart = index == 0 ? start : min(spanEnd, start + span * cumulativeWeight / total)
+            cumulativeWeight += weight
+            let wordEnd = index == tokens.count - 1 ? spanEnd : min(spanEnd, start + span * cumulativeWeight / total)
+            return LyricWord(text: token, start: wordStart, end: wordEnd)
         }
     }
 
