@@ -268,6 +268,8 @@ final class ImportSongViewModel {
 
     func saveToSongList() {
         guard audio != nil, persistSelection() else { return }
+        lyricsLookup?.cancel()
+        lyricsLookup = nil
         pausePreseparation()
         stopSelectionPreview()
         onSavedToList()
@@ -275,6 +277,8 @@ final class ImportSongViewModel {
 
     func prepareSelection() {
         guard let audio, let range = vocalRange(), persistSelection() else { return }
+        lyricsLookup?.cancel()
+        lyricsLookup = nil
         pausePreseparation()
         stopSelectionPreview()
         generation = UUID()
@@ -527,7 +531,7 @@ final class ImportSongViewModel {
                     return
                 }
                 lyrics = found.map(LyricsState.found) ?? .notFound
-                if !userMovedSelection { useChorusSuggestion() }
+                if case .trimming = status, !userMovedSelection, !editingSelection { useChorusSuggestion() }
 
             } catch is CancellationError {
             } catch {
@@ -637,6 +641,7 @@ final class ImportSongViewModel {
     func beginSelectionEditing() {
         guard !editingSelection else { return }
         editingSelection = true
+        userMovedSelection = true
         frozenVisibleSeconds = waveformVisibleSeconds
         restartingPreview?.cancel()
         pausePreseparation()
