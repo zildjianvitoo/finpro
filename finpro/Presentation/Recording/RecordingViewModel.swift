@@ -293,6 +293,8 @@ final class RecordingViewModel {
             } else {
                 try playback.load(earphoneMixURL: song.earphoneMixURL)
             }
+            // The song before the selected part plays in the pre-roll before 0; without it, silence.
+            try? playback.loadLeadIn(mixURL: song.leadIn?.mixURL, instrumentalURL: song.leadIn?.instrumentalURL)
             guard status == .starting else { return }
             status = .ready
         } catch {

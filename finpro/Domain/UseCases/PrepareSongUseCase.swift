@@ -57,7 +57,20 @@ nonisolated struct PrepareSongUseCase: Sendable {
         var guideWords: [[LyricGuideNotesUseCase.Word]] = []
         /// How far the lyric lines were moved to where they are sung (`LyricGuideNotesUseCase.Result.lineShift`).
         var lyricLineShift: TimeInterval = 0
+        /// The song just before the trimmed part, separated but not transposed; rendered into each
+        /// key as `PreparedSong.leadIn`. Nil when the part starts at the song's start.
+        var leadIn: LeadInStems?
     }
+
+    /// Up to the pre-roll of the song before the trimmed part, so the pre-roll plays the beat
+    /// instead of silence (user request 2026-11-21).
+    struct LeadInStems: Sendable {
+        let stems: SeparatedStems
+        let duration: TimeInterval
+    }
+
+    /// Shorter than this before the part, the pre-roll stays silent (a click at the start is worse).
+    static let minimumLeadIn: TimeInterval = 0.5
 
     /// Separate and analyse once; render only the best fully fitting keys. With `lyricLines` (on
     /// the trimmed timeline), the guide has one note per sung word instead of the raw pitch notes.
@@ -67,6 +80,8 @@ nonisolated struct PrepareSongUseCase: Sendable {
                         progress: @escaping @Sendable (String) -> Void = { _ in }) async throws -> Choices {
         let (stems, extracted) = try await extract(audioURL: audioURL, trimRange: trimRange, progress: progress)
         let duration = trimRange.upperBound - trimRange.lowerBound
+        let leadIn = await leadInStems(audioURL: audioURL, trimRange: trimRange, progress: progress)
+        try Task.checkCancellation()
         var recognized: [RecognizedWord] = []
         if let wordRecognition, !lyricLines.isEmpty {
             progress("Matching the lyrics")
@@ -81,11 +96,11 @@ nonisolated struct PrepareSongUseCase: Sendable {
             return try await makeChoices(stems: stems, notes: LyricGuideNotesUseCase.foldingOctaveErrors(extracted),
                                          duration: duration,
                                          vocalRange: vocalRange, recommendationLimit: recommendationLimit,
-                                         progress: progress)
+                                         leadIn: leadIn, progress: progress)
         }
         var choices = try await makeChoices(stems: stems, notes: lyricGuide.notes, duration: duration,
                                             vocalRange: vocalRange, simplifies: false,
-                                            recommendationLimit: recommendationLimit, progress: progress)
+                                            recommendationLimit: recommendationLimit, leadIn: leadIn, progress: progress)
         choices.guideWords = lyricGuide.words
         choices.lyricLineShift = lyricGuide.lineShift
         return choices
@@ -95,6 +110,7 @@ nonisolated struct PrepareSongUseCase: Sendable {
     /// bridges pitch fragments; a guide built from the lyrics is already one note per word.
     func makeChoices(stems: SeparatedStems, notes: [TargetMIDINote], duration: TimeInterval,
                      vocalRange: VocalRange, simplifies: Bool = true, recommendationLimit: Int? = nil,
+                     leadIn: LeadInStems? = nil,
                      progress: @escaping @Sendable (String) -> Void = { _ in }) async throws -> Choices {
         let slicer = SliceSegmentsUseCase(configuration: configuration)
         // Sanitise timestamps without simplifying away extremes or changing note durations.
@@ -117,12 +133,38 @@ nonisolated struct PrepareSongUseCase: Sendable {
             try Task.checkCancellation()
             let instrumental = try await transposition.renderTransposed(stems.instrumentalURL, semitones: shift)
             try Task.checkCancellation()
-            let song = PreparedSong(earphoneMixURL: mix, instrumentalURL: instrumental, segments: segments,
+            var song = PreparedSong(earphoneMixURL: mix, instrumentalURL: instrumental, segments: segments,
                                     transposition: recommendation.plan, duration: duration, separationMethod: stems.method)
+            song.leadIn = await Self.renderLeadIn(leadIn, semitones: shift, transposition: transposition)
+            try Task.checkCancellation()
             if let violation = song.validate().first { throw violation }
             options.append(Choices.Option(song: song, recommendation: recommendation))
         }
-        return Choices(options: options, excerpt: excerpt, vocalRange: vocalRange, stems: stems)
+        var choices = Choices(options: options, excerpt: excerpt, vocalRange: vocalRange, stems: stems)
+        choices.leadIn = leadIn
+        return choices
+    }
+
+    /// The song before the trimmed part, separated like the part itself; nil when there is too
+    /// little of it or it fails (the pre-roll is then silent, as before).
+    private func leadInStems(audioURL: URL, trimRange: ClosedRange<TimeInterval>,
+                             progress: @escaping @Sendable (String) -> Void) async -> LeadInStems? {
+        let length = min(configuration.preRoll, trimRange.lowerBound)
+        guard length >= Self.minimumLeadIn else { return nil }
+        progress("Preparing the lead-in")
+        let range = (trimRange.lowerBound - length)...trimRange.lowerBound
+        guard let stems = try? await separation.separateStems(from: audioURL, trimRange: range) else { return nil }
+        return LeadInStems(stems: stems, duration: length)
+    }
+
+    /// `leadIn` in the key `semitones` away, like the song's own tracks; nil when it fails.
+    static func renderLeadIn(_ leadIn: LeadInStems?, semitones: Int,
+                             transposition: any AudioTranspositionRepository) async -> PreparedSong.LeadIn? {
+        guard let leadIn,
+              let mix = try? await transposition.renderTransposed(leadIn.stems.mixURL, semitones: semitones),
+              let instrumental = try? await transposition.renderTransposed(leadIn.stems.instrumentalURL, semitones: semitones)
+        else { return nil }
+        return PreparedSong.LeadIn(mixURL: mix, instrumentalURL: instrumental, duration: leadIn.duration)
     }
 
     private func extract(audioURL: URL, trimRange: ClosedRange<TimeInterval>,
