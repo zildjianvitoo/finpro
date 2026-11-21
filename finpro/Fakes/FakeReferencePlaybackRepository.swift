@@ -28,6 +28,8 @@ nonisolated final class FakeReferencePlaybackRepository: ReferencePlaybackReposi
         loadedURL.withLock { $0 = earphoneMixURL }
     }
 
+    func loadLeadIn(mixURL: URL?, instrumentalURL: URL?) throws {}
+
     func play(from referenceTime: TimeInterval) throws -> CMTime {
         let heard = CMClockGetTime(CMClockGetHostTimeClock()) + CMTime(seconds: latency, preferredTimescale: 600)
         onPlay?(referenceTime, heard)
