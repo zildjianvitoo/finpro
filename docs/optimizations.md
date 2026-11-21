@@ -4,6 +4,7 @@ This document records measured optimizations made to `finpro`'s audio preparatio
 
 - **2026-11-20:** Lyric guide timing, recognized-word anchoring, scoring thresholds, and cover preview.
 - **2026-11-21:** Song preparation speed (HTDemucs, CREPE, stage parallelism, song-level chunk cache, trimmer pre-separation) and 120 s guide-note overlap fix.
+- **2026-11-21:** Cover preview after recording and retakes: live composition preview with the file exported in the background.
 
 ---
 
@@ -386,3 +387,55 @@ Resolved the open device-verification item from 2026-11-20 on a physical iPhone 
 - **Pre-separation QoS (`.utility`):** Intentionally kept at `.utility` (`~0.66 s/chunk` vs `~0.38 s/chunk` foreground) so trimmer audio playback and handle dragging stay glitch-free. Raising to `.medium` could warm more chunks in the same trimmer window (~14–16 chunks, pushing 120 s toward ~4 s) at the cost of higher foreground GPU/CPU contention.
 - **Chunk cache storage:** Each cached chunk is ~4.13 MB (a 2-minute range is ~19 chunks ≈ 78 MB plus `source.caf`), stored in `Library/Caches` (purgeable by iOS) and bounded to the 3 most recent songs via LRU pruning.
 - **First-launch CoreML compilation:** Cold first-launch `prewarm` on iPhone 17 still compiles CoreML models once per install/update (`CREPE ~14–16 s`, `htdemucs ~4.2 s` in background on app launch); subsequent launches prewarm in `CREPE 0.05–0.08 s` and `htdemucs ~1.25 s`.
+
+---
+
+# 2026-11-21 — Cover preview after recording and retakes
+
+This section records the result-screen optimization on branch `integration` (commit `740c30d`). Device feedback: waiting for a full merge every time the user came back from a retake was a pain.
+
+## Summary
+
+| | Before | After |
+|---|---|---|
+| Time until the preview plays after a recording, retake or continue | the full export (whole cover re-encoded to 1080p H.264) | **the composition build: 0.19 s** (Mac, 16 s cover, 3 clips) |
+| Clip thumbnails | after the export, read from the file | **0.26 s**, read from the composition |
+| Export to Photos | file already there | waits for the background export if still running; the progress border follows it |
+| Playback while the file exports (Mac, 1080×1920 noise video) | — | **29.7 fps, 0 stalls** (29.4 fps, 0 stalls without the export) |
+| Export time while the preview plays (Mac) | 2.00 s alone | **1.95–1.97 s** (no slowdown) |
+
+## 1. Problem
+
+Every time the result screen got a new set of takes (after the session, a retake or Continue Recording), `CompingViewModel.export()` rendered the **whole** cover to `FinalCoverVideo.mp4` with `AVAssetExportSession` (1080p H.264 re-encode, crossfades, audio mix) before anything was shown. The "Merging your recording…" screen stayed up until the file existed, because the file was used for the player, the clip thumbnails, and the Home / draft entry. Retaking one 5 s clip of a 30 s cover still meant re-encoding all 30 s and waiting each time.
+
+## 2. Change
+
+- **Live preview (`CompingViewModel.prepareLivePreview`, `ExportPreviewView`).** The preview plays the cover straight from its `AVMutableComposition` + video composition + audio mix (`makeMixerItem`), the same item the volume sliders already used on the device. The sound panel is ready at once, without building a separate mixer.
+- **Thumbnails from the composition.** `AVAssetImageGenerator` with the cover's `videoComposition` reads one frame per clip before the file exists.
+- **Background export (`exportInBackground`).** The file export still runs, but after the preview shows. When it finishes, the cover is saved to Home and the draft as before.
+- **Waiting only where the file is needed (`waitForExport`).**
+  - **Export (Photos):** waits for the running export; the progress border follows its real progress instead of restarting.
+  - **Leaving to keep the cover (Save to Draft / Save and Exit):** shows "Saving your cover…" until the file exists, then applies edited volumes as before.
+  - **Retake, Continue or Discard:** the running export is cancelled (`cancelExport` on disappear); that version's file is not needed. A cancelled export returns the state to idle, not failed.
+- **Fallback.** If the composition can't be built (e.g. fakes on the simulator, unreadable takes), the screen merges first as before.
+- A background export failure no longer replaces a playing preview with the error page; it surfaces on Export or when leaving (`CompingError.exportFailed`).
+
+## 3. How it was measured
+
+The simulator has no camera, so the result screen there only exercises the fallback. Measurements used the real comping code (`finpro/Data/Composition`) on the Mac with a synthetic recording, built the same way as `scripts/check-comping.sh` but at device size:
+
+- Raw recording 1080×1920, 30 fps, H.264 12 Mbps, moving noise in every frame (keeps the decoder and encoder busy), 3 takes → 16 s cover.
+- Playback measured for 12 s through `AVPlayerItemVideoOutput` (frames delivered, gaps over two frame durations, stalls), once alone and once while `stitchAndExport` ran. Two runs, same results.
+
+| | Frames / s | Late frames (>2 frames) | Stalls | Export time |
+|---|---|---|---|---|
+| Preview alone | 29.4 | 1 (start of playback) | 0 | — |
+| Preview + background export | 29.7 | 1 (start of playback) | 0 | 1.95–1.97 s |
+| Export alone | — | — | — | 2.00–2.03 s |
+
+## 4. Checks, limits, and open items
+
+- **Checks passing:** `xcodebuild` (iOS Simulator), `./scripts/check-comping.sh`; simulator fallback path (fixture plan, no files) unchanged.
+- **Not yet verified on a device (as of 2026-11-21):** the Mac's media engine is stronger than an iPhone's, and the simulator uses the Mac's hardware. Check on an iPhone (older ones, A13/A14, are most at risk) that the preview doesn't stutter while the file exports in the first seconds after a recording. If it does: start the export when the preview is paused, or a few seconds after it shows.
+- **Trade-off:** a cover whose export hasn't finished is not on Home yet; if the app is killed in that window, that version is lost (the takes stay in the draft from the last finished export).
+
