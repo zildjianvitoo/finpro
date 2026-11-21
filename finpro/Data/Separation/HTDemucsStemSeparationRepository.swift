@@ -14,7 +14,7 @@ import AVFoundation
 import CoreML
 import os
 
-nonisolated final class HTDemucsStemSeparationRepository: StemSeparationRepository, @unchecked Sendable {
+nonisolated final class HTDemucsStemSeparationRepository: StemSeparationRepository, LeadInStemSeparation, @unchecked Sendable {
     /// The model was trained at 44.1 kHz.
     static let sampleRate = 44_100.0
     /// The model's fixed window: htdemucs' training segment, 39/5 s at 44.1 kHz.
@@ -40,6 +40,11 @@ nonisolated final class HTDemucsStemSeparationRepository: StemSeparationReposito
     }
 
     func separateStems(from audioURL: URL, trimRange: ClosedRange<TimeInterval>) async throws -> SeparatedStems {
+        try await separateStems(from: audioURL, trimRange: trimRange, leadInDuration: 0).stems
+    }
+
+    func separateStems(from audioURL: URL, trimRange: ClosedRange<TimeInterval>,
+                       leadInDuration: TimeInterval) async throws -> (stems: SeparatedStems, leadIn: SeparatedStems?) {
         let asset = AVURLAsset(url: audioURL)
         if (try? await asset.load(.hasProtectedContent)) == true { throw CoreMLSeparationError.drmProtected }
         guard let track = try? await asset.loadTracks(withMediaType: .audio).first,
@@ -47,46 +52,106 @@ nonisolated final class HTDemucsStemSeparationRepository: StemSeparationReposito
         guard trimRange.lowerBound >= 0, trimRange.upperBound <= duration + 0.01, trimRange.upperBound > trimRange.lowerBound else {
             throw CoreMLSeparationError.invalidTrim
         }
-        let folder = directory.appendingPathComponent(Self.cacheKey(audioURL, trimRange), isDirectory: true)
-        let mixURL = folder.appendingPathComponent("mix.wav")
-        let vocalURL = folder.appendingPathComponent("vocals.wav")
-        let instrumentalURL = folder.appendingPathComponent("instrumental.wav")
-        let stems = SeparatedStems(mixURL: mixURL, vocalGuideURL: vocalURL, instrumentalURL: instrumentalURL, method: .coreML)
-        if [mixURL, vocalURL, instrumentalURL].allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) { return stems }
+        let mainFolder = directory.appendingPathComponent(Self.cacheKey(audioURL, trimRange), isDirectory: true)
+        let mainStems = Self.stems(in: mainFolder)
+        let mainCached = Self.isCached(mainStems)
+
+        let effectiveLeadIn = leadInDuration > 0 ? min(leadInDuration, trimRange.lowerBound) : 0
+        let leadRange: ClosedRange<TimeInterval>? = effectiveLeadIn > 0
+            ? (trimRange.lowerBound - effectiveLeadIn)...trimRange.lowerBound : nil
+        let leadFolder = leadRange.map { directory.appendingPathComponent(Self.cacheKey(audioURL, $0), isDirectory: true) }
+        let leadStems = leadFolder.map(Self.stems(in:))
+        let leadCached = leadStems.map(Self.isCached) ?? true
+
+        if mainCached && leadCached {
+            Self.log.notice("htdemucs: cache hit for \(trimRange.upperBound - trimRange.lowerBound + effectiveLeadIn, format: .fixed(precision: 1)) s")
+            return (mainStems, leadStems)
+        }
+
+        // If the main part is already cached and only the lead-in is missing, separate just the lead-in.
+        let fullRange: ClosedRange<TimeInterval>
+        let splitLeadIn: Bool
+        if mainCached, let leadRange {
+            fullRange = leadRange
+            splitLeadIn = false
+        } else if let leadRange {
+            fullRange = leadRange.lowerBound...trimRange.upperBound
+            splitLeadIn = true
+        } else {
+            fullRange = trimRange
+            splitLeadIn = false
+        }
 
         let clock = ContinuousClock()
         let loadStarted = clock.now
         let model = try loadModel()
         let loadSeconds = (clock.now - loadStarted) / .seconds(1)
+        let mainSamples = Int(((trimRange.upperBound - trimRange.lowerBound) * Self.sampleRate).rounded())
+        let leadSamples = Int((effectiveLeadIn * Self.sampleRate).rounded())
+
         try await Task.detached(priority: .userInitiated) {
             let readStarted = clock.now
-            let mix = try Self.readStereo(asset: asset, track: track, trim: trimRange)
+            let fullMix = try Self.readStereo(asset: asset, track: track, trim: fullRange)
             let readSeconds = (clock.now - readStarted) / .seconds(1)
-            let (vocals, instrumental) = try Self.separate(mix, model: model)
+            let (vocalsMono, instrumental) = try Self.separate(fullMix, model: model)
             let writeStarted = clock.now
-            let mono = [zip(vocals[0], vocals[1]).map { ($0 + $1) / 2 }]
-            // Written to a scratch folder and moved in whole: a separation stopped half way
-            // (app killed while writing) must never leave stems that look complete.
-            let fileManager = FileManager.default
-            let scratch = folder.deletingLastPathComponent()
-                .appendingPathComponent(folder.lastPathComponent + ".partial-" + UUID().uuidString, isDirectory: true)
-            try fileManager.createDirectory(at: scratch, withIntermediateDirectories: true)
-            do {
-                try Self.write(mix, to: scratch.appendingPathComponent(mixURL.lastPathComponent))
-                try Self.write(mono, to: scratch.appendingPathComponent(vocalURL.lastPathComponent))
-                try Self.write(instrumental, to: scratch.appendingPathComponent(instrumentalURL.lastPathComponent))
-                try? fileManager.removeItem(at: folder)
-                try fileManager.moveItem(at: scratch, to: folder)
-            } catch {
-                try? fileManager.removeItem(at: scratch)
-                throw error
+            if splitLeadIn, let leadFolder, let leadStems {
+                let leadEnd = min(leadSamples, fullMix[0].count)
+                let mainEnd = min(leadEnd + mainSamples, fullMix[0].count)
+                if !leadCached {
+                    try Self.writeStems(
+                        mix: [Array(fullMix[0][0..<leadEnd]), Array(fullMix[1][0..<leadEnd])],
+                        vocalsMono: Array(vocalsMono[0..<leadEnd]),
+                        instrumental: [Array(instrumental[0][0..<leadEnd]), Array(instrumental[1][0..<leadEnd])],
+                        to: leadFolder, stems: leadStems)
+                }
+                try Self.writeStems(
+                    mix: [Array(fullMix[0][leadEnd..<mainEnd]), Array(fullMix[1][leadEnd..<mainEnd])],
+                    vocalsMono: Array(vocalsMono[leadEnd..<mainEnd]),
+                    instrumental: [Array(instrumental[0][leadEnd..<mainEnd]), Array(instrumental[1][leadEnd..<mainEnd])],
+                    to: mainFolder, stems: mainStems)
+            } else if mainCached, let leadFolder, let leadStems {
+                try Self.writeStems(mix: fullMix, vocalsMono: vocalsMono, instrumental: instrumental, to: leadFolder, stems: leadStems)
+            } else {
+                try Self.writeStems(mix: fullMix, vocalsMono: vocalsMono, instrumental: instrumental, to: mainFolder, stems: mainStems)
             }
             Self.log.notice("""
                 htdemucs timing: model load \(loadSeconds, format: .fixed(precision: 2)) s, read audio \(readSeconds, format: .fixed(precision: 2)) s, \
                 write stems \((clock.now - writeStarted) / .seconds(1), format: .fixed(precision: 2)) s
                 """)
         }.value
-        return stems
+        return (mainStems, leadStems)
+    }
+
+    private static func stems(in folder: URL) -> SeparatedStems {
+        SeparatedStems(mixURL: folder.appendingPathComponent("mix.wav"),
+                       vocalGuideURL: folder.appendingPathComponent("vocals.wav"),
+                       instrumentalURL: folder.appendingPathComponent("instrumental.wav"),
+                       method: .coreML)
+    }
+
+    private static func isCached(_ stems: SeparatedStems) -> Bool {
+        [stems.mixURL, stems.vocalGuideURL, stems.instrumentalURL].allSatisfy { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    private static func writeStems(mix: [[Float]], vocalsMono: [Float], instrumental: [[Float]],
+                                   to folder: URL, stems: SeparatedStems) throws {
+        // Written to a scratch folder and moved in whole: a separation stopped half way
+        // (app killed while writing) must never leave stems that look complete.
+        let fileManager = FileManager.default
+        let scratch = folder.deletingLastPathComponent()
+            .appendingPathComponent(folder.lastPathComponent + ".partial-" + UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: scratch, withIntermediateDirectories: true)
+        do {
+            try Self.write(mix, to: scratch.appendingPathComponent(stems.mixURL.lastPathComponent))
+            try Self.write([vocalsMono], to: scratch.appendingPathComponent(stems.vocalGuideURL.lastPathComponent))
+            try Self.write(instrumental, to: scratch.appendingPathComponent(stems.instrumentalURL.lastPathComponent))
+            try? fileManager.removeItem(at: folder)
+            try fileManager.moveItem(at: scratch, to: folder)
+        } catch {
+            try? fileManager.removeItem(at: scratch)
+            throw error
+        }
     }
 
     // MARK: - Model
@@ -120,23 +185,40 @@ nonisolated final class HTDemucsStemSeparationRepository: StemSeparationReposito
 
     // MARK: - Separation
 
-    /// Vocal and instrumental (drums + bass + other) estimate per channel, same length as the input.
+    /// Mono vocal and stereo instrumental (drums + bass + other) estimate, same length as the input.
     /// Per-sample work goes through vDSP so Debug builds (no Swift optimisation) stay fast.
-    static func separate(_ channels: [[Float]], model: MLModel) throws -> (vocals: [[Float]], instrumental: [[Float]]) {
+    static func separate(_ channels: [[Float]], model: MLModel) throws -> (vocals: [Float], instrumental: [[Float]]) {
         let spectrogram = DemucsSpectrogram()
         let segment = segmentSamples
         let frames = spectrogram.frameCount(sampleCount: segment)
         let bins = DemucsSpectrogram.bins
         let length = channels[0].count
-        let stride = segment * 3 / 4
+        // 12.5 % overlap (~0.975 s triangular crossfade): saves ~18–29 % chunks vs 25 % overlap
+        // while keeping clean seam blending, and aligns the final window flush to `length`.
+        let stride = segment * 7 / 8
+        let offsets: [Int]
+        if length <= segment {
+            offsets = [0]
+        } else {
+            var list: [Int] = []
+            var offset = 0
+            while offset + segment < length {
+                list.append(offset)
+                offset += stride
+            }
+            let last = length - segment
+            if list.last != last { list.append(last) }
+            offsets = list
+        }
         // Triangle peaking mid-window (apply_model, transition power 1): 1, 2, …, half, …, 2, 1 over half.
         let half = segment / 2
         let weight = vDSP.divide(vDSP.ramp(withInitialValue: 1, increment: 1, count: half)
                                      + vDSP.ramp(withInitialValue: Float(segment - half), increment: -1, count: segment - half),
                                  Float(half))
-        let targets = [[vocalsSource], (0..<sources.count).filter { $0 != vocalsSource }]
+        let instrumentalSources = (0..<sources.count).filter { $0 != vocalsSource }
 
-        var output = [[[Float]]](repeating: [[Float]](repeating: [Float](repeating: 0, count: length), count: 2), count: targets.count)
+        var vocalsMono = [Float](repeating: 0, count: length)
+        var instrumental = [[Float]](repeating: [Float](repeating: 0, count: length), count: 2)
         var total = [Float](repeating: 0, count: length)
         let mixInput = try MLMultiArray(shape: [1, 2, NSNumber(value: segment)], dataType: .float32)
         let specInput = try MLMultiArray(shape: [1, 4, NSNumber(value: bins), NSNumber(value: frames)], dataType: .float32)
@@ -146,11 +228,12 @@ nonisolated final class HTDemucsStemSeparationRepository: StemSeparationReposito
         var inputTime = Duration.zero, modelTime = Duration.zero, outputTime = Duration.zero
         var chunks = 0
 
-        for offset in Swift.stride(from: 0, to: length, by: stride) {
+        for offset in offsets {
+            try Task.checkCancellation()
             // Free each chunk's CoreML buffers right away; otherwise they pile up until the loop ends
             // (7 GB for a 4.6 min song).
             try autoreleasepool {
-                // demucs TensorChunk.padded: a short last chunk is centred, with real audio as context.
+                // demucs TensorChunk.padded: a short single chunk is centred.
                 let count = min(segment, length - offset)
                 let trim = (segment - count) / 2
                 let start = offset - trim
@@ -192,31 +275,52 @@ nonisolated final class HTDemucsStemSeparationRepository: StemSeparationReposito
                 total.withUnsafeMutableBufferPointer {
                     vDSP_vadd(weight, 1, $0.baseAddress! + offset, 1, $0.baseAddress! + offset, 1, vDSP_Length(count))
                 }
-                for (target, sourceIndices) in targets.enumerated() {
+
+                // Vocals: average L + R in the linear spectrum and time branch so only one iSTFT runs.
+                func monoVocalSpec(_ part: Int) -> [Float] {
+                    let left = readPlane(specValues + (vocalsSource * 4 + part) * so[1], binStride: so[2], frameStride: so[3], bins: bins, frames: frames)
+                    let right = readPlane(specValues + (vocalsSource * 4 + 2 + part) * so[1], binStride: so[2], frameStride: so[3], bins: bins, frames: frames)
+                    return vDSP.multiply(0.5, vDSP.add(left, right))
+                }
+                let vocalReal = monoVocalSpec(0), vocalImag = monoVocalSpec(1)
+                let vocalSpectra = (0..<frames).map { t in
+                    ShortTimeFourierTransform.Spectrum(real: Array(vocalReal[(t * bins)..<((t + 1) * bins)]) + [0],
+                                                       imaginary: Array(vocalImag[(t * bins)..<((t + 1) * bins)]) + [0])
+                }
+                var vocalChunk = Array(spectrogram.inverse(vocalSpectra, length: segment)[trim..<(trim + count)])
+                var halfScalar: Float = 0.5
+                vocalChunk.withUnsafeMutableBufferPointer { samples in
                     for c in 0..<2 {
-                        // Sum the target's sources first: iSTFT is linear, so one inverse per target.
-                        func summed(_ part: Int) -> [Float] {
-                            sourceIndices.map { s in
-                                readPlane(specValues + (s * 4 + 2 * c + part) * so[1], binStride: so[2], frameStride: so[3],
-                                          bins: bins, frames: frames)
-                            }.reduce([Float](repeating: 0, count: bins * frames)) { vDSP.add($0, $1) }
+                        vDSP_vsma(waveValues + (vocalsSource * 2 + c) * wo[1] + trim * wo[2], vDSP_Stride(wo[2]),
+                                  &halfScalar, samples.baseAddress!, 1, samples.baseAddress!, 1, vDSP_Length(count))
+                    }
+                }
+                vocalsMono.withUnsafeMutableBufferPointer {
+                    vDSP_vma(vocalChunk, 1, weight, 1, $0.baseAddress! + offset, 1, $0.baseAddress! + offset, 1, vDSP_Length(count))
+                }
+
+                // Instrumental: stereo drums + bass + other (one iSTFT per channel).
+                for c in 0..<2 {
+                    func summed(_ part: Int) -> [Float] {
+                        instrumentalSources.map { s in
+                            readPlane(specValues + (s * 4 + 2 * c + part) * so[1], binStride: so[2], frameStride: so[3],
+                                      bins: bins, frames: frames)
+                        }.reduce([Float](repeating: 0, count: bins * frames)) { vDSP.add($0, $1) }
+                    }
+                    let real = summed(0), imaginary = summed(1)
+                    let spectra = (0..<frames).map { t in
+                        ShortTimeFourierTransform.Spectrum(real: Array(real[(t * bins)..<((t + 1) * bins)]) + [0],
+                                                           imaginary: Array(imaginary[(t * bins)..<((t + 1) * bins)]) + [0])
+                    }
+                    var chunk = Array(spectrogram.inverse(spectra, length: segment)[trim..<(trim + count)])
+                    chunk.withUnsafeMutableBufferPointer { samples in
+                        for s in instrumentalSources {
+                            vDSP_vadd(samples.baseAddress!, 1, waveValues + (s * 2 + c) * wo[1] + trim * wo[2], vDSP_Stride(wo[2]),
+                                      samples.baseAddress!, 1, vDSP_Length(count))
                         }
-                        let real = summed(0), imaginary = summed(1)
-                        let spectra = (0..<frames).map { t in
-                            ShortTimeFourierTransform.Spectrum(real: Array(real[(t * bins)..<((t + 1) * bins)]) + [0],
-                                                               imaginary: Array(imaginary[(t * bins)..<((t + 1) * bins)]) + [0])
-                        }
-                        // Frequency branch + the sources' time branch, then weighted into the output.
-                        var chunk = Array(spectrogram.inverse(spectra, length: segment)[trim..<(trim + count)])
-                        chunk.withUnsafeMutableBufferPointer { samples in
-                            for s in sourceIndices {
-                                vDSP_vadd(samples.baseAddress!, 1, waveValues + (s * 2 + c) * wo[1] + trim * wo[2], vDSP_Stride(wo[2]),
-                                          samples.baseAddress!, 1, vDSP_Length(count))
-                            }
-                        }
-                        output[target][c].withUnsafeMutableBufferPointer {
-                            vDSP_vma(chunk, 1, weight, 1, $0.baseAddress! + offset, 1, $0.baseAddress! + offset, 1, vDSP_Length(count))
-                        }
+                    }
+                    instrumental[c].withUnsafeMutableBufferPointer {
+                        vDSP_vma(chunk, 1, weight, 1, $0.baseAddress! + offset, 1, $0.baseAddress! + offset, 1, vDSP_Length(count))
                     }
                 }
                 outputTime += clock.now - outputStarted
@@ -228,8 +332,7 @@ nonisolated final class HTDemucsStemSeparationRepository: StemSeparationReposito
             """)
 
         // Every sample is covered by at least one chunk, so total > 0.
-        let normalized = output.map { target in target.map { vDSP.divide($0, total) } }
-        return (normalized[0], normalized[1])
+        return (vDSP.divide(vocalsMono, total), instrumental.map { vDSP.divide($0, total) })
     }
 
     // MARK: - Strided copies (vDSP)
@@ -300,18 +403,31 @@ nonisolated final class HTDemucsStemSeparationRepository: StemSeparationReposito
         guard reader.canAdd(output) else { throw CoreMLSeparationError.unreadable }
         reader.add(output)
         guard reader.startReading() else { throw CoreMLSeparationError.unreadable }
+        let expected = Int(((trim.upperBound - trim.lowerBound) * sampleRate).rounded())
         var left: [Float] = [], right: [Float] = []
+        left.reserveCapacity(expected)
+        right.reserveCapacity(expected)
         while let buffer = output.copyNextSampleBuffer(), let block = CMSampleBufferGetDataBuffer(buffer) {
             let length = CMBlockBufferGetDataLength(block)
-            var data = [Float](repeating: 0, count: length / MemoryLayout<Float>.size)
+            let sampleCount = length / MemoryLayout<Float>.size
+            let frameCount = sampleCount / 2
+            guard frameCount > 0 else { continue }
+            var data = [Float](repeating: 0, count: sampleCount)
             data.withUnsafeMutableBytes { _ = CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: $0.baseAddress!) }
-            for i in stride(from: 0, to: data.count - 1, by: 2) {
-                left.append(data[i])
-                right.append(data[i + 1])
+            var chunkL = [Float](repeating: 0, count: frameCount)
+            var chunkR = [Float](repeating: 0, count: frameCount)
+            chunkL.withUnsafeMutableBufferPointer { lp in
+                chunkR.withUnsafeMutableBufferPointer { rp in
+                    var split = DSPSplitComplex(realp: lp.baseAddress!, imagp: rp.baseAddress!)
+                    data.withUnsafeBytes {
+                        vDSP_ctoz($0.bindMemory(to: DSPComplex.self).baseAddress!, 2, &split, 1, vDSP_Length(frameCount))
+                    }
+                }
             }
+            left.append(contentsOf: chunkL)
+            right.append(contentsOf: chunkR)
         }
         guard reader.status == .completed, !left.isEmpty else { throw CoreMLSeparationError.unreadable }
-        let expected = Int(((trim.upperBound - trim.lowerBound) * sampleRate).rounded())
         return [left, right].map { channel in
             channel.count >= expected ? Array(channel.prefix(expected)) : channel + [Float](repeating: 0, count: expected - channel.count)
         }

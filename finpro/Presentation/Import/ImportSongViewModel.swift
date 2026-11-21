@@ -11,6 +11,7 @@
 import Foundation
 import Observation
 import os
+import Synchronization
 
 @Observable
 final class ImportSongViewModel {
@@ -284,18 +285,26 @@ final class ImportSongViewModel {
         }
         status = .preparing(step: "Starting…")
         let token = generation
+        let clock = ContinuousClock()
+        let started = clock.now
+        let marks = Mutex<[(step: String, at: ContinuousClock.Instant)]>([])
         preparation = Task { [prepare] in
             do {
                 let choices = try await prepare.executeChoices(audioURL: audio.url, trimRange: trim, vocalRange: range,
                                                                lyricLines: lyricLines, recommendationLimit: 1) { step in
+                    let now = clock.now
+                    marks.withLock { $0.append((step, now)) }
                     Task { @MainActor in
                         if self.generation == token, case .preparing = self.status { self.status = .preparing(step: step) }
                     }
                 }
+                let finished = clock.now
                 try Task.checkCancellation()
                 guard generation == token else { return }
                 preparedChoices = choices
                 preparedLyrics = Self.lyrics(lyrics, sungAt: choices.guideWords, shift: choices.lyricLineShift)
+                Self.logPreparationTiming(duration: trim.upperBound - trim.lowerBound, started: started, finished: finished,
+                                          marks: marks.withLock { $0 })
                 Self.logPrepared(choices, lyricLines: lyricLines.count, file: audio.url.lastPathComponent, trim: trim)
                 status = .prepared
             } catch is CancellationError {
@@ -303,12 +312,26 @@ final class ImportSongViewModel {
                 status = .trimming(audio)
             } catch {
                 guard generation == token else { return }
+                Self.log.error("preparation failed: \(String(describing: error), privacy: .public)")
                 status = .failed(Self.userFacing(error))
             }
         }
     }
 
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Preparation")
+
+    /// Total wall-clock time and duration of each preparation step, for profiling on a real phone.
+    private static func logPreparationTiming(duration: TimeInterval, started: ContinuousClock.Instant,
+                                             finished: ContinuousClock.Instant,
+                                             marks: [(step: String, at: ContinuousClock.Instant)]) {
+        let total = (finished - started) / .seconds(1)
+        let steps = marks.indices.map { i -> String in
+            let end = i + 1 < marks.count ? marks[i + 1].at : finished
+            let elapsed = (end - marks[i].at) / .seconds(1)
+            return "\(marks[i].step) \(String(format: "%.2f", elapsed)) s"
+        }.joined(separator: ", ")
+        log.notice("preparation timing: \(duration, format: .fixed(precision: 1)) s in \(total, format: .fixed(precision: 2)) s | \(steps, privacy: .public)")
+    }
 
     /// Which guide the keys were planned on and what came out, to trace a surprising key choice.
     private static func logPrepared(_ choices: PrepareSongUseCase.Choices, lyricLines: Int, file: String,

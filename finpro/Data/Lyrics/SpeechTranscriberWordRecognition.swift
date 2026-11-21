@@ -28,15 +28,17 @@ nonisolated struct SpeechTranscriberWordRecognition: SungWordRecognitionReposito
 
     @available(iOS 26.0, *)
     private static func recognize(_ url: URL, lyrics: String, downloadLimit: Duration) async -> [RecognizedWord] {
+        let clock = ContinuousClock()
+        let started = clock.now
         guard SpeechTranscriber.isAvailable else {
-            log.notice("speech transcription unavailable on this device")
+            log.notice("speech transcription unavailable on this device (\((clock.now - started) / .seconds(1), format: .fixed(precision: 2)) s)")
             return []
         }
         let languageRecognizer = NLLanguageRecognizer()
         languageRecognizer.processString(lyrics)
         guard let language = languageRecognizer.dominantLanguage,
               let locale = await supportedLocale(for: language.rawValue) else {
-            log.notice("no on-device recognizer for the lyrics' language")
+            log.notice("no on-device recognizer for the lyrics' language (\((clock.now - started) / .seconds(1), format: .fixed(precision: 2)) s)")
             return []
         }
         let transcriber = SpeechTranscriber(locale: locale, transcriptionOptions: [], reportingOptions: [],
@@ -80,6 +82,8 @@ nonisolated struct SpeechTranscriberWordRecognition: SungWordRecognitionReposito
                     return []
                 }
             }
+            let analyzeStarted = clock.now
+            let setupSeconds = (analyzeStarted - started) / .seconds(1)
             let analyzer = SpeechAnalyzer(modules: [transcriber])
             let file = try AVAudioFile(forReading: url)
             let collect = Task { () -> [RecognizedWord] in
@@ -100,7 +104,12 @@ nonisolated struct SpeechTranscriberWordRecognition: SungWordRecognitionReposito
                 await analyzer.cancelAndFinishNow()
             }
             let words = try await collect.value.sorted { $0.startTime < $1.startTime }
-            log.notice("recognized \(words.count, privacy: .public) words (\(locale.identifier, privacy: .public))")
+            let analyzeSeconds = (clock.now - analyzeStarted) / .seconds(1)
+            let totalSeconds = (clock.now - started) / .seconds(1)
+            log.notice("""
+                recognized \(words.count, privacy: .public) words (\(locale.identifier, privacy: .public)) in \(totalSeconds, format: .fixed(precision: 2)) s \
+                (setup \(setupSeconds, format: .fixed(precision: 2)) s, analyze \(analyzeSeconds, format: .fixed(precision: 2)) s)
+                """)
             return words
         } catch {
             log.error("word recognition failed: \(error.localizedDescription, privacy: .public)")

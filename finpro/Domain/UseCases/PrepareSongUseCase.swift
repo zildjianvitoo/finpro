@@ -78,17 +78,42 @@ nonisolated struct PrepareSongUseCase: Sendable {
                         lyricLines: [LyricGuideNotesUseCase.Line] = [],
                         recommendationLimit: Int? = nil,
                         progress: @escaping @Sendable (String) -> Void = { _ in }) async throws -> Choices {
-        let (stems, extracted) = try await extract(audioURL: audioURL, trimRange: trimRange, progress: progress)
-        let duration = trimRange.upperBound - trimRange.lowerBound
-        let leadIn = await leadInStems(audioURL: audioURL, trimRange: trimRange, progress: progress)
-        try Task.checkCancellation()
-        var recognized: [RecognizedWord] = []
-        if let wordRecognition, !lyricLines.isEmpty {
-            progress("Matching the lyrics")
-            recognized = await wordRecognition.recognizeWords(in: stems.vocalGuideURL,
-                                                              lyrics: lyricLines.flatMap(\.words).joined(separator: " "))
-            try Task.checkCancellation()
+        guard trimRange.lowerBound.isFinite, trimRange.upperBound.isFinite,
+              trimRange.lowerBound >= 0, trimRange.upperBound > trimRange.lowerBound else {
+            throw ContractViolation(contract: "Preparation", message: "Invalid trim range.")
         }
+        try Task.checkCancellation()
+        let duration = trimRange.upperBound - trimRange.lowerBound
+        let leadLength = min(configuration.preRoll, trimRange.lowerBound)
+        let wantsLeadIn = leadLength >= Self.minimumLeadIn
+
+        progress("Separating vocals and backing music")
+        let stems: SeparatedStems
+        let leadIn: LeadInStems?
+        if let combined = separation as? any LeadInStemSeparation {
+            let result = try await combined.separateStems(from: audioURL, trimRange: trimRange,
+                                                          leadInDuration: wantsLeadIn ? leadLength : 0)
+            stems = result.stems
+            leadIn = result.leadIn.map { LeadInStems(stems: $0, duration: leadLength) }
+        } else {
+            stems = try await separation.separateStems(from: audioURL, trimRange: trimRange)
+            leadIn = wantsLeadIn ? await leadInStems(audioURL: audioURL, trimRange: trimRange, progress: progress) : nil
+        }
+        try Task.checkCancellation()
+
+        // Pitch extraction (CREPE) and word recognition (SpeechTranscriber) both read only the
+        // separated vocal stem, so they run in parallel.
+        progress("Extracting the vocal guide")
+        async let extractedTask = analyzeVocalGuide(from: stems.vocalGuideURL, progress: progress)
+        async let recognizedTask: [RecognizedWord] = {
+            guard let wordRecognition, !lyricLines.isEmpty else { return [] }
+            return await wordRecognition.recognizeWords(in: stems.vocalGuideURL,
+                                                        lyrics: lyricLines.flatMap(\.words).joined(separator: " "))
+        }()
+        let extracted = try await extractedTask
+        let recognized = await recognizedTask
+        try Task.checkCancellation()
+
         let lyricGuide = LyricGuideNotesUseCase().execute(pitchNotes: extracted, lines: lyricLines, recognized: recognized)
         guard !lyricGuide.notes.isEmpty else {
             // No lyrics: the raw pitch notes, with the tracker's octave errors folded back so the
@@ -129,14 +154,16 @@ nonisolated struct PrepareSongUseCase: Sendable {
             try Task.checkCancellation()
             progress("Preparing key \(index + 1) of \(recommendations.count)")
             let shift = recommendation.plan.semitoneShift
-            let mix = try await transposition.renderTransposed(stems.mixURL, semitones: shift)
-            try Task.checkCancellation()
-            let instrumental = try await transposition.renderTransposed(stems.instrumentalURL, semitones: shift)
+            async let mixTask = transposition.renderTransposed(stems.mixURL, semitones: shift)
+            async let instrumentalTask = transposition.renderTransposed(stems.instrumentalURL, semitones: shift)
+            async let leadInTask = Self.renderLeadIn(leadIn, semitones: shift, transposition: transposition)
+            let mix = try await mixTask
+            let instrumental = try await instrumentalTask
+            let renderedLeadIn = await leadInTask
             try Task.checkCancellation()
             var song = PreparedSong(earphoneMixURL: mix, instrumentalURL: instrumental, segments: segments,
                                     transposition: recommendation.plan, duration: duration, separationMethod: stems.method)
-            song.leadIn = await Self.renderLeadIn(leadIn, semitones: shift, transposition: transposition)
-            try Task.checkCancellation()
+            song.leadIn = renderedLeadIn
             if let violation = song.validate().first { throw violation }
             options.append(Choices.Option(song: song, recommendation: recommendation))
         }
@@ -160,10 +187,10 @@ nonisolated struct PrepareSongUseCase: Sendable {
     /// `leadIn` in the key `semitones` away, like the song's own tracks; nil when it fails.
     static func renderLeadIn(_ leadIn: LeadInStems?, semitones: Int,
                              transposition: any AudioTranspositionRepository) async -> PreparedSong.LeadIn? {
-        guard let leadIn,
-              let mix = try? await transposition.renderTransposed(leadIn.stems.mixURL, semitones: semitones),
-              let instrumental = try? await transposition.renderTransposed(leadIn.stems.instrumentalURL, semitones: semitones)
-        else { return nil }
+        guard let leadIn else { return nil }
+        async let mixTask = try? transposition.renderTransposed(leadIn.stems.mixURL, semitones: semitones)
+        async let instrumentalTask = try? transposition.renderTransposed(leadIn.stems.instrumentalURL, semitones: semitones)
+        guard let mix = await mixTask, let instrumental = await instrumentalTask else { return nil }
         return PreparedSong.LeadIn(mixURL: mix, instrumentalURL: instrumental, duration: leadIn.duration)
     }
 
@@ -177,20 +204,24 @@ nonisolated struct PrepareSongUseCase: Sendable {
         progress("Separating vocals and backing music")
         let stems = try await separation.separateStems(from: audioURL, trimRange: trimRange)
         progress("Extracting the vocal guide")
-        let extracted: [TargetMIDINote]
+        let extracted = try await analyzeVocalGuide(from: stems.vocalGuideURL, progress: progress)
+        return (stems, extracted)
+    }
+
+    private func analyzeVocalGuide(from vocalGuideURL: URL,
+                                   progress: @escaping @Sendable (String) -> Void) async throws -> [TargetMIDINote] {
         do {
-            let primary = try await analysis.extractVocalGuideNotes(from: stems.vocalGuideURL)
+            let primary = try await analysis.extractVocalGuideNotes(from: vocalGuideURL)
             guard !primary.isEmpty else {
                 throw ContractViolation(contract: "Preparation", message: "No guide notes detected.")
             }
-            extracted = primary
+            return primary
         } catch {
             try Task.checkCancellation()
             guard let fallbackAnalysis else { throw error }
             progress("Using fallback pitch analysis")
-            extracted = try await fallbackAnalysis.extractVocalGuideNotes(from: stems.vocalGuideURL)
+            return try await fallbackAnalysis.extractVocalGuideNotes(from: vocalGuideURL)
         }
-        return (stems, extracted)
     }
 
 }
