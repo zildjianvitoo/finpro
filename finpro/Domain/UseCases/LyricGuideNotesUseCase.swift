@@ -102,6 +102,11 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
     /// Shortest duration preserved for a line's last word when trimming its estimated tail to make
     /// room for an anchored next line.
     static let minimumWordDuration: TimeInterval = 0.15
+    /// Widest global offset (e.g. a music-video or vinyl intro missing from LRCLIB) detected by
+    /// matching recognized words against the lyric text; kept below a typical chorus repeat gap.
+    static let maximumRecognizedOffset: TimeInterval = 8.0
+    static let recognizedOffsetStep: TimeInterval = 0.25
+    static let recognizedOffsetTolerance: TimeInterval = 0.75
 
     /// `pitchNotes`: the notes found in the vocal guide (original key), any order. `recognized`:
     /// words heard in the vocal stem; a lyric word matched to one starts where it was heard, and
@@ -111,7 +116,8 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
         let pitched = pitchNotes
             .filter { $0.startTime.isFinite && $0.endTime.isFinite && $0.duration > 0 }
             .sorted { $0.startTime < $1.startTime }
-        let shift = Self.lineShift(lines: lines, pitched: pitched)
+        let shift = Self.recognizedGlobalShift(lines: lines, recognized: recognized)
+            ?? Self.lineShift(lines: lines, pitched: pitched)
         var notes: [TargetMIDINote] = []
         var words: [[Word]] = []
         for unshifted in lines {
@@ -163,6 +169,121 @@ nonisolated struct LyricGuideNotesUseCase: Sendable {
             }
         }
         return best - attackLead
+    }
+
+    /// Detects a large global lyric offset (beyond `lineShiftRange`, e.g. a music-video or vinyl
+    /// intro missing from LRCLIB) by matching recognized vocal words against the lyric text.
+    /// Returns `nil` whenever the lyrics already align within `±lineShiftRange` or when there is
+    /// not overwhelming multi-word consensus, so normal songs stay completely untouched.
+    static func recognizedGlobalShift(lines: [Line], recognized: [RecognizedWord]) -> TimeInterval? {
+        guard !recognized.isEmpty, !lines.isEmpty else { return nil }
+        var heard: [(text: String, start: TimeInterval)] = []
+        for word in recognized {
+            let parts = word.text.split(whereSeparator: \.isWhitespace)
+                .map { normalized(String($0)) }
+                .filter { !$0.isEmpty }
+            guard !parts.isEmpty else { continue }
+            let end = max(word.endTime, word.startTime)
+            let step = (end - word.startTime) / Double(parts.count)
+            for (idx, part) in parts.enumerated() {
+                heard.append((part, word.startTime + Double(idx) * step))
+            }
+        }
+        heard.sort { $0.start < $1.start }
+
+        var expected: [(text: String, time: TimeInterval, lineIndex: Int)] = []
+        for (lineIndex, line) in lines.enumerated() where line.words.count == line.wordWeights.count && line.end > line.start {
+            let total = line.wordWeights.reduce(0, +)
+            guard total > 0 else { continue }
+            var cumulative = 0.0
+            for (wordText, weight) in zip(line.words, line.wordWeights) {
+                let norm = normalized(wordText)
+                let start = line.start + (line.end - line.start) * (cumulative / total)
+                cumulative += weight
+                if !norm.isEmpty {
+                    expected.append((norm, start, lineIndex))
+                }
+            }
+        }
+        let minimumWords = expected.count < 15 ? 4 : 5
+        guard expected.count >= minimumWords, heard.count >= minimumWords else { return nil }
+
+        struct Score {
+            let delta: TimeInterval
+            let words: Int
+            let bigrams: Int
+            let deltas: [TimeInterval]
+            func beats(_ other: Score) -> Bool {
+                if bigrams != other.bigrams { return bigrams > other.bigrams }
+                if words != other.words { return words > other.words }
+                return abs(delta) < abs(other.delta)
+            }
+        }
+
+        func evaluate(_ delta: TimeInterval) -> Score {
+            var matchedDeltas: [TimeInterval] = []
+            var bigrams = 0
+            var lastHeard = -1
+            var prevExpected = -2
+            var prevLine = -1
+            var prevHeard = -10
+            for (expIdx, word) in expected.enumerated() {
+                let target = word.time + delta
+                let low = target - recognizedOffsetTolerance
+                let high = target + recognizedOffsetTolerance
+                var bestIdx: Int?
+                var bestErr = Double.infinity
+                var j = lastHeard + 1
+                while j < heard.count {
+                    let t = heard[j].start
+                    if t > high { break }
+                    if t >= low && heard[j].text == word.text {
+                        let err = abs(t - target)
+                        if err < bestErr {
+                            bestErr = err
+                            bestIdx = j
+                        }
+                    }
+                    j += 1
+                }
+                if let match = bestIdx {
+                    matchedDeltas.append(heard[match].start - word.time)
+                    if prevExpected == expIdx - 1 && prevLine == word.lineIndex && match <= prevHeard + 2 {
+                        bigrams += 1
+                    }
+                    lastHeard = match
+                    prevExpected = expIdx
+                    prevLine = word.lineIndex
+                    prevHeard = match
+                }
+            }
+            return Score(delta: delta, words: matchedDeltas.count, bigrams: bigrams, deltas: matchedDeltas)
+        }
+
+        let maxSteps = Int((maximumRecognizedOffset / recognizedOffsetStep).rounded())
+        var nearZero = Score(delta: 0, words: 0, bigrams: 0, deltas: [])
+        var best = nearZero
+        for step in -maxSteps...maxSteps {
+            let delta = Double(step) * recognizedOffsetStep
+            let candidate = evaluate(delta)
+            if abs(delta) <= lineShiftRange + epsilon, candidate.beats(nearZero) {
+                nearZero = candidate
+            }
+            if candidate.beats(best) {
+                best = candidate
+            }
+        }
+
+        guard abs(best.delta) > lineShiftRange,
+              best.words >= minimumWords,
+              best.bigrams >= 2,
+              best.words >= max(nearZero.words * 2, nearZero.words + 4),
+              best.bigrams > nearZero.bigrams else {
+            return nil
+        }
+        let sorted = best.deltas.sorted()
+        let mid = sorted.count / 2
+        return sorted.count.isMultiple(of: 2) ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid]
     }
 
     /// Moves each line's words onto the recognized words that match them (in order, near the line);
