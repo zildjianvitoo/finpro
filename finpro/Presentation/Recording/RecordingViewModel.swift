@@ -256,16 +256,27 @@ final class RecordingViewModel {
     }
     var canPause: Bool { status == .recording && (loop.canPause || isPaused) }
 
-    /// Time spent singing, on the capture clock (display only; cuts never use it). It starts when
-    /// a countdown ends and stands still during countdowns and pauses: the camera already runs then
-    /// (one continuous raw file), but those moments are never part of the cover.
+    /// Time of the cover recorded so far (display only; cuts never use it). Advances while
+    /// singing a segment, stands still during countdowns, pre-roll and pauses, and rewinds to
+    /// the segment start when a segment is paused or deleted.
     func elapsedRecordingTime() -> TimeInterval {
         guard status == .recording || status == .finishing else { return 0 }
         guard isSingingPhase, let lastTimerTick else { return singingTime }
         return singingTime + max(0, capture.currentCaptureTime().seconds - lastTimerTick)
     }
 
-    private var isSingingPhase: Bool { loop.phase == .preRoll || loop.phase == .singing }
+    private var isSingingPhase: Bool { loop.phase == .singing }
+
+    /// Cumulative cover duration before `segmentIndex` within the current pass.
+    private func segmentBaseTime(_ segmentIndex: Int) -> TimeInterval {
+        guard song.segments.indices.contains(loop.range.lowerBound) else { return 0 }
+        let passOrigin = song.segments[loop.range.lowerBound].audioStartTime
+        if segmentIndex >= loop.range.upperBound {
+            return max(0, song.segments[loop.range.upperBound - 1].audioEndTime - passOrigin)
+        }
+        let clamped = max(loop.range.lowerBound, segmentIndex)
+        return max(0, song.segments[clamped].audioStartTime - passOrigin)
+    }
 
     // MARK: - Session
 
@@ -391,6 +402,8 @@ final class RecordingViewModel {
     func pause() {
         guard status == .recording, loop.canPause else { return }
         perform(loop.pause())
+        singingTime = segmentBaseTime(loop.segmentIndex)
+        lastTimerTick = nil
         anchor = nil
         evaluations = []
         trail = []
@@ -421,6 +434,8 @@ final class RecordingViewModel {
                 missedNoteIDs: [],
                 status: .failed))
         }
+        singingTime = segmentBaseTime(target)
+        lastTimerTick = nil
         anchor = nil
         evaluations = []
         trail = []
