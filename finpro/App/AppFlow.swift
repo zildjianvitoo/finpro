@@ -34,10 +34,6 @@ final class AppFlow {
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Flow")
     private(set) var importOrigin: Step = .home
     private(set) var selectedLibrarySongID: UUID?
-    /// The import screen edits a song from the library ("Choose Song Section"). Set when the
-    /// screen opens, not when the song gets saved: a new import is saved as preparation starts,
-    /// and the sheet switched layout under the preparing screen.
-    private(set) var importEditsSavedSong = false
     var selectedLibrarySong: SavedSong? { container.songLibrary.songs.first { $0.id == selectedLibrarySongID } }
     private(set) var preparedSong: PreparedSong?
     private(set) var keyChoices: PrepareSongUseCase.Choices?
@@ -66,6 +62,7 @@ final class AppFlow {
     private(set) var isCoverExported = false
     /// The last copy of the cover's working files to `CoverDraftStore`; later saves and deletes wait for it.
     @ObservationIgnored private var draftSave: Task<Void, Never>?
+    @ObservationIgnored private var warmUpStarted = false
 
     init(container: AppContainer) {
         self.container = container
@@ -92,18 +89,31 @@ final class AppFlow {
         default: break
         }
         #endif
-        // Leftovers from a session that ended in a crash.
-        SessionFiles.cleanUp()
-        // Only drafts can be opened again; finished or removed covers don't need their working files.
+        // Leftovers from a session that ended in a crash, plus obsolete draft folders: clean off
+        // the main thread so fresh launch paints its first frame immediately.
         let draftIDs = Set(container.coverLibrary.covers.filter(\.isDraft).map(\.id))
         let drafts = container.coverDrafts
-        draftSave = Task.detached(priority: .utility) { drafts.deleteAll(except: draftIDs) }
-        container.modelPrewarmer?.start()
+        draftSave = Task.detached(priority: .utility) {
+            SessionFiles.cleanUp()
+            drafts.deleteAll(except: draftIDs)
+        }
         #if DEBUG
         if DebugOptions.launchScreen == "recording" {
             Task { await openRecordingWithDemoSong() }
         }
         #endif
+    }
+
+    /// Starts CoreML and video encoder warm-up after the first frame (and splash) have painted,
+    /// so fresh installs do not stall on a white launch screen competing with GPU/ANE/VideoToolbox.
+    func startBackgroundWarmUp() {
+        guard !warmUpStarted else { return }
+        warmUpStarted = true
+        let prewarmer = container.modelPrewarmer
+        Task.detached(priority: .utility) {
+            try? await Task.sleep(for: .seconds(1.5))
+            prewarmer?.start()
+        }
     }
 
     #if DEBUG
@@ -143,7 +153,6 @@ final class AppFlow {
     func createNewCover() {
         importOrigin = step == .songList ? .songList : .home
         selectedLibrarySongID = nil
-        importEditsSavedSong = false
         step = .importSong
     }
 
@@ -153,7 +162,6 @@ final class AppFlow {
         container.audioPreview.stop()
         importOrigin = step == .songList ? .songList : .home
         selectedLibrarySongID = song.id
-        importEditsSavedSong = true
         step = .importSong
     }
     func sourceSongSaved(_ id: UUID) { selectedLibrarySongID = id }
@@ -167,7 +175,6 @@ final class AppFlow {
     func savedToSongList() { container.audioPreview.stop(); step = .songList }
     func returnToSongSection() {
         container.audioPreview.stop()
-        importEditsSavedSong = selectedLibrarySongID != nil
         step = .importSong
     }
 
