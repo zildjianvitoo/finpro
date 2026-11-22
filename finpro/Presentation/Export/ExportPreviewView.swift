@@ -241,7 +241,7 @@ struct ExportPreviewView: View {
             HStack {
                 Button {
                     player?.pause()
-                    confirmsLeave = true
+                    requestLeave()
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.title3.weight(.medium))
@@ -317,23 +317,16 @@ struct ExportPreviewView: View {
         }
         .edgeSwipeBack(isEnabled: !confirmsLeave && !showsSound, interactiveSlide: false) {
             player?.pause()
-            confirmsLeave = true
+            requestLeave()
         }
         // A centred system alert (it pops in over a dimmed screen), not a dialog: Cancel stays here.
-        .alert(keepsCoverOnLeave ? "Save changes?" : "Leave recording?", isPresented: $confirmsLeave) {
-            if keepsCoverOnLeave {
-                // A cover reopened from Home or already exported: keep the edited vocal and music volume, or leave it as it was.
-                Button("Save and Exit") { saveCoverThen(onStartOver) }
-                Button("Cancel", role: .cancel, action: onStartOver)
-            } else {
-                // The cover is already on Home (saved after each export): keep it as a draft, or remove it.
-                Button("Save to Draft") { saveCoverThen(onSaveDraft) }
-                Button("Discard", role: .destructive, action: onDiscard)
-                Button("Cancel", role: .cancel) {}
-            }
+        .alert("Leave recording?", isPresented: $confirmsLeave) {
+            // The cover is already on Home (saved after each export): keep it as a draft, or remove it.
+            Button("Save to Draft") { saveCoverThen(onSaveDraft) }
+            Button("Discard", role: .destructive, action: onDiscard)
+            Button("Cancel", role: .cancel) {}
         } message: {
-            Text(keepsCoverOnLeave ? "Save the vocal and music volume you set before leaving?"
-                                 : "Keep this cover as a draft, or discard it?")
+            Text("Keep this cover as a draft, or discard it?")
         }
         .alert("Couldn't Save Your Cover", isPresented: Binding(get: { soundSaveError != nil }, set: { if !$0 { soundSaveError = nil } })) {
             Button("Leave Without Changes", role: .destructive) {
@@ -747,6 +740,37 @@ struct ExportPreviewView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+    }
+
+    private func requestLeave() {
+        guard keepsCoverOnLeave else {
+            confirmsLeave = true
+            return
+        }
+        // Present via UIAlertController so the preferred "Save" button uses native iOS blue
+        // instead of the app's plum AccentColor.
+        let window = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows)
+            .first { $0.isKeyWindow }
+        var top = window?.rootViewController
+        while let presented = top?.presentedViewController { top = presented }
+        guard let presenter = top else {
+            confirmsLeave = true
+            return
+        }
+        let alert = UIAlertController(
+            title: "Save changes?",
+            message: "Save the vocal and music volume you set before leaving?",
+            preferredStyle: .alert
+        )
+        alert.view.tintColor = .systemBlue
+        let cancel = UIAlertAction(title: "Cancel", style: .cancel) { _ in onStartOver() }
+        let save = UIAlertAction(title: "Save", style: .default) { _ in saveCoverThen(onStartOver) }
+        alert.addAction(cancel)
+        alert.addAction(save)
+        alert.preferredAction = save
+        presenter.present(alert, animated: true)
     }
 
     private func startExport() {
