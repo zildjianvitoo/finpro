@@ -8,10 +8,9 @@ import SwiftUI
 struct SongSectionLyrics: View {
     static let lineHeight: CGFloat = 24
     @Bindable var viewModel: ImportSongViewModel
-    /// Lyric colour: dark plum with light grey around it on a saved song (3.2c), plum with the
-    /// lines around it at half strength when picking a clip on import (4.4).
-    var tint: Color = .plumNight
-    var dimmedOpacity = 0.3
+    /// Lyric colour: plum with the surrounding lines at half strength (design 4.4).
+    var tint: Color = .primaryBrand
+    var dimmedOpacity = 0.5
     /// Scroll position of the lyrics; one line is `lineHeight` tall, so line `i` is in the middle
     /// at offset `i × lineHeight` (the content has one line of space above the first line).
     @State private var position = ScrollPosition(idType: Int.self)

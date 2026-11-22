@@ -14,7 +14,6 @@ enum AppLayout {
     static let microphoneDiameter: CGFloat = 140
     static let importSheetHeight: CGFloat = 435
     static let clipSheetHeight: CGFloat = 466
-    static let songSectionSheetHeight: CGFloat = 362
     /// Opacity of the plum loading overlay (`Color.loadingOverlay`) over a screen.
     static let loadingOverlayOpacity: Double = 0.55
     /// Over busy content right behind the loading text (the clip sheet while preparing a song).

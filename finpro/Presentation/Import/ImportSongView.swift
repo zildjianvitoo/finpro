@@ -18,13 +18,10 @@ struct ImportSongView: View {
     #endif
     @Environment(\.scenePhase) private var scenePhase
     let onBack: () -> Void
-    var isEditingSavedSong = false
 
-    init(viewModel: ImportSongViewModel, onBack: @escaping () -> Void,
-         isEditingSavedSong: Bool = false) {
+    init(viewModel: ImportSongViewModel, onBack: @escaping () -> Void) {
         _viewModel = State(initialValue: viewModel)
         self.onBack = onBack
-        self.isEditingSavedSong = isEditingSavedSong
     }
 
     var body: some View {
@@ -132,28 +129,18 @@ struct ImportSongView: View {
     }
 
     private var sheetHeight: CGFloat {
-        if isEditingSavedSong { return AppLayout.songSectionSheetHeight }
         if case .idle = viewModel.status { return AppLayout.importSheetHeight }
         if case .loading = viewModel.status { return AppLayout.importSheetHeight }
         return AppLayout.clipSheetHeight
     }
     private func sectionPicker(_ audio: ImportedAudio) -> some View {
         VStack(spacing: AppSpacing.regular) {
-            Text(isEditingSavedSong ? "Choose Song Section" : "Select Clip")
-                .font(.appHeadline).foregroundStyle(isEditingSavedSong ? Color.primary : Color.plumNight)
+            Text("Select Clip")
+                .font(.appHeadline).foregroundStyle(Color.plumNight)
                 .frame(maxWidth: .infinity, minHeight: AppLayout.iconButton)
-                .overlay(alignment: .trailing) {
-                    if isEditingSavedSong {
-                        Button(action: viewModel.prepareSelection) { Image(systemName: "checkmark") }
-                            .buttonStyle(.appIcon(.primary))
-                            .accessibilityLabel("Use selected section and find key")
-                    }
-                }
-            // Select Clip (design 4.4) has the lyrics closer under the title than 3.2c.
-            SongSectionLyrics(viewModel: viewModel,
-                              tint: isEditingSavedSong ? .plumNight : .primaryBrand,
-                              dimmedOpacity: isEditingSavedSong ? 0.3 : 0.5)
-                .padding(.top, isEditingSavedSong ? 20 : -15)
+            // Select Clip (design 4.4) keeps the lyrics close under the title.
+            SongSectionLyrics(viewModel: viewModel, tint: .primaryBrand, dimmedOpacity: 0.5)
+                .padding(.top, -15)
             Spacer(minLength: 0)
             SongSectionWaveform(viewModel: viewModel, audio: audio)
                 .frame(height: 80)
@@ -166,7 +153,7 @@ struct ImportSongView: View {
                 Text("\(time(viewModel.playbackTime ?? viewModel.selectionStart)) / \(time(audio.duration))")
             }
             .font(.appFootnote.weight(.medium)).foregroundStyle(Color.primaryBrand).monospacedDigit()
-            .padding(.top, isEditingSavedSong ? 0 : 11)
+            .padding(.top, 11)
             // The sheet keeps its height: an error takes the gap above the buttons instead of adding a row.
             Group {
                 if let error = viewModel.actionError {
@@ -175,13 +162,11 @@ struct ImportSongView: View {
                         .lineLimit(1).minimumScaleFactor(0.8)
                 }
             }
-            .frame(maxWidth: .infinity, minHeight: isEditingSavedSong ? AppSpacing.regular : AppSpacing.large)
+            .frame(maxWidth: .infinity, minHeight: AppSpacing.large)
             Spacer(minLength: 0)
-            if !isEditingSavedSong {
-                VStack(spacing: 10) {
-                    Button("Start Recording", action: viewModel.prepareSelection).buttonStyle(.appPrimary)
-                    Button("Save to Song List", action: viewModel.saveToSongList).buttonStyle(.appSecondary)
-                }
+            VStack(spacing: 10) {
+                Button("Start Recording", action: viewModel.prepareSelection).buttonStyle(.appPrimary)
+                Button("Save to Song List", action: viewModel.saveToSongList).buttonStyle(.appSecondary)
             }
         }
     }
