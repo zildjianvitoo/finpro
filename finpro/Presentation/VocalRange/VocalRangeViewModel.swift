@@ -80,13 +80,13 @@ final class VocalRangeViewModel {
         }
     }
 
-    /// All screens start idle. Only the microphone button calls this toggle.
+    /// Starts listening for the current step (or humming practice).
     func toggleMicrophone(practice: Bool = false) {
         if status == .listening { resetCapture() }
         else { startListening(practice: practice) }
     }
 
-    func listen() { startListening(practice: false) }
+    func listen(practice: Bool = false) { startListening(practice: practice) }
 
     /// Clears only the current input, keeping the measured range and speaking reference.
     func resetCapture() {

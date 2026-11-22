@@ -286,14 +286,17 @@ struct VocalRangeTestView: View {
                 if isWarmup {
                     viewModel.next()
                     stage = .hummingGuide
+                    viewModel.listen(practice: true)
                 } else if isHumming {
                     viewModel.resetCapture()
                     stage = .lowest
+                    viewModel.listen()
                 } else if case .finished = viewModel.status {
                     stage = .result
                 } else if isLowest {
                     viewModel.next()
                     stage = .highest
+                    viewModel.listen()
                 }
             }
             .disabled(!canContinue)
