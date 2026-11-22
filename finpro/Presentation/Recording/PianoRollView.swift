@@ -129,9 +129,13 @@ struct PianoRollView: View {
     private let trailInset: CGFloat = 10
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: nil, paused: isPaused)) { _ in
+        TimelineView(.animation(minimumInterval: nil, paused: isPaused)) { timeline in
+            // Sample `songTime()` and pass `timeline.date` into `Canvas` so SwiftUI invalidates
+            // and redraws the canvas on every display tick even when the parent view does not rebuild.
+            let now = songTime()
+            let tick = timeline.date.timeIntervalSinceReferenceDate
             Canvas { context, size in
-                draw(in: &context, size: size, now: songTime())
+                draw(in: &context, size: size, now: now, tick: tick)
             }
         }
         .background {
@@ -297,7 +301,7 @@ struct PianoRollView: View {
         return ((range.low + range.high) / 2, span)
     }
 
-    private func draw(in context: inout GraphicsContext, size: CGSize, now: TimeInterval?) {
+    private func draw(in context: inout GraphicsContext, size: CGSize, now: TimeInterval?, tick: TimeInterval) {
         let rowsTop = Self.topInset
         let rowsHeight = max(Self.rowPitch, size.height - Self.topInset - Self.bottomInset - lyricsHeight)
 
@@ -312,7 +316,7 @@ struct PianoRollView: View {
         // the bottom one): with the lowest edge on a whole line, a 7th and 8th line peeked in
         // half-cut at the top and bottom edges.
         let alignedCenter = (target.center - target.span / 2 - 0.5).rounded() + target.span / 2 + 0.5
-        let (center, span) = viewport.update(center: alignedCenter, span: target.span)
+        let (center, span) = viewport.update(center: alignedCenter, span: target.span, at: tick)
         let pitch = rowsHeight / span
         let lowLine = center - span / 2
         func x(_ time: TimeInterval) -> CGFloat {

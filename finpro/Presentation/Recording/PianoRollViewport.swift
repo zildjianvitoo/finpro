@@ -19,11 +19,11 @@ final class PianoRollViewport {
     private var lastUpdate: TimeInterval = 0
 
     /// Moves toward the target and returns the lines to draw now.
-    func update(center targetCenter: Double, span targetSpan: Double) -> (center: Double, span: Double) {
-        let now = ProcessInfo.processInfo.systemUptime
-        let elapsed = now - lastUpdate
-        lastUpdate = now
-        guard let center, let span, elapsed < Self.snapAfter else {
+    func update(center targetCenter: Double, span targetSpan: Double,
+                at timestamp: TimeInterval = ProcessInfo.processInfo.systemUptime) -> (center: Double, span: Double) {
+        let elapsed = timestamp - lastUpdate
+        lastUpdate = timestamp
+        guard let center, let span, elapsed >= 0, elapsed < Self.snapAfter else {
             self.center = targetCenter
             self.span = targetSpan
             return (targetCenter, targetSpan)
