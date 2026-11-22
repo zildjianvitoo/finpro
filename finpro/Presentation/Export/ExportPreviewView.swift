@@ -179,9 +179,9 @@ struct ExportPreviewView: View {
         .alert("Video Exported", isPresented: $showsExported) {
             // The confirm role draws a filled button in the tint (our dark purple) on iOS 26.
             if #available(iOS 26, *) {
-                Button("OK", role: .confirm) { page = .preview }
+                Button("OK", role: .confirm) { onStartOver() }
             } else {
-                Button("OK") { page = .preview }
+                Button("OK") { onStartOver() }
             }
         } message: {
             Text("This video was saved to your camera roll.")
