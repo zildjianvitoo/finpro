@@ -7,8 +7,16 @@ import SwiftUI
 
 struct OnboardingView: View {
     let onFinish: () -> Void
-    @State private var currentStep = -2
+    var isActive: Bool = true
+    @State private var currentStep: Int
+    @State private var walkthroughRevealProgress: CGFloat = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(initialStep: Int = -2, isActive: Bool = true, onFinish: @escaping () -> Void) {
+        self.onFinish = onFinish
+        self.isActive = isActive
+        _currentStep = State(initialValue: initialStep)
+    }
 
     private let titles = ["Stay on pitch,\nas you sing.", "Retake less.\nCreate more.", "Find a key that fits\nyour voice."]
     private let subtitles = [
@@ -18,6 +26,7 @@ struct OnboardingView: View {
     ]
 
     var body: some View {
+        let showsWalkthrough = currentStep >= 0
         Group {
             if currentStep == -2 {
                 // Splash (1.1): the logo a little above the middle (top at ~34% of the safe area).
@@ -26,19 +35,27 @@ struct OnboardingView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.top, proxy.size.height * 0.338)
                 }
-                    .task {
-                        try? await Task.sleep(for: .seconds(1))
-                        guard !Task.isCancelled else { return }
-                        withAnimation { currentStep = -1 }
-                    }
-            } else if currentStep == -1 {
-                welcome
+                .task {
+                    try? await Task.sleep(for: .seconds(1))
+                    guard !Task.isCancelled else { return }
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { currentStep = -1 }
+                }
             } else {
-                walkthrough
+                ZStack {
+                    welcome
+                        .background(Color.screenBackground.ignoresSafeArea())
+                        .hierarchicalUnderlay(isCovered: showsWalkthrough, revealProgress: walkthroughRevealProgress)
+                    if showsWalkthrough {
+                        walkthrough
+                            .transition(.move(edge: .trailing))
+                            .zIndex(1)
+                    }
+                }
+                .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: showsWalkthrough)
             }
         }
         .background(Color.screenBackground.ignoresSafeArea())
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: currentStep < 0)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: currentStep == -2)
     }
 
     private var welcome: some View {
@@ -55,7 +72,12 @@ struct OnboardingView: View {
                         .font(.appBody).foregroundStyle(Color.primary300)
                 }
                 .multilineTextAlignment(.center)
-                Button("Get Started") { currentStep = 0 }
+                Button("Get Started") {
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.28)) {
+                        walkthroughRevealProgress = 0
+                        currentStep = 0
+                    }
+                }
                     .buttonStyle(.appPrimary)
                     .padding(.top, 65)
                     .padding(.bottom, 16)
@@ -68,9 +90,9 @@ struct OnboardingView: View {
     /// Page illustrations, each animated from its layers while its page is shown.
     @ViewBuilder private func illustration(_ index: Int) -> some View {
         switch index {
-        case 0: PitchGuideIllustration(isActive: currentStep == 0)
-        case 1: RetakeIllustration(isActive: currentStep == 1)
-        default: VocalRangeIllustration(isActive: currentStep == 2)
+        case 0: PitchGuideIllustration(isActive: isActive && currentStep == 0)
+        case 1: RetakeIllustration(isActive: isActive && currentStep == 1)
+        default: VocalRangeIllustration(isActive: isActive && currentStep == 2)
         }
     }
 
@@ -80,7 +102,12 @@ struct OnboardingView: View {
     private var walkthrough: some View {
         VStack(spacing: 0) {
             HStack {
-                Button { withAnimation { currentStep -= 1 } } label: {
+                Button {
+                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.28)) {
+                        if currentStep == 0 { walkthroughRevealProgress = 0 }
+                        currentStep -= 1
+                    }
+                } label: {
                     Image(systemName: "chevron.left")
                 }
                 .buttonStyle(.appIcon(.glass))
@@ -142,8 +169,12 @@ struct OnboardingView: View {
                 .animation(pageAnimation, value: isLastPage)
                 .padding(.horizontal, 25).padding(.top, 16).padding(.bottom, 16)
         }
-        .edgeSwipeBack(isEnabled: currentStep == 0, interactiveSlide: false) {
-            withAnimation { currentStep = -1 }
+        .background(Color.screenBackground.ignoresSafeArea())
+        .edgeSwipeBack(isEnabled: isActive && currentStep == 0, interactiveSlide: true, onProgress: { walkthroughRevealProgress = $0 }) {
+            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.28)) {
+                walkthroughRevealProgress = 0
+                currentStep = -1
+            }
         }
     }
 }

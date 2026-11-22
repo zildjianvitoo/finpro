@@ -17,6 +17,8 @@ struct CoverListView: View {
     let viewModel: HomeViewModel
     let onBack: () -> Void
     let onOpen: (HomeViewModel.RecentCoverItem) -> Void
+    var isSwipeBackEnabled: Bool = true
+    var onSwipeProgress: ((CGFloat) -> Void)? = nil
     @State private var filter = Filter.all
     @State private var selecting = false
     @State private var selectedIDs: Set<UUID> = []
@@ -103,7 +105,7 @@ struct CoverListView: View {
             }
         }
         .background(Color.screenBackground.ignoresSafeArea())
-        .edgeSwipeBack(isEnabled: !confirmsDelete, action: onBack)
+        .edgeSwipeBack(isEnabled: isSwipeBackEnabled && !confirmsDelete, onProgress: onSwipeProgress, action: onBack)
         .animation(.easeInOut(duration: 0.2), value: selecting)
         .animation(.easeInOut(duration: 0.2), value: filter)
         .confirmationDialog(selectedIDs.count == 1 ? "Delete this cover?" : "Delete \(selectedIDs.count) covers?",

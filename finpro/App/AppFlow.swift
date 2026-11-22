@@ -25,6 +25,11 @@ final class AppFlow {
         case export
     }
 
+    enum VocalRangeOrigin: Equatable {
+        case onboarding
+        case home
+    }
+
     private static let hasCompletedOnboardingKey = "hasCompletedOnboarding"
 
     let container: AppContainer
@@ -33,6 +38,9 @@ final class AppFlow {
     }
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Flow")
     private(set) var importOrigin: Step = .home
+    private(set) var vocalRangeOrigin: VocalRangeOrigin = .onboarding
+    /// Incremented whenever the user saves a vocal range, so Home can close its saved-result overlay.
+    private(set) var vocalRangeCompletionCount = 0
     private(set) var selectedLibrarySongID: UUID?
     var selectedLibrarySong: SavedSong? { container.songLibrary.songs.first { $0.id == selectedLibrarySongID } }
     private(set) var preparedSong: PreparedSong?
@@ -129,23 +137,30 @@ final class AppFlow {
     /// User completed or skipped the onboarding walkthrough.
     func onboardingFinished() {
         UserDefaults.standard.set(true, forKey: Self.hasCompletedOnboardingKey)
-        step = container.vocalRange.load() == nil ? .vocalRange : .home
+        if container.vocalRange.load() == nil {
+            vocalRangeOrigin = .onboarding
+            step = .vocalRange
+        } else {
+            step = .home
+        }
     }
 
     /// Replay onboarding (for testing or debugging).
     func replayOnboarding() {
         container.audioPreview.stop()
+        vocalRangeOrigin = .onboarding
         step = .onboarding
     }
 
     /// Dismiss vocal range test back to previous step (Home if already tested, or Onboarding).
     func dismissVocalRange() {
         container.audioPreview.stop()
-        step = container.vocalRange.load() == nil ? .onboarding : .home
+        step = vocalRangeOrigin == .onboarding && container.vocalRange.load() == nil ? .onboarding : .home
     }
 
     /// Vocal range screen (Ikzaz) saved a range.
     func vocalRangeSaved() {
+        vocalRangeCompletionCount += 1
         step = .home
     }
 
@@ -409,6 +424,7 @@ final class AppFlow {
         container.audioPreview.stop()
         keyChoices = nil
         preparedSong = nil
+        vocalRangeOrigin = .home
         step = .vocalRange
     }
 

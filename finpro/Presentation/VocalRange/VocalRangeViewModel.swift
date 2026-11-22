@@ -60,10 +60,12 @@ final class VocalRangeViewModel {
         }
     }
 
+    static let speakingPassage = "When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a division of white light into many beautiful colors."
+
     var instructions: String {
         switch prompt {
         case .speaking:
-            "When the sunlight strikes raindrops in the air, they act as a prism and form a rainbow. The rainbow is a division of white light into many beautiful colors."
+            Self.speakingPassage
         case .lowest:
             "Start near your speaking note and gently hum downward. Hold a comfortable low note for 1 second."
         case .highest:

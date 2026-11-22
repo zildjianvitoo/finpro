@@ -13,6 +13,8 @@ struct VocalRangeResultView: View {
     let onRetake: () -> Void
     /// Back to the highest-note step, to sing that note again.
     let onBack: () -> Void
+    var isSwipeBackEnabled: Bool = true
+    var onSwipeProgress: ((CGFloat) -> Void)? = nil
     /// Entrance: the card appears, the mascot peeks up from behind it, then the notes float.
     @State private var appeared = false
     @State private var floating = false
@@ -62,7 +64,7 @@ struct VocalRangeResultView: View {
             .padding(.horizontal, 25).padding(.bottom, 16)
         }
         .background(Color.screenBackground.ignoresSafeArea())
-        .edgeSwipeBack(action: onBack)
+        .edgeSwipeBack(isEnabled: isSwipeBackEnabled, onProgress: onSwipeProgress, action: onBack)
     }
 
     // Positions from the 2.6 design frame, relative to the top of the safe area (y 62) and the

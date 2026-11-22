@@ -10,6 +10,8 @@ struct SongListView: View {
     let onBack: () -> Void
     let onAdd: () -> Void
     let onOpen: (SavedSong) -> Void
+    var isSwipeBackEnabled: Bool = true
+    var onSwipeProgress: ((CGFloat) -> Void)? = nil
     @State private var renaming: SavedSong?
     @State private var name = ""
     @FocusState private var nameFocused: Bool
@@ -89,7 +91,7 @@ struct SongListView: View {
             }
         }
         .background(Color.screenBackground.ignoresSafeArea())
-        .edgeSwipeBack(action: onBack)
+        .edgeSwipeBack(isEnabled: isSwipeBackEnabled, onProgress: onSwipeProgress, action: onBack)
         .onDisappear { viewModel.stop() }
         .onChange(of: scenePhase) { _, phase in if phase != .active { viewModel.stop() } }
         .onChange(of: nameFocused) { _, focused in

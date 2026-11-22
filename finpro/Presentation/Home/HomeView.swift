@@ -9,9 +9,13 @@ import QuickLook
 
 struct HomeView: View {
     @State var viewModel: HomeViewModel
+    var isActive: Bool = true
+    var vocalRangeCompletionCount: Int = 0
     @State private var showsCovers = false
     /// The saved vocal range's result screen, pushed from the vocal range pill.
     @State private var showsVocalRange = false
+    @State private var coversRevealProgress: CGFloat = 0
+    @State private var vocalRangeRevealProgress: CGFloat = 0
     @State private var previewURL: URL?
     private let createTip = CreateCoverTip()
 
@@ -103,21 +107,36 @@ struct HomeView: View {
             .padding(.top, 10)
         }
         .background(Color.screenBackground.ignoresSafeArea())
+        .hierarchicalUnderlay(
+            isCovered: showsCovers || showsVocalRange,
+            revealProgress: showsVocalRange ? vocalRangeRevealProgress : (showsCovers ? coversRevealProgress : 0)
+        )
         .quickLookPreview($previewURL)
         .overlay {
             if showsCovers {
-                CoverListView(viewModel: viewModel, onBack: { showsCovers = false }, onOpen: open)
+                CoverListView(viewModel: viewModel, onBack: {
+                    coversRevealProgress = 0
+                    showsCovers = false
+                }, onOpen: open, isSwipeBackEnabled: isActive && !showsVocalRange, onSwipeProgress: { coversRevealProgress = $0 })
                     .transition(.move(edge: .trailing))
             }
         }
         .overlay {
             if showsVocalRange, let range = viewModel.vocalRange {
                 VocalRangeResultView(range: range, isFemale: false, onDone: {
+                    vocalRangeRevealProgress = 0
                     showsVocalRange = false
                     viewModel.createCoverTapped()
-                }, onRetake: viewModel.vocalRangeTapped, onBack: { showsVocalRange = false })
+                }, onRetake: viewModel.vocalRangeTapped, onBack: {
+                    vocalRangeRevealProgress = 0
+                    showsVocalRange = false
+                }, isSwipeBackEnabled: isActive, onSwipeProgress: { vocalRangeRevealProgress = $0 })
                 .transition(.move(edge: .trailing))
             }
+        }
+        .onChange(of: vocalRangeCompletionCount) { _, _ in
+            vocalRangeRevealProgress = 0
+            showsVocalRange = false
         }
         .animation(.easeInOut(duration: 0.3), value: showsCovers)
         .animation(.easeInOut(duration: 0.3), value: showsVocalRange)

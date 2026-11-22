@@ -12,6 +12,8 @@ import SwiftUI
 
 struct RootView: View {
     let flow: AppFlow
+    @State private var songListRevealProgress: CGFloat = 0
+    @State private var vocalRangeRevealProgress: CGFloat = 0
     #if DEBUG
     @State private var showsDebugSettings = false
     @State private var opensSyncTest = false
@@ -21,31 +23,44 @@ struct RootView: View {
     var body: some View {
         Group {
             switch flow.step {
-            case .onboarding:
-                OnboardingView(onFinish: flow.onboardingFinished)
-            case .vocalRange:
-                PermissionGate([.microphone], provider: flow.container.permissions) {
-                    VocalRangeTestView(
-                        viewModel: VocalRangeViewModel(
-                            source: flow.container.livePitch,
-                            repository: flow.container.vocalRange,
-                            configuration: flow.container.configuration,
-                            onSaved: flow.vocalRangeSaved),
-                        routeMonitor: flow.container.audioRoute,
-                        onDismiss: flow.dismissVocalRange)
-                }
-            case .home, .songList, .importSong:
-                let showsSongList = flow.step == .songList || (flow.step == .importSong && flow.importOrigin == .songList)
+            case .onboarding, .vocalRange where flow.vocalRangeOrigin == .onboarding:
+                let showsVocalRange = flow.step == .vocalRange
                 ZStack {
-                    homeScreen
-                        .accessibilityHidden(showsSongList)
-                    if showsSongList {
-                        songListScreen
+                    OnboardingView(initialStep: showsVocalRange ? 2 : -2, isActive: !showsVocalRange, onFinish: {
+                        vocalRangeRevealProgress = 0
+                        flow.onboardingFinished()
+                    })
+                    .hierarchicalUnderlay(isCovered: showsVocalRange, revealProgress: vocalRangeRevealProgress)
+                    if showsVocalRange {
+                        vocalRangeScreen
                             .transition(.move(edge: .trailing))
                             .zIndex(1)
                     }
                 }
+                .animation(.easeInOut(duration: 0.3), value: showsVocalRange)
+            case .home, .songList, .importSong, .vocalRange:
+                let showsSongList = flow.step == .songList || (flow.step == .importSong && flow.importOrigin == .songList)
+                let showsVocalRange = flow.step == .vocalRange
+                ZStack {
+                    homeScreen(isActive: !showsSongList && !showsVocalRange)
+                        .hierarchicalUnderlay(
+                            isCovered: showsSongList || showsVocalRange,
+                            revealProgress: showsVocalRange ? (showsSongList ? 0 : vocalRangeRevealProgress) : (showsSongList ? songListRevealProgress : 0)
+                        )
+                    if showsSongList {
+                        songListScreen(isActive: !showsVocalRange)
+                            .hierarchicalUnderlay(isCovered: showsVocalRange, revealProgress: vocalRangeRevealProgress)
+                            .transition(.move(edge: .trailing))
+                            .zIndex(1)
+                    }
+                    if showsVocalRange {
+                        vocalRangeScreen
+                            .transition(.move(edge: .trailing))
+                            .zIndex(2)
+                    }
+                }
                 .animation(.easeInOut(duration: 0.3), value: showsSongList)
+                .animation(.easeInOut(duration: 0.3), value: showsVocalRange)
             case .chooseKey:
                 if let choices = flow.keyChoices {
                     KeySelectionView(viewModel: KeySelectionViewModel(
@@ -110,19 +125,52 @@ struct RootView: View {
         #endif
     }
 
-    private var homeScreen: some View {
+    private var vocalRangeScreen: some View {
+        PermissionGate([.microphone], provider: flow.container.permissions) {
+            VocalRangeTestView(
+                viewModel: VocalRangeViewModel(
+                    source: flow.container.livePitch,
+                    repository: flow.container.vocalRange,
+                    configuration: flow.container.configuration,
+                    onSaved: {
+                        vocalRangeRevealProgress = 0
+                        flow.vocalRangeSaved()
+                    }),
+                routeMonitor: flow.container.audioRoute,
+                onDismiss: {
+                    vocalRangeRevealProgress = 0
+                    flow.dismissVocalRange()
+                },
+                onDismissRevealProgress: { vocalRangeRevealProgress = $0 })
+        }
+    }
+
+    private func homeScreen(isActive: Bool) -> some View {
         HomeView(viewModel: HomeViewModel(
             vocalRangeRepository: flow.container.vocalRange,
             songLibrary: flow.container.songLibrary, coverLibrary: flow.container.coverLibrary,
-            onSongs: flow.openSongList, onOpenSong: flow.openSong, onOpenDraft: flow.openDraft,
+            onSongs: {
+                songListRevealProgress = 0
+                flow.openSongList()
+            }, onOpenSong: flow.openSong, onOpenDraft: flow.openDraft,
             onCreateCover: flow.createNewCover,
-            onRetestVocalRange: flow.retestVocalRange))
+            onRetestVocalRange: {
+                vocalRangeRevealProgress = 0
+                flow.retestVocalRange()
+            }),
+            isActive: isActive,
+            vocalRangeCompletionCount: flow.vocalRangeCompletionCount)
     }
 
-    private var songListScreen: some View {
+    private func songListScreen(isActive: Bool) -> some View {
         SongListView(viewModel: SongListViewModel(library: flow.container.songLibrary,
                                                 previewer: flow.container.audioPreview),
-                     onBack: flow.openHome, onAdd: flow.createNewCover, onOpen: flow.openSong)
+                     onBack: {
+                         songListRevealProgress = 0
+                         flow.openHome()
+                     }, onAdd: flow.createNewCover, onOpen: flow.openSong,
+                     isSwipeBackEnabled: isActive,
+                     onSwipeProgress: { songListRevealProgress = $0 })
     }
 
     private func makeImportViewModel() -> ImportSongViewModel {

@@ -158,6 +158,7 @@ private struct EdgeSwipeBackModifier: ViewModifier {
     let isEnabled: Bool
     let interactiveSlide: Bool
     let edgeWidth: CGFloat
+    let onProgress: ((CGFloat) -> Void)?
     let action: () -> Void
 
     @State private var dragOffset: CGFloat = 0
@@ -183,6 +184,7 @@ private struct EdgeSwipeBackModifier: ViewModifier {
                     edgeWidth: edgeWidth,
                     onChanged: { translation in
                         dragOffset = translation
+                        onProgress?(min(1, max(0, translation / max(1, viewWidth))))
                     },
                     onEnded: { translation, velocity in
                         let threshold = min(viewWidth * Self.distanceFraction, Self.maximumThreshold)
@@ -201,21 +203,57 @@ private struct EdgeSwipeBackModifier: ViewModifier {
                 )
                 .allowsHitTesting(false)
             }
-            .onDisappear { dragOffset = 0 }
+            .onDisappear {
+                dragOffset = 0
+                onProgress?(0)
+            }
     }
 
     private func snapBack() {
         withAnimation(reduceMotion ? nil : .spring(duration: 0.28, bounce: 0)) {
             dragOffset = 0
+            onProgress?(0)
         }
+    }
+}
+
+/// Parallax and subtle dimming for the screen underneath a pushed hierarchical layer,
+/// matching native iOS `UINavigationController` interactive pop peeking.
+private struct HierarchicalUnderlayModifier: ViewModifier {
+    let isCovered: Bool
+    let revealProgress: CGFloat
+
+    @State private var viewWidth: CGFloat = 393
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        let factor = isCovered ? (1 - min(1, max(0, revealProgress))) : 0
+        content
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width in
+                if width > 0 { viewWidth = width }
+            }
+            .offset(x: reduceMotion ? 0 : -viewWidth * 0.28 * factor)
+            .overlay {
+                Color.black.opacity(0.08 * factor)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
+            .allowsHitTesting(!isCovered)
+            .accessibilityHidden(isCovered)
     }
 }
 
 extension View {
     /// Enables native-feeling left-edge swipe-back on screens that navigate via a custom back action.
     func edgeSwipeBack(isEnabled: Bool = true, interactiveSlide: Bool = true, edgeWidth: CGFloat = 24,
+                       onProgress: ((CGFloat) -> Void)? = nil,
                        action: @escaping () -> Void) -> some View {
         modifier(EdgeSwipeBackModifier(isEnabled: isEnabled, interactiveSlide: interactiveSlide,
-                                       edgeWidth: edgeWidth, action: action))
+                                       edgeWidth: edgeWidth, onProgress: onProgress, action: action))
+    }
+
+    /// Applies parallax slide and subtle dim when another hierarchical screen is pushed above this view.
+    func hierarchicalUnderlay(isCovered: Bool, revealProgress: CGFloat) -> some View {
+        modifier(HierarchicalUnderlayModifier(isCovered: isCovered, revealProgress: revealProgress))
     }
 }
