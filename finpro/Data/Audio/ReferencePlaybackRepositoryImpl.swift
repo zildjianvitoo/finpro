@@ -123,8 +123,7 @@ nonisolated final class ReferencePlaybackRepositoryImpl: ReferencePlaybackReposi
             let backingStarts = CMTimeSubtract(songPlays, CMTime(seconds: leadInInstrumental?.seconds ?? 0, preferredTimescale: 60000))
             instrumentalNode.play(at: AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: backingStarts.seconds)))
         }
-        let session = AVAudioSession.sharedInstance()
-        let latency = session.outputLatency + session.ioBufferDuration + configuration().manualLatencyCalibration
+        let latency = capture.hardwareOutputLatency + configuration().manualLatencyCalibration
         return CMTimeAdd(capture.captureTime(forHostTime: scheduled), CMTime(seconds: latency, preferredTimescale: 60000))
     }
 

@@ -21,10 +21,12 @@ nonisolated final class FakeReferencePlaybackRepository: ReferencePlaybackReposi
     let onPlay: (@Sendable (TimeInterval, CMTime) -> Void)?
     /// Guards the engine and the loaded files; `play` and `stop` come from the main actor and tasks.
     private let lock = NSLock()
+    private let audioQueue = DispatchQueue(label: "fake.reference-playback", qos: .userInitiated)
     private let engine = AVAudioEngine()
     private let node = AVAudioPlayerNode()
     private var file: AVAudioFile?
     private var leadInFile: AVAudioFile?
+    private var generation = UUID()
 
     init(latency: TimeInterval = 0, onPlay: (@Sendable (TimeInterval, CMTime) -> Void)? = nil) {
         self.latency = latency
@@ -33,6 +35,7 @@ nonisolated final class FakeReferencePlaybackRepository: ReferencePlaybackReposi
 
     func load(earphoneMixURL: URL) throws {
         lock.withLock {
+            generation = UUID()
             node.stop()
             leadInFile = nil
             file = try? AVAudioFile(forReading: earphoneMixURL)
@@ -54,43 +57,58 @@ nonisolated final class FakeReferencePlaybackRepository: ReferencePlaybackReposi
 
     func play(from referenceTime: TimeInterval) throws -> CMTime {
         let heard = CMClockGetTime(CMClockGetHostTimeClock()) + CMTime(seconds: latency, preferredTimescale: 600)
-        lock.withLock { schedule(from: referenceTime, songAt: heard) }
+        let snapshot = lock.withLock { () -> (UUID, AVAudioFile?, AVAudioFile?) in
+            let token = UUID()
+            generation = token
+            return (token, file, leadInFile)
+        }
+        if let file = snapshot.1 {
+            schedule(token: snapshot.0, file: file, leadInFile: snapshot.2, from: referenceTime, songAt: heard)
+        }
         onPlay?(referenceTime, heard)
         return heard
     }
 
     func stop() {
         lock.withLock {
+            generation = UUID()
             node.stop()
             engine.stop()
         }
     }
 
     /// As the device does: the end of the lead-in before 0, the song from 0 at `songAt`.
-    private func schedule(from referenceTime: TimeInterval, songAt heard: CMTime) {
-        guard let file else { return }
-        let rate = file.processingFormat.sampleRate
-        let start = AVAudioFramePosition((max(0, referenceTime) * rate).rounded())
-        guard start < file.length else { return }
-        node.stop()
-        do {
-            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
-            try AVAudioSession.sharedInstance().setActive(true)
-            if !engine.isRunning { try engine.start() }
-        } catch { return }
-        let beforeZero = max(0, -referenceTime)
-        var leadSeconds = 0.0
-        if beforeZero > 0, let leadInFile {
-            let frames = min(leadInFile.length, AVAudioFramePosition((beforeZero * rate).rounded()))
-            node.scheduleSegment(leadInFile, startingFrame: leadInFile.length - frames,
-                                 frameCount: AVAudioFrameCount(frames), at: nil)
-            leadSeconds = Double(frames) / rate
+    private func schedule(token: UUID, file: AVAudioFile, leadInFile: AVAudioFile?,
+                          from referenceTime: TimeInterval, songAt heard: CMTime) {
+        audioQueue.async { [self] in
+            let rate = file.processingFormat.sampleRate
+            let start = AVAudioFramePosition((max(0, referenceTime) * rate).rounded())
+            guard start < file.length else { return }
+            do {
+                try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+                try AVAudioSession.sharedInstance().setActive(true)
+            } catch { return }
+            lock.withLock {
+                guard generation == token else { return }
+                node.stop()
+                if !engine.isRunning {
+                    do { try engine.start() } catch { return }
+                }
+                let beforeZero = max(0, -referenceTime)
+                var leadSeconds = 0.0
+                if beforeZero > 0, let leadInFile {
+                    let frames = min(leadInFile.length, AVAudioFramePosition((beforeZero * rate).rounded()))
+                    node.scheduleSegment(leadInFile, startingFrame: leadInFile.length - frames,
+                                         frameCount: AVAudioFrameCount(frames), at: nil)
+                    leadSeconds = Double(frames) / rate
+                }
+                node.scheduleSegment(file, startingFrame: start, frameCount: AVAudioFrameCount(file.length - start), at: nil)
+                // `heard` is the reference time itself; the song's 0 comes `beforeZero` later, and the
+                // node starts where its first queued segment (the lead-in tail, or the song) starts.
+                let songPlays = heard.seconds + beforeZero
+                node.play(at: AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: songPlays - leadSeconds)))
+            }
         }
-        node.scheduleSegment(file, startingFrame: start, frameCount: AVAudioFrameCount(file.length - start), at: nil)
-        // `heard` is the reference time itself; the song's 0 comes `beforeZero` later, and the
-        // node starts where its first queued segment (the lead-in tail, or the song) starts.
-        let songPlays = heard.seconds + beforeZero
-        node.play(at: AVAudioTime(hostTime: AVAudioTime.hostTime(forSeconds: songPlays - leadSeconds)))
     }
 }
 

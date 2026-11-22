@@ -17,22 +17,28 @@ nonisolated final class MicrophonePitchSource: LivePitchSource, MicrophoneInputP
     private var routeObserver: NSObjectProtocol?
     private var hasTap = false
     private var generation = UUID()
+    private var activeMicrophoneName: String?
 
-    var microphoneName: String? { HeadsetMicrophoneSession.currentInput?.portName }
-    var isHeadsetMicrophoneActive: Bool { HeadsetMicrophoneSession.currentInput != nil }
+    var microphoneName: String? { lock.withLock { activeMicrophoneName } }
+    var isHeadsetMicrophoneActive: Bool { lock.withLock { activeMicrophoneName != nil } }
 
     func start() async throws -> AsyncStream<PitchSample> {
-        stop()
-        let token = queue.sync { generation }
+        let token = beginNewGeneration()
+        queue.async { [self] in stopAudioOnQueue() }
         try await worker.prepare()
         try Task.checkCancellation()
         return try await withCheckedThrowingContinuation { result in
             queue.async { [self] in
                 do {
-                    guard self.generation == token else { throw CancellationError() }
+                    guard self.isCurrent(token) else { throw CancellationError() }
                     let microphoneUID = try HeadsetMicrophoneSession.activate(mode: .measurement)
                     let (stream, continuation) = AsyncStream.makeStream(of: PitchSample.self, bufferingPolicy: .bufferingNewest(64))
-                    self.lock.withLock { self.continuation = continuation }
+                    let kept = self.lock.withLock { () -> Bool in
+                        guard self.generation == token else { return false }
+                        self.continuation = continuation
+                        return true
+                    }
+                    guard kept else { throw CancellationError() }
                     let input = self.engine.inputNode
                     let format = input.outputFormat(forBus: 0)
                     guard format.sampleRate > 0, format.channelCount > 0 else { throw HeadsetMicrophoneError.unavailable }
@@ -54,36 +60,59 @@ nonisolated final class MicrophonePitchSource: LivePitchSource, MicrophoneInputP
                     self.engine.prepare()
                     try self.engine.start()
                     try HeadsetMicrophoneSession.verify(microphoneUID)
+                    let portName = HeadsetMicrophoneSession.currentInput?.portName
+                    self.lock.withLock {
+                        if self.generation == token { self.activeMicrophoneName = portName }
+                    }
                     self.routeObserver = NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil) { [weak self] _ in
                         guard let self else { return }
                         self.queue.async {
-                            guard self.generation == token else { return }
-                            if HeadsetMicrophoneSession.currentInput?.uid != microphoneUID { self.stopOnQueue() }
+                            guard self.isCurrent(token) else { return }
+                            if HeadsetMicrophoneSession.currentInput?.uid != microphoneUID {
+                                _ = self.beginNewGeneration()
+                                self.stopAudioOnQueue()
+                            }
                         }
                     }
                     result.resume(returning: stream)
                 } catch {
-                    if self.generation == token { self.stopOnQueue() }
+                    if self.isCurrent(token) {
+                        _ = self.beginNewGeneration()
+                        self.stopAudioOnQueue()
+                    }
                     result.resume(throwing: error)
                 }
             }
         }
     }
 
-    func stop() { queue.sync { stopOnQueue() } }
+    func stop() {
+        _ = beginNewGeneration()
+        queue.async { [self] in stopAudioOnQueue() }
+    }
 
-    private func stopOnQueue() {
-        generation = UUID()
+    private func isCurrent(_ token: UUID) -> Bool {
+        lock.withLock { generation == token }
+    }
+
+    private func beginNewGeneration() -> UUID {
+        lock.withLock {
+            let token = UUID()
+            generation = token
+            continuation?.finish()
+            continuation = nil
+            activeMicrophoneName = nil
+            return token
+        }
+    }
+
+    private func stopAudioOnQueue() {
         if let routeObserver {
             NotificationCenter.default.removeObserver(routeObserver)
             self.routeObserver = nil
         }
         if engine.isRunning { engine.stop() }
         if hasTap { engine.inputNode.removeTap(onBus: 0); hasTap = false }
-        lock.withLock {
-            continuation?.finish()
-            continuation = nil
-        }
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 }

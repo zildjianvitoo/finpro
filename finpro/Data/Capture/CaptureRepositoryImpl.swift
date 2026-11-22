@@ -55,15 +55,22 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Capture")
     private var selectedMicrophoneUID: String?
     private var microphoneChanged = false
+    private var activeMicrophoneName: String?
+    private var cachedOutputLatency: TimeInterval = 0
 
-    var microphoneName: String? { HeadsetMicrophoneSession.currentInput?.portName }
-    var isHeadsetMicrophoneActive: Bool { HeadsetMicrophoneSession.currentInput != nil }
+    var microphoneName: String? { lock.withLock { activeMicrophoneName } }
+    var isHeadsetMicrophoneActive: Bool { lock.withLock { activeMicrophoneName != nil } }
+    var hardwareOutputLatency: TimeInterval { lock.withLock { cachedOutputLatency } }
 
     override init() {
         super.init()
+        queue.async { [weak self] in
+            self?.refreshAudioSessionSnapshotOnQueue()
+        }
         microphoneObserver = NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil) { [weak self] _ in
             guard let self else { return }
             self.queue.async {
+                self.refreshAudioSessionSnapshotOnQueue()
                 guard self.recording, let selected = self.selectedMicrophoneUID else { return }
                 if HeadsetMicrophoneSession.currentInput?.uid != selected, !self.microphoneChanged {
                     self.microphoneChanged = true
@@ -137,6 +144,7 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
                     Self.log.notice("prepare: session running \(self.session.isRunning), interrupted \(self.session.isInterrupted) after \(elapsed(), privacy: .public)")
                     try HeadsetMicrophoneSession.verify(microphoneUID)
                     self.selectedMicrophoneUID = microphoneUID
+                    self.refreshAudioSessionSnapshotOnQueue()
                     // After commitConfiguration and startRunning: inside the configuration block the
                     // connection may not report rotation as supported yet, and the request is lost.
                     self.orientVideoConnection()
@@ -146,6 +154,7 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
                     continuation.resume()
                 } catch {
                     self.session.stopRunning()
+                    self.lock.withLock { self.activeMicrophoneName = nil }
                     Self.deactivateAudioSession()
                     continuation.resume(throwing: error)
                 }
@@ -202,7 +211,18 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
     func stopSession() {
         queue.async {
             if self.session.isRunning { self.session.stopRunning() }
+            self.lock.withLock { self.activeMicrophoneName = nil }
             Self.deactivateAudioSession()
+        }
+    }
+
+    private func refreshAudioSessionSnapshotOnQueue() {
+        let session = AVAudioSession.sharedInstance()
+        let portName = HeadsetMicrophoneSession.currentInput?.portName
+        let latency = session.outputLatency + session.ioBufferDuration
+        lock.withLock {
+            activeMicrophoneName = portName
+            cachedOutputLatency = latency
         }
     }
 
