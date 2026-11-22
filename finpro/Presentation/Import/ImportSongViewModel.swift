@@ -99,6 +99,8 @@ final class ImportSongViewModel {
     /// The file's name found no lyrics while Shazam was still working: the lyrics area keeps
     /// loading until Shazam answers, instead of showing the manual search form in between.
     @ObservationIgnored private var lyricsAwaitRecognition = false
+    /// Prevents shifting the same fetched lyrics twice when Shazam answers after LRCLIB.
+    @ObservationIgnored private var appliedTimelineOffset = false
     @ObservationIgnored private let previewer: any AudioPreviewing
     @ObservationIgnored private let prepare: PrepareSongUseCase
     @ObservationIgnored private let vocalRange: () -> VocalRange?
@@ -236,6 +238,7 @@ final class ImportSongViewModel {
         recognition?.cancel()
         isIdentifyingSong = false
         lyricsAwaitRecognition = false
+        appliedTimelineOffset = saved?.lyrics != nil
         let recognizes = recognizer != nil && !named
         // Lyrics are searched right away with the file's name; Shazam runs alongside and, if the
         // file's name finds nothing, its name is tried as well.
@@ -419,6 +422,7 @@ final class ImportSongViewModel {
         recognition?.cancel()
         isIdentifyingSong = false
         lyricsAwaitRecognition = false
+        appliedTimelineOffset = false
         cancelPreparation()
         importTask?.cancel()
         importTask = nil
@@ -489,13 +493,23 @@ final class ImportSongViewModel {
                 }
             }
             // The file's name found nothing: search again with Shazam's name, or give up now.
+            var shiftedLyrics: SongLyrics?
             switch lyrics {
             case .notFound, .failed, .idle: if renamed { searchLyrics() }
             case .loading: if waited { if renamed { searchLyrics() } else { lyrics = .notFound } }
-            case .found: break
+            case .found(let song):
+                // Shazam verified a constant intro offset (e.g. +5 s vinyl/MV intro) after LRCLIB
+                // already returned studio-timed lyrics: shift them so the trimmer matches the audio.
+                if !appliedTimelineOffset, let offset = (recognized ?? nil)?.timelineOffset {
+                    appliedTimelineOffset = true
+                    let shifted = song.shifted(by: offset, duration: audio.duration)
+                    shiftedLyrics = shifted
+                    lyrics = .found(shifted)
+                    if case .trimming = status, !userMovedSelection, !editingSelection { useChorusSuggestion() }
+                }
             }
             if let outcome {
-                if let savedSongID, let named = library?.applyRecognition(savedSongID, song: outcome) {
+                if let savedSongID, let named = library?.applyRecognition(savedSongID, song: outcome, lyrics: shiftedLyrics) {
                     // The cover is named after the song when it is being prepared already.
                     if preparingDisplayName != nil { preparingDisplayName = named.title }
                 }
@@ -530,7 +544,18 @@ final class ImportSongViewModel {
                     lyricsAwaitRecognition = true
                     return
                 }
-                lyrics = found.map(LyricsState.found) ?? .notFound
+                if let found {
+                    if let offset = (recognized ?? nil)?.timelineOffset {
+                        appliedTimelineOffset = true
+                        lyrics = .found(found.shifted(by: offset, duration: audio.duration))
+                    } else {
+                        appliedTimelineOffset = false
+                        lyrics = .found(found)
+                    }
+                } else {
+                    appliedTimelineOffset = false
+                    lyrics = .notFound
+                }
                 if case .trimming = status, !userMovedSelection, !editingSelection { useChorusSuggestion() }
 
             } catch is CancellationError {

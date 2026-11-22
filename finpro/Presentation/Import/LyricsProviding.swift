@@ -49,6 +49,23 @@ nonisolated struct SongLyrics: Equatable, Sendable, Codable {
     /// What the source matched, e.g. "Abadi (Indo Version) – Dendi Nata".
     let matchedTitle: String
     let matchedArtist: String
+
+    /// Returns a copy whose line and word timestamps are moved by `offset` seconds (e.g. when a
+    /// music-video audio file has an extra intro compared to the catalog recording LRCLIB timed).
+    func shifted(by offset: TimeInterval, duration: TimeInterval) -> SongLyrics {
+        guard offset != 0 else { return self }
+        let moved = lines.map { line in
+            let start = min(max(0, line.start + offset), duration)
+            let end = min(max(start, line.end + offset), duration)
+            let words = line.words.map { word in
+                let ws = min(max(start, word.start + offset), end)
+                let we = min(max(ws, word.end + offset), end)
+                return LyricWord(text: word.text, start: ws, end: we)
+            }
+            return LyricLine(id: line.id, text: line.text, start: start, end: end, words: words)
+        }
+        return SongLyrics(lines: moved, chorus: chorus, matchedTitle: matchedTitle, matchedArtist: matchedArtist)
+    }
 }
 
 nonisolated enum LyricsLookupError: Error, Equatable {

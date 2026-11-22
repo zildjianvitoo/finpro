@@ -96,7 +96,7 @@ final class SongLibrary {
     /// Shazam answered for a saved song: use its name (unless the user renamed the song) and don't
     /// ask again. Returns the song as saved.
     @discardableResult
-    func applyRecognition(_ id: UUID, song recognized: RecognizedSong?) -> SavedSong? {
+    func applyRecognition(_ id: UUID, song recognized: RecognizedSong?, lyrics: SongLyrics? = nil) -> SavedSong? {
         guard let index = songs.firstIndex(where: { $0.id == id }) else { return nil }
         var updated = songs
         updated[index].isRecognitionDone = true
@@ -104,6 +104,7 @@ final class SongLibrary {
             updated[index].title = recognized.title
             updated[index].displayArtist = recognized.artist ?? updated[index].displayArtist
         }
+        if let lyrics { updated[index].lyrics = lyrics }
         guard updated[index] != songs[index] else { return songs[index] }
         return commit(updated) ? updated[index] : songs[index]
     }

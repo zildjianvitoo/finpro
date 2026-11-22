@@ -12,6 +12,9 @@ import Foundation
 nonisolated struct RecognizedSong: Equatable, Sendable {
     let title: String
     let artist: String?
+    /// Seconds the local audio file runs behind the official Shazam catalog recording
+    /// (e.g. +5 s when a music-video MP3 has an extra 5 s intro). `nil` when unknown.
+    var timelineOffset: TimeInterval? = nil
 }
 
 nonisolated enum SongRecognitionError: Error, Equatable {
