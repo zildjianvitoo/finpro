@@ -25,6 +25,7 @@ final class PermissionGateModel {
     init(permissions: [MediaPermission], provider: any MediaPermissionProviding) {
         self.permissions = permissions
         self.provider = provider
+        refresh()
     }
 
     func refresh() {

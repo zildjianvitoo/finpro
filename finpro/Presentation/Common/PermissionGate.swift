@@ -17,31 +17,40 @@ import UIKit
 struct PermissionGate<Content: View>: View {
     @State private var model: PermissionGateModel
     @Environment(\.scenePhase) private var scenePhase
-    private let content: () -> Content
+    private let content: (Bool) -> Content
 
     init(_ permissions: [MediaPermission], provider: any MediaPermissionProviding,
-         @ViewBuilder content: @escaping () -> Content) {
+         @ViewBuilder content: @escaping (_ isGranted: Bool) -> Content) {
         _model = State(initialValue: PermissionGateModel(permissions: permissions, provider: provider))
         self.content = content
     }
 
+    init(_ permissions: [MediaPermission], provider: any MediaPermissionProviding,
+         @ViewBuilder content: @escaping () -> Content) {
+        self.init(permissions, provider: provider) { _ in content() }
+    }
+
     var body: some View {
         Group {
-            switch model.state {
-            case .checking:
-                LoadingMascotView()
-            case .granted:
-                content()
-            case .needsRequest:
-                // The system prompts appear over this; nothing of our own to read or tap.
-                Color.clear
-                    .task { await model.requestMissing() }
-            case .denied(let missing):
+            if case .denied(let missing) = model.state {
                 ErrorStateView(error: .permissionDenied(missing), actionTitle: "Open Settings") {
                     if let url = URL(string: UIApplication.openSettingsURLString) {
                         UIApplication.shared.open(url)
                     }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.screenBackground.ignoresSafeArea())
+            } else {
+                // Keep the feature screen visible behind system permission prompts instead of a
+                // blank white screen, preserving view identity once granted.
+                let isGranted = model.state == .granted
+                content(isGranted)
+                    .allowsHitTesting(isGranted)
+                    .task(id: model.state) {
+                        if case .needsRequest = model.state {
+                            await model.requestMissing()
+                        }
+                    }
             }
         }
         .onAppear { model.refresh() }

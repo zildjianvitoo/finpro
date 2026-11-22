@@ -53,12 +53,13 @@ struct RootView: View {
                         renderer: RenderSongKeyUseCase(transposition: flow.container.audioTransposition),
                         automaticallySelectRecommended: true, onChoose: flow.songPrepared), routeMonitor: flow.container.audioRoute,
                         onChooseAnother: flow.returnToSongSection, onRetest: flow.retestVocalRange)
-                    .edgeSwipeBack(action: flow.returnToSongSection)
                 }
             case .recording:
-                PermissionGate([.camera, .microphone], provider: flow.container.permissions) {
+                PermissionGate([.camera, .microphone], provider: flow.container.permissions) { isGranted in
                     if let song = flow.preparedSong {
-                        RecordingView(viewModel: makeRecordingViewModel(song: song), tipsSongID: flow.selectedLibrarySongID)
+                        RecordingView(viewModel: makeRecordingViewModel(song: song),
+                                      tipsSongID: flow.selectedLibrarySongID,
+                                      isAuthorized: isGranted)
                     }
                 }
             case .export:

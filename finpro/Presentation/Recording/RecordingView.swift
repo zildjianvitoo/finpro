@@ -77,11 +77,15 @@ struct RecordingView: View {
 
     /// The song library entry being recorded, to show the tips once per song; nil shows them.
     let tipsSongID: UUID?
+    /// Camera and microphone permissions granted by `PermissionGate`; while false, the recording
+    /// chrome is shown behind the system permission alert without starting capture yet.
+    let isAuthorized: Bool
     @AppStorage(RecordingDisplaySettings.tipsShownSongsKey) private var tipsShownSongs = ""
 
-    init(viewModel: RecordingViewModel, tipsSongID: UUID? = nil) {
+    init(viewModel: RecordingViewModel, tipsSongID: UUID? = nil, isAuthorized: Bool = true) {
         _viewModel = State(initialValue: viewModel)
         self.tipsSongID = tipsSongID
+        self.isAuthorized = isAuthorized
     }
 
     private var showsTipsForThisSong: Bool {
@@ -113,7 +117,8 @@ struct RecordingView: View {
         .preferredColorScheme(.dark)
         // The user sings without touching the phone: the screen must not dim or lock mid-take.
         .keepsScreenAwake()
-        .task {
+        .task(id: isAuthorized) {
+            guard isAuthorized else { return }
             // Right after the camera and microphone prompts the app is not active yet, and a
             // camera or audio session started then may not run (first launch after install).
             while UIApplication.shared.applicationState != .active {
@@ -123,7 +128,7 @@ struct RecordingView: View {
             await viewModel.start()
         }
         .onChange(of: scenePhase) { _, phase in
-            guard phase == .background else { return }
+            guard isAuthorized, phase == .background else { return }
             // PRD §5.8: leaving the app stops the session; ask for time to finalize the file.
             let task = UIApplication.shared.beginBackgroundTask(withName: "Finalize recording")
             Task {
@@ -206,6 +211,7 @@ struct RecordingView: View {
             try? await Task.sleep(for: Self.tipsDelay)
             if !Task.isCancelled { showsTips = true }
         }
+        .onDisappear { viewModel.cleanupIfStillActive() }
         .edgeSwipeBack(isEnabled: viewModel.loop.phase == .idle && !showsSettings && !showsTips && !showsStopped) {
             Task { await viewModel.discard() }
         }
@@ -274,16 +280,20 @@ struct RecordingView: View {
 
     @ViewBuilder
     private func content(_ layout: VideoLayout) -> some View {
-        switch viewModel.status {
-        case .starting where !viewModel.isCameraReady:
-            loading("Getting ready…")
-        case .ready, .starting, .recording:
+        if !isAuthorized {
             sessionOverlay(layout)
-        case .finishing:
-            loading("Saving your recording…")
-        case .blocked, .interrupted, .failed:
-            // Shown as a system alert (see `stoppedAlert`); the camera stays visible behind it.
-            Color.clear
+        } else {
+            switch viewModel.status {
+            case .starting where !viewModel.isCameraReady:
+                loading("Getting ready…")
+            case .ready, .starting, .recording:
+                sessionOverlay(layout)
+            case .finishing:
+                loading("Saving your recording…")
+            case .blocked, .interrupted, .failed:
+                // Shown as a system alert (see `stoppedAlert`); the camera stays visible behind it.
+                Color.clear
+            }
         }
     }
 
