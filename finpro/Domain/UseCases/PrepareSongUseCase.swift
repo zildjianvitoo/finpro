@@ -87,6 +87,9 @@ nonisolated struct PrepareSongUseCase: Sendable {
     static let maximumPhraseBackoff: TimeInterval = LyricGuideNotesUseCase.lineShiftRange
     /// Moves shorter than this are not worth separating again.
     static let minimumPhraseBackoff: TimeInterval = 0.1
+    /// Length of the audio preview played on Find Your Key, starting from the beginning of the
+    /// user's chosen section so the preview matches what they just selected.
+    static let keyPreviewDuration: TimeInterval = 15
 
     /// Separate and analyse once; render only the best fully fitting keys. With `lyricLines` (on
     /// the trimmed timeline), the guide has one note per sung word instead of the raw pitch notes.
@@ -208,7 +211,8 @@ nonisolated struct PrepareSongUseCase: Sendable {
         let recommender = RecommendKeysUseCase(configuration: configuration)
         let ranked = try recommender.execute(notes: original, vocalRange: vocalRange)
         let recommendations = Array(ranked.prefix(max(0, recommendationLimit ?? ranked.count)))
-        let excerpt = recommender.highestPhrase(notes: original, duration: duration)
+        let previewEnd = min(duration, Self.keyPreviewDuration)
+        let excerpt: ClosedRange<TimeInterval>? = previewEnd > 0 ? 0...previewEnd : nil
         let guide = simplifies ? SimplifyGuideUseCase(configuration: configuration).execute(original) : original
         let segments = try slicer.execute(notes: guide, duration: duration)
         var options: [Choices.Option] = []
