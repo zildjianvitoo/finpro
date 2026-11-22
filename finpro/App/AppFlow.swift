@@ -89,13 +89,13 @@ final class AppFlow {
         default: break
         }
         #endif
-        // Leftovers from a session that ended in a crash, plus obsolete draft folders: clean off
-        // the main thread so fresh launch paints its first frame immediately.
-        let draftIDs = Set(container.coverLibrary.covers.filter(\.isDraft).map(\.id))
+        // Leftovers from a session that ended in a crash, plus working files of deleted covers:
+        // clean off the main thread so fresh launch paints its first frame immediately.
+        let savedCoverIDs = Set(container.coverLibrary.covers.map(\.id))
         let drafts = container.coverDrafts
         draftSave = Task.detached(priority: .utility) {
             SessionFiles.cleanUp()
-            drafts.deleteAll(except: draftIDs)
+            drafts.deleteAll(except: savedCoverIDs)
         }
         #if DEBUG
         if DebugOptions.launchScreen == "recording" {
@@ -313,8 +313,9 @@ final class AppFlow {
         return library.covers.first { $0.id == savedCoverID }.map(library.url(for:))
     }
 
-    /// Home: a draft cover was tapped. Opens it on the result screen with its takes, so it can be
-    /// retaken, continued or exported. False when its working files are gone (the caller plays it).
+    /// Home: a saved cover (draft or exported) was tapped. Opens it on the result screen with its
+    /// takes, so it can be retaken, continued, remixed or exported again. False when its working
+    /// files are gone (the caller falls back to playing the exported video).
     func openDraft(_ id: UUID) -> Bool {
         guard let draft = container.coverDrafts.load(id: id), draft.plan.validate().isEmpty,
               draft.song.validate().isEmpty else { return false }

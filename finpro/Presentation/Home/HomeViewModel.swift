@@ -77,9 +77,10 @@ final class HomeViewModel {
         self.onRetestVocalRangeAction = onRetestVocalRange
     }
 
-    /// True when the cover opened on the result screen (a draft); false when it should just play.
+    /// Opens any saved cover (draft or exported) on the result screen for editing; false when its
+    /// working files are unavailable (then it falls back to QuickLook playback).
     func openCover(_ cover: RecentCoverItem) -> Bool {
-        cover.status == .draft && onOpenDraft(cover.id)
+        onOpenDraft(cover.id)
     }
 
     func createCoverTapped() {

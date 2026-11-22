@@ -52,7 +52,7 @@ nonisolated struct CoverDraftStore: Sendable {
         try? FileManager.default.removeItem(at: folder(for: id))
     }
 
-    /// Deletes the working files of every cover not in `ids` (finished or removed covers).
+    /// Deletes the working files of every cover not in `ids` (removed covers).
     func deleteAll(except ids: Set<UUID>) {
         let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
         for name in names where UUID(uuidString: name).map({ !ids.contains($0) }) ?? true {
