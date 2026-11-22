@@ -29,14 +29,11 @@ struct RecordingView: View {
 
     @AppStorage(RecordingDisplaySettings.showsLyricsKey) private var showsLyrics = true
     @AppStorage(RecordingDisplaySettings.showsPitchGuideKey) private var showsPitchGuide = true
-    @AppStorage(RecordingDisplaySettings.lyricsInGuideKey) private var lyricsInGuide = RecordingDisplaySettings.defaultLyricsInGuide
     @AppStorage(RecordingDisplaySettings.pitchGuideScaleKey) private var pitchGuideScale = RecordingDisplaySettings.defaultPitchGuideScale
     @AppStorage(RecordingDisplaySettings.lyricsTextStepKey) private var lyricsTextStep = RecordingDisplaySettings.defaultLyricsTextStep
-    // Where the user moved / how big they made the pitch guide (width 0 = default place).
-    @AppStorage(RecordingDisplaySettings.guideFrameXKey) private var guideFrameX = 0.0
-    @AppStorage(RecordingDisplaySettings.guideFrameYKey) private var guideFrameY = 0.0
-    @AppStorage(RecordingDisplaySettings.guideFrameWidthKey) private var guideFrameWidth = 0.0
-    @AppStorage(RecordingDisplaySettings.guideFrameHeightKey) private var guideFrameHeight = 0.0
+    // Where the user moved / how big they made the pitch guide during this recording visit
+    // (nil = default place; resets automatically whenever the user leaves Recording).
+    @State private var guideFrame: CGRect?
     /// The pitch guide's default place (under the camera, above the controls), measured.
     @State private var defaultGuideFrame = CGRect.zero
 
@@ -168,7 +165,11 @@ struct RecordingView: View {
             Text("Wear wired headphones, keep your camera steady, and find a quiet spot for the best result.")
         }
         .sheet(isPresented: $showsSettings) {
-            RecordingSettingsSheet(viewModel: viewModel) { settingsSheetHeight = $0 }
+            RecordingSettingsSheet(
+                viewModel: viewModel,
+                canResetGuideFrame: guideFrame != nil,
+                onResetGuideFrame: { withAnimation(.snappy) { guideFrame = nil } }
+            ) { settingsSheetHeight = $0 }
         }
         .alert(stoppedError?.title ?? "", isPresented: $showsStopped, presenting: stoppedError) { _ in
             // The way forward takes the cancel role, so iOS adds no extra Cancel that would leave
@@ -231,8 +232,8 @@ struct RecordingView: View {
     }
 
     private var lyricsAvailable: Bool { showsLyrics && !viewModel.lyrics.isEmpty }
-    /// Concept 2: the lyrics sit inside the pitch guide, which then needs the guide to be shown.
-    private var lyricsInPanel: Bool { lyricsAvailable && lyricsInGuide && showsPitchGuide }
+    /// Lyrics sit inside the pitch guide whenever the guide is shown.
+    private var lyricsInPanel: Bool { lyricsAvailable && showsPitchGuide }
     /// Concept 1: a card near the camera (also when there is no pitch guide to hold them).
     private var lyricsAsCard: Bool { lyricsAvailable && !lyricsInPanel }
 
@@ -355,8 +356,8 @@ struct RecordingView: View {
                                     height: max(defaultGuideFrame.height, defaultGuideFrame.maxY - top))
                 MovablePanel(defaultFrame: defaultGuideFrame, bounds: bounds,
                              minimumSize: CGSize(width: Self.guideMinimumWidth, height: defaultGuideFrame.height * 0.6),
-                             frame: guideFrameBinding) { size in
-                    pitchGuide(zoom: guideFrameWidth > 0 ? size.height / defaultGuideFrame.height : 1)
+                             frame: $guideFrame) { size in
+                    pitchGuide(zoom: guideFrame != nil ? size.height / defaultGuideFrame.height : 1)
                 }
                 // While the settings sheet is open the guide rises above it, so a new size shows
                 // at once (design 5.2b).
@@ -374,7 +375,6 @@ struct RecordingView: View {
             .padding(.top, layout.top + topBarInset + backButtonSize + preRollInfoGap)
             .allowsHitTesting(false)
         }
-        .animation(.snappy, value: lyricsInGuide)
         .animation(.snappy, value: showsLyrics)
     }
 
@@ -382,24 +382,12 @@ struct RecordingView: View {
     /// `sheetTop` is where a sheet of the reported height begins, before its own height.
     private func settingsLift(sheetTop: CGFloat) -> CGFloat {
         guard showsSettings, settingsSheetHeight > 0 else { return 0 }
-        let bottom = guideFrameWidth > 0 ? guideFrameY + guideFrameHeight : defaultGuideFrame.maxY
+        let bottom = guideFrame?.maxY ?? defaultGuideFrame.maxY
         return min(0, sheetTop - settingsSheetHeight - guideSheetGap - bottom)
     }
 
     private static let overlaySpace = "recordingOverlay"
     private static let guideMinimumWidth: CGFloat = 200
-
-    /// The user's pitch guide frame, nil while it is in its default place.
-    private var guideFrameBinding: Binding<CGRect?> {
-        Binding(
-            get: { guideFrameWidth > 0 ? CGRect(x: guideFrameX, y: guideFrameY, width: guideFrameWidth, height: guideFrameHeight) : nil },
-            set: { rect in
-                guideFrameX = Double(rect?.minX ?? 0)
-                guideFrameY = Double(rect?.minY ?? 0)
-                guideFrameWidth = Double(rect?.width ?? 0)
-                guideFrameHeight = Double(rect?.height ?? 0)
-            })
-    }
 
     private func pitchGuide(zoom: CGFloat) -> some View {
         PianoRollView(notes: pianoRollNotes,

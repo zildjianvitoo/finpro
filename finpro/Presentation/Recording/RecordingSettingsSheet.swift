@@ -2,26 +2,24 @@
 //  RecordingSettingsSheet.swift
 //  finpro
 //
-//  Bottom sheet opened from the recording screen's settings button: Original Vocal, Lyrics, a
-//  Pitch Guide size slider and, at the bottom, where the lyrics sit (Concept 1 card near the
-//  camera, or Concept 2 inside the pitch guide). Values are the per-user preferences in
-//  RecordingDisplaySettings.
+//  Bottom sheet opened from the recording screen's settings button: Original Vocal, Lyrics, and
+//  the Pitch Guide size slider. Values are the per-user preferences in RecordingDisplaySettings.
 //
 
 import SwiftUI
 
 struct RecordingSettingsSheet: View {
     let viewModel: RecordingViewModel
+    var canResetGuideFrame = false
+    var onResetGuideFrame: () -> Void = {}
     /// Reports the sheet's height, so the recording screen can lift the pitch guide above it.
     var onHeightChange: (CGFloat) -> Void = { _ in }
 
     /// The sheet is as tall as its content.
-    @State private var contentHeight: CGFloat = 400
+    @State private var contentHeight: CGFloat = 320
 
     @AppStorage(RecordingDisplaySettings.showsLyricsKey) private var showsLyrics = true
-    @AppStorage(RecordingDisplaySettings.lyricsInGuideKey) private var lyricsInGuide = RecordingDisplaySettings.defaultLyricsInGuide
     @AppStorage(RecordingDisplaySettings.pitchGuideScaleKey) private var pitchGuideScale = RecordingDisplaySettings.defaultPitchGuideScale
-    @AppStorage(RecordingDisplaySettings.guideFrameWidthKey) private var guideFrameWidth = 0.0
 
     private let horizontalInset: CGFloat = 24
     private let rowHeight: CGFloat = 50
@@ -47,10 +45,6 @@ struct RecordingSettingsSheet: View {
                 .disabled(!viewModel.supportsReferenceVocal)
             switchRow("Lyrics", isOn: $showsLyrics)
             pitchGuideCard
-            switchRow("Lyrics in Pitch Guide", isOn: $lyricsInGuide)
-                .opacity(showsLyrics ? 1 : unavailableOpacity)
-                .disabled(!showsLyrics)
-            extras
         }
         .padding(.horizontal, horizontalInset)
         .padding(.top, 28)
@@ -99,13 +93,11 @@ struct RecordingSettingsSheet: View {
             .padding(.top, 8)
             Rectangle().fill(.white.opacity(0.15)).frame(height: 1).padding(.top, 22)
             // Shown once the user moved or resized the panel on the recording screen.
-            if guideFrameWidth > 0 {
-                Button("Reset position and size") {
-                    withAnimation(.snappy) { guideFrameWidth = 0 }
-                }
-                .font(.appFootnote.weight(.semibold))
-                .foregroundStyle(Color.secBrand)
-                .padding(.top, 6)
+            if canResetGuideFrame {
+                Button("Reset position and size", action: onResetGuideFrame)
+                    .font(.appFootnote.weight(.semibold))
+                    .foregroundStyle(Color.secBrand)
+                    .padding(.top, 6)
             }
         }
         .padding(.horizontal, 18)
@@ -124,37 +116,4 @@ struct RecordingSettingsSheet: View {
         .accessibilityHidden(true)
     }
     private static let sliderDotCount = 8
-
-    /// Information that is not in the design but still matters when it applies.
-    @ViewBuilder
-    private var extras: some View {
-        if viewModel.microphoneName != nil || viewModel.isSpeakerTest {
-            VStack(alignment: .leading, spacing: 6) {
-                if let microphone = viewModel.microphoneName {
-                    Label("Microphone: \(microphone)", systemImage: "headphones")
-                        .font(.appFootnote)
-                        .foregroundStyle(Color.secondaryText)
-                }
-                if viewModel.isSpeakerTest {
-                    Label("Speaker test mode: scores are not reliable", systemImage: "speaker.wave.3")
-                        .font(.appFootnote)
-                        .foregroundStyle(Color.primaryBrand)
-                }
-                #if DEBUG
-                pitchDebug
-                #endif
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.top, 4)
-        }
-    }
-
-    /// Debug builds: is the microphone heard, and how often? 20 samples/s is the target (50 ms hop).
-    private var pitchDebug: some View {
-        let stats = viewModel.pitchStats
-        let level = stats.lastLevelDB.isFinite ? "\(Int(stats.lastLevelDB)) dB" : "silent"
-        return Text("Mic \(stats.lastNote ?? "—") · \(stats.samplesPerSecond)/s · voiced \(stats.voicedPercent)% · \(level)")
-            .font(.appCaption.monospacedDigit())
-            .foregroundStyle(Color.secondaryText)
-    }
 }
