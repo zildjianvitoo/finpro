@@ -27,7 +27,11 @@ final class KeySelectionViewModel {
     @ObservationIgnored private var request = UUID()
     @ObservationIgnored private var playback: Task<Void, Never>?
     @ObservationIgnored private var generation = UUID()
+    /// The 5 best/closest shifts in `TranspositionPlan.semitoneRange` for the user's tested vocal range.
+    @ObservationIgnored private let comfortableShifts: Set<Int>
 
+    /// Number of closest keys considered comfortable for the Key Insight card.
+    private static let comfortableKeyCount = 5
     /// A preview that fails is tried once more after this pause: right after the song is prepared
     /// (or the import sheet closes and stops the shared player) the first attempt can fail once.
     private static let previewRetryDelay: Duration = .milliseconds(300)
@@ -40,6 +44,7 @@ final class KeySelectionViewModel {
         self.previewer = previewer
         self.onChoose = onChoose
         self.renderer = renderer
+        self.comfortableShifts = Self.computeComfortableShifts(choices: choices)
         for option in choices.options { rendered[option.song.transposition.semitoneShift] = option.song }
         if automaticallySelectRecommended, let option = choices.options.first {
             selectedIndex = 0
@@ -49,6 +54,76 @@ final class KeySelectionViewModel {
     }
 
     var recommendedShift: Int? { choices.options.first?.song.transposition.semitoneShift }
+
+    /// True when `shift` is among the top 5 best/closest keys to the user's tested vocal range.
+    func isComfortableShift(_ shift: Int) -> Bool {
+        comfortableShifts.contains(shift)
+    }
+
+    private static func computeComfortableShifts(choices: PrepareSongUseCase.Choices) -> Set<Int> {
+        let notes = choices.options.first?.song.segments.flatMap(\.targetNotes) ?? []
+        let low = Double(choices.vocalRange.lowestMIDI)
+        let high = Double(choices.vocalRange.highestMIDI)
+        let halfSpan = (high - low) / 2
+        let totalDuration = notes.reduce(0.0) { $0 + $1.duration }
+        let config = AppConfiguration.default
+        guard !notes.isEmpty, low.isFinite, high.isFinite, halfSpan > 0, totalDuration > 0 else {
+            let anchor = choices.options.first?.song.transposition.semitoneShift ?? 0
+            let fallback = TranspositionPlan.semitoneRange.sorted {
+                let da = abs($0 - anchor), db = abs($1 - anchor)
+                return da != db ? da < db : $0 < $1
+            }
+            return Set(fallback.prefix(comfortableKeyCount))
+        }
+        let sortedByPitch = notes.sorted { $0.midiNote < $1.midiNote }
+        let cut = totalDuration * min(0.49, max(0, config.keyFitOutlierFraction))
+        func corePitch(in list: [TargetMIDINote]) -> Int {
+            var sum = 0.0
+            for note in list {
+                sum += note.duration
+                if sum > cut + ContractTolerance.timeline { return note.midiNote }
+            }
+            return list.last!.midiNote
+        }
+        let coreLow = min(corePitch(in: sortedByPitch), corePitch(in: sortedByPitch.reversed()))
+        let coreHigh = max(corePitch(in: sortedByPitch), corePitch(in: sortedByPitch.reversed()))
+        let extremesWeight = config.rangePenaltyExtremesWeight
+
+        struct ScoredShift {
+            let shift: Int
+            let fitsCore: Bool
+            let outsideCost: Double
+            let penalty: Double
+        }
+
+        let candidates: [ScoredShift] = TranspositionPlan.semitoneRange.compactMap { shift in
+            let pitches = notes.map { $0.midiNote + shift }
+            guard pitches.allSatisfy({ (0...127).contains($0) }) else { return nil }
+            func edgeCost(_ pitch: Int) -> Double {
+                let distance = min(Double(pitch) - low, high - Double(pitch))
+                let edge = max(0, 1 - distance / halfSpan)
+                return edge * edge
+            }
+            func outside(_ pitch: Int) -> Double {
+                max(0, low - Double(pitch), Double(pitch) - high)
+            }
+            let weighted = zip(notes, pitches).reduce(0.0) { $0 + edgeCost($1.1) * $1.0.duration } / totalDuration
+            let extremes = (edgeCost(pitches.min()!) + edgeCost(pitches.max()!)) / 2
+            let penalty = extremesWeight * extremes + (1 - extremesWeight) * weighted
+            let fitsCore = Double(coreLow + shift) >= low && Double(coreHigh + shift) <= high
+            let outsideCost = zip(notes, pitches).reduce(0.0) { $0 + outside($1.1) * $1.0.duration } / totalDuration
+            return ScoredShift(shift: shift, fitsCore: fitsCore, outsideCost: outsideCost, penalty: penalty)
+        }
+
+        let ranked = candidates.sorted { a, b in
+            if a.fitsCore != b.fitsCore { return a.fitsCore }
+            if !a.fitsCore, a.outsideCost != b.outsideCost { return a.outsideCost < b.outsideCost }
+            if a.penalty != b.penalty { return a.penalty < b.penalty }
+            if abs(a.shift) != abs(b.shift) { return abs(a.shift) < abs(b.shift) }
+            return a.shift < b.shift
+        }
+        return Set(ranked.prefix(comfortableKeyCount).map(\.shift))
+    }
     var selectedNotes: (low: Int, high: Int)? {
         guard let selectedSong else { return nil }
         let pitches = selectedSong.segments.flatMap(\.targetNotes).map { selectedSong.transposition.transposed($0) }

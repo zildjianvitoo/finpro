@@ -46,11 +46,9 @@ struct KeySelectionView: View {
                             .accessibilityElement(children: .combine)
                         }
                         // No "Vocal notes" line (user decision 2026-11-21); tapping the dial plays the key.
-                        if viewModel.selectedNotes != nil, !viewModel.fitsRange {
-                            keyInsightCard
-                                .padding(.horizontal, AppSpacing.regular)
-                                .padding(.top, -AppSpacing.spacious)
-                        }
+                        keyInsightCard(isComfortable: viewModel.isComfortableShift(Int(dialValue.rounded())))
+                            .padding(.horizontal, AppSpacing.regular)
+                            .padding(.top, viewModel.isRendering ? 0 : -AppSpacing.spacious)
                     }
                 }
                 .padding(.horizontal, AppSpacing.regular).padding(.top, 15).padding(.bottom, 24)
@@ -151,11 +149,14 @@ struct KeySelectionView: View {
             .accessibilityLabel("Use recommended key \(recommendation)")
         }
     }
-    private var keyInsightCard: some View {
+    private func keyInsightCard(isComfortable: Bool) -> some View {
         let badgeDiameter: CGFloat = 64
         let cardCornerRadius: CGFloat = AppRadius.large
+        let message = isComfortable
+            ? "Key Insight: This key fits comfortably within your tested vocal range."
+            : "Key Insight: Some notes in this key may be difficult to reach."
         return ZStack(alignment: .top) {
-            Text("Key Insight: Some notes in this key may be difficult to reach.")
+            Text(message)
                 .font(.appCaption)
                 .foregroundStyle(Color.primary300)
                 .multilineTextAlignment(.center)
