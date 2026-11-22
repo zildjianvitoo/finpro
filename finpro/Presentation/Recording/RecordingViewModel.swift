@@ -284,6 +284,11 @@ final class RecordingViewModel {
         }
         do {
             try await capture.prepare()
+            guard !Task.isCancelled, status == .starting else {
+                playback.stop()
+                await (capture as? any CaptureSessionStopping)?.stopCaptureSession()
+                return
+            }
             isCameraReady = true
             await loadAlignmentImage()
             microphoneName = (capture as? any MicrophoneInputProviding)?.microphoneName
@@ -295,7 +300,11 @@ final class RecordingViewModel {
             }
             // The song before the selected part plays in the pre-roll before 0; without it, silence.
             try? playback.loadLeadIn(mixURL: song.leadIn?.mixURL, instrumentalURL: song.leadIn?.instrumentalURL)
-            guard status == .starting else { return }
+            guard !Task.isCancelled, status == .starting else {
+                playback.stop()
+                await (capture as? any CaptureSessionStopping)?.stopCaptureSession()
+                return
+            }
             status = .ready
         } catch {
             guard status == .starting else { return }
@@ -454,6 +463,12 @@ final class RecordingViewModel {
     /// Drops what this pass recorded. A retake or continue goes back to the cover as it was.
     func discard() async {
         if isCapturing { _ = await stopCapture() }
+        stopObserving()
+        playback.stop()
+        status = .finishing
+        // Stop AVCaptureSession and release the `.playAndRecord` audio session before navigating
+        // back, otherwise audio previews on Find Your Key and Select Clip fail to switch to `.playback`.
+        await (capture as? any CaptureSessionStopping)?.stopCaptureSession()
         if pass.isSession {
             takeLog.clear()
             SessionFiles.cleanUp()
@@ -462,6 +477,16 @@ final class RecordingViewModel {
             if let rawVideoURL { SessionFiles.remove(rawVideoURL) }
         }
         onDiscard()
+    }
+
+    /// Safety net if the view leaves without going through `finish()` or `discard()`.
+    func cleanupIfStillActive() {
+        guard status != .finishing else { return }
+        stopObserving()
+        playback.stop()
+        if let stopping = capture as? any CaptureSessionStopping {
+            Task { await stopping.stopCaptureSession() }
+        }
     }
 
     private var isBlocked: Bool {

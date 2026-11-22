@@ -31,13 +31,14 @@ nonisolated final class AudioPreviewPlayer: NSObject, AudioPreviewing, AVAudioPl
         queue.async { [self] in
             guard lock.withLock({ generation == token }) else { return }
             do {
-                try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-                try AVAudioSession.sharedInstance().setActive(true)
+                try Self.activatePlaybackSession()
                 let player = try AVAudioPlayer(contentsOf: url)
                 player.currentTime = start
+                player.prepareToPlay()
                 lock.withLock {
                     guard generation == token else { return }
                     guard player.play() else {
+                        Self.log.error("preview player.play() returned false for \(url.lastPathComponent, privacy: .public)")
                         pendingStartTime = nil
                         return
                     }
@@ -69,8 +70,7 @@ nonisolated final class AudioPreviewPlayer: NSObject, AudioPreviewing, AVAudioPl
                 queue.async { [self] in
                     do {
                         guard lock.withLock({ generation == token }) else { throw CancellationError() }
-                        try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default)
-                        try AVAudioSession.sharedInstance().setActive(true)
+                        try Self.activatePlaybackSession()
                         let player = try AVAudioPlayer(contentsOf: clip)
                         player.delegate = self
                         try lock.withLock {
@@ -118,6 +118,24 @@ nonisolated final class AudioPreviewPlayer: NSObject, AudioPreviewing, AVAudioPl
 
     func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: (any Error)?) {
         finish(player)
+    }
+
+    private static func activatePlaybackSession() throws {
+        let session = AVAudioSession.sharedInstance()
+        // Clear any headset input/sample-rate pin left by a prior recording or vocal-range session.
+        try? session.setPreferredInput(nil)
+        try? session.setPreferredSampleRate(0)
+        do {
+            try session.setCategory(.playback, mode: .default)
+            try session.setActive(true)
+        } catch {
+            // Brief retry if a prior capture/Bluetooth audio session is still tearing down.
+            Thread.sleep(forTimeInterval: 0.12)
+            try? session.setPreferredInput(nil)
+            try? session.setPreferredSampleRate(0)
+            try session.setCategory(.playback, mode: .default)
+            try session.setActive(true)
+        }
     }
 
     private func finish(_ finishedPlayer: AVAudioPlayer) {

@@ -71,14 +71,15 @@ struct KeySelectionView: View {
             }
         }
         .background(Color.screenBackground.ignoresSafeArea())
+        .edgeSwipeBack { viewModel.stop(); onChooseAnother() }
         .onAppear { viewModel.autoplaySelected() }
         .onDisappear { viewModel.stop() }
         .onChange(of: scenePhase) { _, phase in if phase != .active { viewModel.stop() } }
         .task { for await _ in routeMonitor.interruptions() { viewModel.stop() } }
         .task {
-            var previous = routeMonitor.currentRoute
+            var previous: AudioOutputRoute?
             for await route in routeMonitor.routeChanges() {
-                if route != previous { viewModel.stop() }
+                if let previous, route != previous { viewModel.stop() }
                 previous = route
             }
         }

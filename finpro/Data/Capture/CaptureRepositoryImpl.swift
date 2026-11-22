@@ -16,7 +16,7 @@ extension Notification.Name {
 }
 
 /// Capture and writer state belongs exclusively to queue; clock snapshots and subscribers use lock.
-nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, CameraPreviewSource, MicrophoneSampleSource, MicrophoneInputProviding, CameraLookLocking, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
+nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, CameraPreviewSource, MicrophoneSampleSource, MicrophoneInputProviding, CameraLookLocking, CaptureSessionStopping, AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate, @unchecked Sendable {
     // Recording format fixed by PRD §6.5.4 (portrait 1080×1920, see makeVideoInput).
     private static let framesPerSecond: Int32 = 30
     static let portraitRotation: CGFloat = 90
@@ -25,7 +25,8 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
     /// ~3 s of 50 ms pitch samples, so a short main-thread stall does not drop any.
     private static let pitchStreamBuffer = 64
 
-    let session = AVCaptureSession()
+    private var captureSession: AVCaptureSession?
+    private var session: AVCaptureSession { ensureSession() }
     private let queue = DispatchQueue(label: "recording.capture", qos: .userInitiated)
     private let lock = NSLock()
     private let worker = PitchWorker()
@@ -64,12 +65,11 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
 
     override init() {
         super.init()
-        queue.async { [weak self] in
-            self?.refreshAudioSessionSnapshotOnQueue()
-        }
+        // Keep init free of camera/audio daemon IPC so cold app launch paints frame 1 immediately.
         microphoneObserver = NotificationCenter.default.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: nil) { [weak self] _ in
             guard let self else { return }
             self.queue.async {
+                guard self.prepared || self.recording else { return }
                 self.refreshAudioSessionSnapshotOnQueue()
                 guard self.recording, let selected = self.selectedMicrophoneUID else { return }
                 if HeadsetMicrophoneSession.currentInput?.uid != selected, !self.microphoneChanged {
@@ -78,23 +78,31 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
                 }
             }
         }
+    }
+
+    /// Creates `AVCaptureSession` on first recording prepare (never at app launch).
+    private func ensureSession() -> AVCaptureSession {
+        if let captureSession { return captureSession }
+        let created = AVCaptureSession()
+        captureSession = created
         // The session can stop on its own right after it starts, e.g. when the song player then
         // starts on the shared audio session. Nothing restarted it, so the preview froze and the
         // first recording found no video frames; only a second prepare() started it again.
         let center = NotificationCenter.default
-        sessionObservers.append(center.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: nil) { [weak self] note in
+        sessionObservers.append(center.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: created, queue: nil) { [weak self] note in
             let error = note.userInfo?[AVCaptureSessionErrorKey] as? AVError
             Self.log.error("capture session runtime error: \(error?.localizedDescription ?? "unknown", privacy: .public)")
             self?.queue.async { self?.restartIfStopped() }
         })
-        sessionObservers.append(center.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: session, queue: nil) { note in
+        sessionObservers.append(center.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: created, queue: nil) { note in
             let reason = (note.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int) ?? -1
             Self.log.notice("capture session interrupted, reason \(reason)")
         })
-        sessionObservers.append(center.addObserver(forName: AVCaptureSession.interruptionEndedNotification, object: session, queue: nil) { [weak self] _ in
+        sessionObservers.append(center.addObserver(forName: AVCaptureSession.interruptionEndedNotification, object: created, queue: nil) { [weak self] _ in
             Self.log.notice("capture session interruption ended")
             self?.queue.async { self?.restartIfStopped() }
         })
+        return created
     }
 
     deinit {
@@ -210,10 +218,23 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
 
     func stopSession() {
         queue.async {
-            if self.session.isRunning { self.session.stopRunning() }
-            self.lock.withLock { self.activeMicrophoneName = nil }
-            Self.deactivateAudioSession()
+            self.stopSessionOnQueue()
         }
+    }
+
+    func stopCaptureSession() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            queue.async {
+                self.stopSessionOnQueue()
+                continuation.resume()
+            }
+        }
+    }
+
+    private func stopSessionOnQueue() {
+        if let captureSession, captureSession.isRunning { captureSession.stopRunning() }
+        lock.withLock { activeMicrophoneName = nil }
+        Self.deactivateAudioSession()
     }
 
     private func refreshAudioSessionSnapshotOnQueue() {
@@ -294,16 +315,20 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
                 self.recording = false
                 self.unlockCameraLook()
                 self.session.stopRunning()
+                self.lock.withLock { self.activeMicrophoneName = nil }
                 guard let writer = self.writer, let url = self.destination else {
+                    Self.deactivateAudioSession()
                     continuation.resume(throwing: self.error("No recording to finish.")); return
                 }
                 self.writer = nil
                 if let failure = self.failure {
                     writer.cancelWriting()
+                    Self.deactivateAudioSession()
                     continuation.resume(throwing: failure); return
                 }
                 guard writer.status == .writing else {
                     writer.cancelWriting()
+                    Self.deactivateAudioSession()
                     continuation.resume(throwing: writer.error ?? self.error("No video frames were recorded.")); return
                 }
                 self.videoInput?.markAsFinished()
