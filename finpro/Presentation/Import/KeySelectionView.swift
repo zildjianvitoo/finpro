@@ -47,10 +47,9 @@ struct KeySelectionView: View {
                         }
                         // No "Vocal notes" line (user decision 2026-11-21); tapping the dial plays the key.
                         if viewModel.selectedNotes != nil, !viewModel.fitsRange {
-                            Text("This key reaches beyond your tested range.")
-                                .font(.appCaption).foregroundStyle(Color.primaryBrand)
-                                .frame(maxWidth: .infinity)
-                                .padding(.top, AppSpacing.section)
+                            keyInsightCard
+                                .padding(.horizontal, AppSpacing.regular)
+                                .padding(.top, -AppSpacing.spacious)
                         }
                     }
                 }
@@ -152,6 +151,36 @@ struct KeySelectionView: View {
             .accessibilityLabel("Use recommended key \(recommendation)")
         }
     }
+    private var keyInsightCard: some View {
+        let badgeDiameter: CGFloat = 64
+        let cardCornerRadius: CGFloat = AppRadius.large
+        return ZStack(alignment: .top) {
+            Text("Key Insight: Some notes in this key may be difficult to reach.")
+                .font(.appCaption)
+                .foregroundStyle(Color.primary300)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.horizontal, AppSpacing.large)
+                .padding(.top, AppSpacing.large)
+                .padding(.bottom, AppSpacing.medium + AppSpacing.small)
+                .frame(maxWidth: .infinity, minHeight: 82)
+                .background(Color.screenBackground, in: RoundedRectangle(cornerRadius: cardCornerRadius, style: .continuous))
+                .padding(.top, badgeDiameter / 2)
+
+            Circle()
+                .fill(Color.screenBackground)
+                .frame(width: badgeDiameter, height: badgeDiameter)
+                .overlay {
+                    Image(systemName: "lightbulb.max")
+                        .font(.system(size: 21, weight: .regular))
+                        .foregroundStyle(Color.primaryBrand)
+                        .offset(y: -4)
+                        .accessibilityHidden(true)
+                }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
     private var dialValue: Double { dragValue ?? Double(viewModel.selectedShift ?? 0) }
     private func clamped(_ shift: Double) -> Double {
         min(Double(TranspositionPlan.semitoneRange.upperBound), max(Double(TranspositionPlan.semitoneRange.lowerBound), shift))
