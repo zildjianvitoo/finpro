@@ -9,7 +9,7 @@
 import AVFoundation
 
 nonisolated final class MicrophonePitchSource: LivePitchSource, MicrophoneInputProviding, @unchecked Sendable {
-    private let engine = AVAudioEngine()
+    private var engine: AVAudioEngine?
     private let worker = PitchWorker()
     private let queue = DispatchQueue(label: "vocal-range.microphone", qos: .userInitiated)
     private let lock = NSLock()
@@ -39,7 +39,12 @@ nonisolated final class MicrophonePitchSource: LivePitchSource, MicrophoneInputP
                         return true
                     }
                     guard kept else { throw CancellationError() }
-                    let input = self.engine.inputNode
+                    let engine = self.engine ?? {
+                        let created = AVAudioEngine()
+                        self.engine = created
+                        return created
+                    }()
+                    let input = engine.inputNode
                     let format = input.outputFormat(forBus: 0)
                     guard format.sampleRate > 0, format.channelCount > 0 else { throw HeadsetMicrophoneError.unavailable }
                     // 4096 frames become 256 ms at 16 kHz, making Bluetooth range feedback
@@ -57,8 +62,8 @@ nonisolated final class MicrophonePitchSource: LivePitchSource, MicrophoneInputP
                         }
                     }
                     self.hasTap = true
-                    self.engine.prepare()
-                    try self.engine.start()
+                    engine.prepare()
+                    try engine.start()
                     try HeadsetMicrophoneSession.verify(microphoneUID)
                     let portName = HeadsetMicrophoneSession.currentInput?.portName
                     self.lock.withLock {
@@ -111,8 +116,10 @@ nonisolated final class MicrophonePitchSource: LivePitchSource, MicrophoneInputP
             NotificationCenter.default.removeObserver(routeObserver)
             self.routeObserver = nil
         }
-        if engine.isRunning { engine.stop() }
-        if hasTap { engine.inputNode.removeTap(onBus: 0); hasTap = false }
+        if let engine {
+            if engine.isRunning { engine.stop() }
+            if hasTap { engine.inputNode.removeTap(onBus: 0); hasTap = false }
+        }
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 }

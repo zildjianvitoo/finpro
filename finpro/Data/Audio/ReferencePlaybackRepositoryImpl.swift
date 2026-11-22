@@ -9,7 +9,7 @@ import AVFoundation
 
 /// Serial access from the session controller. Audio scheduling uses host time, not the UI timer.
 nonisolated final class ReferencePlaybackRepositoryImpl: ReferencePlaybackRepository, ReferenceVocalPlayback {
-    private let engine = AVAudioEngine()
+    private var engine: AVAudioEngine?
     private let node = AVAudioPlayerNode()
     private let instrumentalNode = AVAudioPlayerNode()
     private var instrumentalFile: AVAudioFile?
@@ -27,11 +27,20 @@ nonisolated final class ReferencePlaybackRepositoryImpl: ReferencePlaybackReposi
     init(capture: CaptureRepositoryImpl, configuration: @escaping () -> AppConfiguration) {
         self.capture = capture
         self.configuration = configuration
-        engine.attach(node)
-        engine.attach(instrumentalNode)
+    }
+
+    /// Creates `AVAudioEngine` lazily on first recording load so cold app launch does not touch audio HAL.
+    private func ensureEngine() -> AVAudioEngine {
+        if let engine { return engine }
+        let created = AVAudioEngine()
+        created.attach(node)
+        created.attach(instrumentalNode)
+        engine = created
+        return created
     }
 
     func load(earphoneMixURL: URL) throws {
+        let engine = ensureEngine()
         node.stop(); instrumentalNode.stop()
         engine.stop()
         instrumentalFile = nil
@@ -48,6 +57,7 @@ nonisolated final class ReferencePlaybackRepositoryImpl: ReferencePlaybackReposi
     func loadKaraoke(mixURL: URL, instrumentalURL: URL) throws {
         try load(earphoneMixURL: mixURL)
         do {
+            let engine = ensureEngine()
             let backing = try AVAudioFile(forReading: instrumentalURL)
             guard let file,
                   abs(Double(file.length) / file.processingFormat.sampleRate
@@ -97,6 +107,7 @@ nonisolated final class ReferencePlaybackRepositoryImpl: ReferencePlaybackReposi
         let leadIn = beforeZero > 0 ? leadInFile.map { Self.tail($0, seconds: beforeZero) } : nil
         let leadInInstrumental = beforeZero > 0 && instrumentalFile != nil
             ? leadInInstrumentalFile.map { Self.tail($0, seconds: beforeZero) } : nil
+        let engine = ensureEngine()
         node.stop(); instrumentalNode.stop()
         if !engine.isRunning { try engine.start() }
         if let leadIn {
@@ -136,8 +147,8 @@ nonisolated final class ReferencePlaybackRepositoryImpl: ReferencePlaybackReposi
     }
 
     /// Also stops the engine so the audio session can be released; `play` restarts it.
-    func stop() { node.stop(); instrumentalNode.stop(); engine.stop() }
-    func shutdown() { node.stop(); instrumentalNode.stop(); engine.stop() }
+    func stop() { node.stop(); instrumentalNode.stop(); engine?.stop() }
+    func shutdown() { node.stop(); instrumentalNode.stop(); engine?.stop() }
     private func failure(_ message: String) -> NSError {
         NSError(domain: "Playback", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }

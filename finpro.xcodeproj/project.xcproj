@@ -41,6 +41,7 @@
         "DEVELOPMENT_TEAM": "YU8G545MR2",
         "ENABLE_PREVIEWS": "YES",
         "GENERATE_INFOPLIST_FILE": "YES",
+        "INFOPLIST_FILE": "Config/Info.plist",
         "INFOPLIST_KEY_CFBundleDisplayName": "Verca",
         "INFOPLIST_KEY_ITSAppUsesNonExemptEncryption": "NO",
         "INFOPLIST_KEY_NSCameraUsageDescription": "Record your cover video with the front camera.",
@@ -48,7 +49,6 @@
         "INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription": "Save your finished cover video to Photos.",
         "INFOPLIST_KEY_UIApplicationSceneManifest_Generation": "YES",
         "INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents": "YES",
-        "INFOPLIST_KEY_UILaunchScreen_Generation": "YES",
         "INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad": "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight",
         "INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone": "UIInterfaceOrientationPortrait",
         "LD_RUNPATH_SEARCH_PATHS": [
