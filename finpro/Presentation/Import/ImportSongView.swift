@@ -87,9 +87,18 @@ struct ImportSongView: View {
             LoadingMascotView()
             // Redrawn a few times a second: the progress moves with time inside a step.
             TimelineView(.periodic(from: .now, by: 0.25)) { _ in
-                LoadingTextView(title: "Preparing your song…",
-                                progress: ((viewModel.preparationProgress?.fraction ?? 0) * 100).rounded() / 100,
-                                font: .appHeadline)
+                // Only while the separation model finishes its first run (slow right after install).
+                let firstSetup = viewModel.isWaitingForSeparationModel
+                VStack(spacing: AppSpacing.tiny) {
+                    LoadingTextView(title: firstSetup ? "Getting things ready…" : "Preparing your song…",
+                                    progress: ((viewModel.preparationProgress?.fraction ?? 0) * 100).rounded() / 100,
+                                    font: .appHeadline)
+                    if firstSetup {
+                        Text("This takes a little longer the first time.")
+                            .font(.appCaption)
+                            .opacity(0.8)
+                    }
+                }
             }
         }
         .offset(y: -AppSpacing.regular)

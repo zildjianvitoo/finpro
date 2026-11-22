@@ -398,6 +398,14 @@ final class ImportSongViewModel {
     /// Share of the gap to the next step a step may fill on its own.
     private static let stepFillLimit = 0.9
 
+    /// Separating while the model has not finished its first run since the app opened (right after
+    /// install that run compiles the model, about 25 s), so the preparing screen says it is getting ready.
+    var isWaitingForSeparationModel: Bool {
+        guard case .preparing(let step) = status,
+              Self.progressSteps.first(where: { step.hasPrefix($0.prefix) })?.separating ?? true else { return false }
+        return (prepare.separation as? any SeparationModelReadiness)?.isModelReady == false
+    }
+
     func preparationProgress(at now: ContinuousClock.Instant) -> PreparationProgress? {
         switch status {
         case .prepared:

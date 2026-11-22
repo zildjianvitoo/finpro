@@ -13,8 +13,10 @@ import Accelerate
 import AVFoundation
 import CoreML
 import os
+import Synchronization
 
-nonisolated final class HTDemucsStemSeparationRepository: StemSeparationRepository, LeadInStemSeparation, StemPreseparation, @unchecked Sendable {
+nonisolated final class HTDemucsStemSeparationRepository: StemSeparationRepository, LeadInStemSeparation, StemPreseparation,
+    SeparationModelReadiness, @unchecked Sendable {
     /// The model was trained at 44.1 kHz.
     static let sampleRate = 44_100.0
     /// The model's fixed window: htdemucs' training segment, 39/5 s at 44.1 kHz.
@@ -40,6 +42,12 @@ nonisolated final class HTDemucsStemSeparationRepository: StemSeparationReposito
     private let lock = NSLock()
     private var model: MLModel?
     private let coordinator = ChunkCoordinator()
+    /// Set after the first model run in this process (prewarm, pre-separation or a song): that run
+    /// compiles the model for the GPU, the later ones are fast.
+    private static let firstRunFinished = Mutex(false)
+
+    var isModelReady: Bool { Self.firstRunFinished.withLock { $0 } }
+
 
     init(modelURL: URL? = nil,
          directory: URL = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
@@ -93,6 +101,10 @@ nonisolated final class HTDemucsStemSeparationRepository: StemSeparationReposito
             splitLeadIn = false
         }
 
+        if !isModelReady {
+            // The first run compiles the model (about 25 s right after install); this song waits for it.
+            Self.log.notice("htdemucs: song separation starts before the model's first run finished")
+        }
         let clock = ContinuousClock()
         let loadStarted = clock.now
         let model = try loadModel()
@@ -309,6 +321,7 @@ nonisolated final class HTDemucsStemSeparationRepository: StemSeparationReposito
 
             let modelStarted = clock.now
             let prediction = try model.prediction(from: MLDictionaryFeatureProvider(dictionary: ["mix": mixInput, "spec": specInput]))
+            firstRunFinished.withLock { $0 = true }
             let outputStarted = clock.now
             guard let specOut = prediction.featureValue(for: "spec_out")?.multiArrayValue,
                   let waveOut = prediction.featureValue(for: "wave_out")?.multiArrayValue,

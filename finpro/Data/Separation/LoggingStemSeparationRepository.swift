@@ -9,11 +9,15 @@
 import Foundation
 import os
 
-nonisolated struct LoggingStemSeparationRepository: StemSeparationRepository, LeadInStemSeparation, StemPreseparation {
+nonisolated struct LoggingStemSeparationRepository: StemSeparationRepository, LeadInStemSeparation, StemPreseparation,
+    SeparationModelReadiness {
     let name: String
     let wrapped: any StemSeparationRepository
 
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Separation")
+
+    /// Ready when the wrapped method has nothing to warm up.
+    var isModelReady: Bool { (wrapped as? any SeparationModelReadiness)?.isModelReady ?? true }
 
     func preseparate(audioURL: URL, trimRange: ClosedRange<TimeInterval>, leadInDuration: TimeInterval) async {
         guard let preseparator = wrapped as? any StemPreseparation else { return }
