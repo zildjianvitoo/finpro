@@ -15,6 +15,8 @@ struct RecordingLyricsView: View {
     let songTime: () -> TimeInterval?
     /// Index into `RecordingDisplaySettings.lyricsTextStyles`.
     let textStep: Int
+    /// Lines belonging to material before this time (previous section in pre-roll) are dimmed.
+    var dimmedBefore: TimeInterval? = nil
     let onChangeTextSize: () -> Void
     let onHide: () -> Void
 
@@ -33,9 +35,10 @@ struct RecordingLyricsView: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: refreshInterval)) { _ in
             let current = lines.currentIndex(at: songTime())
+            let currentDimmed = lines.indices.contains(current) && isBeforeSinging(lines[current])
             ZStack {
                 Capsule()
-                    .fill(Color.secBrand)
+                    .fill(currentDimmed ? Color.gray.opacity(0.35) : Color.secBrand)
                     .frame(height: highlightHeight + rowGrowth * CGFloat(textStep))
                     .padding(.horizontal, highlightInset)
 
@@ -61,12 +64,19 @@ struct RecordingLyricsView: View {
 
     private var rowSize: CGFloat { rowHeight + rowGrowth * CGFloat(textStep) }
 
+    private func isBeforeSinging(_ line: LyricLine) -> Bool {
+        guard let dimmedBefore else { return false }
+        let sungEnd = line.words.last?.end ?? line.end
+        return min(line.end, sungEnd) <= dimmedBefore + 1e-6
+    }
+
     /// A line sits `index - current` rows from the middle; the ones beyond the neighbours fade out.
     private func row(_ index: Int, current: Int) -> some View {
         let distance = index - current
+        let dimmed = isBeforeSinging(lines[index])
         return Text(lines[index].text)
             .font(RecordingDisplaySettings.lyricsTextStyle(step: textStep).weight(.semibold))
-            .foregroundStyle(distance == 0 ? Color.primary800 : Color.primaryBrand.opacity(0.8))
+            .foregroundStyle(dimmed ? Color.gray : (distance == 0 ? Color.primary800 : Color.primaryBrand.opacity(0.8)))
             .lineLimit(1)
             .minimumScaleFactor(0.7)
             .padding(.horizontal, textInset)
@@ -74,6 +84,7 @@ struct RecordingLyricsView: View {
             .frame(height: rowSize)
             .offset(y: CGFloat(distance) * rowSize)
             .opacity(abs(distance) <= 1 ? 1 : 0)
+            .animation(.easeInOut(duration: 0.2), value: dimmed)
     }
 
     private func cornerButton(_ systemImage: String, label: String, action: @escaping () -> Void) -> some View {

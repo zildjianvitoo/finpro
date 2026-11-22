@@ -173,11 +173,13 @@ struct PianoRollView: View {
         static let playhead = Color.primary800
         static let dot = Color.secBrand
         static let word = Color.secondaryButton
+        static let dimmedWord = Color.gray.opacity(0.85)
     }
 
     private var noteHeight: CGFloat { Self.scaled(scale, low: 5, mid: 8, high: 16) * contentZoom }
     private var lineWidth: CGFloat { Self.scaled(scale, low: 1, mid: 2, high: 4) * min(contentZoom, 1.5) }
     private var dotSize: CGFloat { Self.scaled(scale, low: 8, mid: 12, high: 22) * contentZoom }
+    private var wordFontSize: CGFloat { Self.scaled(scale, low: 6, mid: 8, high: 13) * min(max(contentZoom, 0.6), 2.0) }
 
     // MARK: - Drawing
 
@@ -351,22 +353,24 @@ struct PianoRollView: View {
         // Target notes.
         let windowStart = current - Self.visibleDuration * Self.playheadPosition
         let windowEnd = windowStart + Self.visibleDuration
-        var drawnNotes: [(id: UUID, rect: CGRect)] = []
+        var drawnNotes: [(id: UUID, rect: CGRect, isDimmed: Bool)] = []
         for note in notes where note.end > windowStart && note.start < windowEnd {
             let height = noteHeight
             let rect = CGRect(x: x(note.start), y: y(Double(note.midi)) - height / 2,
                               width: max(height, x(note.end) - x(note.start) - 2), height: height)
             let shape = Path(roundedRect: rect, cornerRadius: height / 2)
+            let isDimmed: Bool
             switch noteStyle {
             case .live:
-                let isPrevious = dimmedBefore.map { note.end <= $0 + 1e-6 } ?? false
-                context.fill(shape, with: .color(isPrevious ? Palette.previousNote : Palette.note))
-                if !isPrevious { fillPassed(shape, upTo: current, in: &context, x: x) }
+                isDimmed = dimmedBefore.map { note.end <= $0 + 1e-6 } ?? false
+                context.fill(shape, with: .color(isDimmed ? Palette.previousNote : Palette.note))
+                if !isDimmed { fillPassed(shape, upTo: current, in: &context, x: x) }
             case .review(let hit, let missed):
+                isDimmed = false
                 let color = missed.contains(note.id) ? Color.noteMiss : hit.contains(note.id) ? Color.pitchHit : Palette.note
                 context.fill(shape, with: .color(color))
             }
-            drawnNotes.append((note.id, rect))
+            drawnNotes.append((note.id, rect, isDimmed))
         }
 
         // Words, after every note so a later note never covers one. Under the note; when that spot
@@ -376,11 +380,11 @@ struct PianoRollView: View {
         // clear of notes still goes where it misses the other words; only then is it left out (the
         // lyric line under the guide still shows it).
         var drawnLabels: [CGRect] = []
-        let labelSpacing: CGFloat = 3
-        for (id, rect) in drawnNotes {
+        let labelSpacing: CGFloat = 3 * min(max(contentZoom, 0.7), 1.5)
+        for (id, rect, isDimmed) in drawnNotes {
             guard let word = wordLabels[id] else { continue }
-            let label = context.resolve(Text(word).font(.system(size: 8 * min(contentZoom, 1.5), weight: .medium))
-                .foregroundStyle(Palette.word))
+            let label = context.resolve(Text(word).font(.system(size: wordFontSize, weight: .medium))
+                .foregroundStyle(isDimmed ? Palette.dimmedWord : Palette.word))
             let size = label.measure(in: CGSize(width: CGFloat.infinity, height: .infinity))
             let centeredX = rect.midX - size.width / 2
             let below = CGRect(origin: CGPoint(x: centeredX, y: rect.maxY + 2), size: size)

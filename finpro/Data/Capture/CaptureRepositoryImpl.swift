@@ -127,6 +127,29 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
         (session.inputs.compactMap { $0 as? AVCaptureDeviceInput }.first { $0.device.hasMediaType(.video) })?.device
     }
 
+    func startPreviewOnly() async {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            queue.async {
+                defer { continuation.resume() }
+                if self.session.isRunning { return }
+                if !self.prepared {
+                    self.session.beginConfiguration()
+                    self.session.automaticallyConfiguresApplicationAudioSession = false
+                    self.session.sessionPreset = .hd1920x1080
+                    let hasVideo = self.session.inputs.contains { ($0 as? AVCaptureDeviceInput)?.device.hasMediaType(.video) == true }
+                    if !hasVideo,
+                       let camera = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front),
+                       let video = try? AVCaptureDeviceInput(device: camera),
+                       self.session.canAddInput(video) {
+                        self.session.addInput(video)
+                    }
+                    self.session.commitConfiguration()
+                }
+                self.session.startRunning()
+            }
+        }
+    }
+
     func prepare() async throws {
         let started = ContinuousClock.now
         func elapsed() -> String { (ContinuousClock.now - started).formatted(.units(allowed: [.seconds, .milliseconds])) }

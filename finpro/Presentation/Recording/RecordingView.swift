@@ -14,6 +14,9 @@ struct RecordingView: View {
     @State private var viewModel: RecordingViewModel
     @State private var confirmsEnd = false
     @State private var confirmsDeleteLast = false
+    /// True when the user tapped Delete while actively singing the current segment, so confirming
+    /// drops only the unfinished current segment instead of also wiping the last completed one.
+    @State private var deleteDeletesCurrentSegment = false
     @State private var showsSettings = false
     /// Height of the open settings sheet, so the pitch guide can sit above it (design 5.2b).
     @State private var settingsSheetHeight: CGFloat = 0
@@ -148,13 +151,23 @@ struct RecordingView: View {
                  ? "Your cover will use the \(viewModel.completedCount) segments you finished."
                  : "No segment has been finished yet.")
         }
-        .confirmationDialog("Delete the last segment?", isPresented: $confirmsDeleteLast, titleVisibility: .visible) {
-            Button("Delete", role: .destructive) { viewModel.deleteLastSegment() }
+        .confirmationDialog(
+            deleteDeletesCurrentSegment ? "Delete current segment?" : "Delete the last segment?",
+            isPresented: $confirmsDeleteLast,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                viewModel.deleteLastSegment(currentOnly: deleteDeletesCurrentSegment)
+            }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text(viewModel.completedCount > 0
-                 ? "Segment \(viewModel.completedCount) will be sung again from the start."
-                 : "The current segment will start again.")
+            if deleteDeletesCurrentSegment {
+                Text("Segment \(viewModel.loop.segmentIndex + 1) will be sung again from the start.")
+            } else if viewModel.loop.segmentIndex > viewModel.loop.range.lowerBound {
+                Text("Segment \(viewModel.loop.segmentIndex) will be sung again from the start.")
+            } else {
+                Text("The current segment will start again.")
+            }
         }
         .alert("Quick Recording Tips", isPresented: $showsTips) {
             Button("Let’s Record") {
@@ -292,8 +305,9 @@ struct RecordingView: View {
             case .finishing:
                 loading("Saving your recording…")
             case .blocked, .interrupted, .failed:
-                // Shown as a system alert (see `stoppedAlert`); the camera stays visible behind it.
-                Color.clear
+                // Keep the recording screen (camera, pitch guide, controls) visible behind the system alert.
+                sessionOverlay(layout)
+                    .allowsHitTesting(false)
             }
         }
     }
@@ -322,6 +336,7 @@ struct RecordingView: View {
                 RecordingLyricsView(lines: viewModel.lyrics,
                                     songTime: viewModel.displaySongTime,
                                     textStep: lyricsTextStep,
+                                    dimmedBefore: viewModel.singingFrom,
                                     onChangeTextSize: { lyricsTextStep = RecordingDisplaySettings.nextLyricsTextStep(after: lyricsTextStep) },
                                     onHide: { withAnimation(.snappy) { showsLyrics = false } })
                     .padding(.horizontal, lyricsCardInset)
@@ -357,7 +372,7 @@ struct RecordingView: View {
                 MovablePanel(defaultFrame: defaultGuideFrame, bounds: bounds,
                              minimumSize: CGSize(width: Self.guideMinimumWidth, height: defaultGuideFrame.height * 0.6),
                              frame: $guideFrame) { size in
-                    pitchGuide(zoom: guideFrame != nil ? size.height / defaultGuideFrame.height : 1)
+                    pitchGuide(size: size)
                 }
                 // While the settings sheet is open the guide rises above it, so a new size shows
                 // at once (design 5.2b).
@@ -389,22 +404,30 @@ struct RecordingView: View {
     private static let overlaySpace = "recordingOverlay"
     private static let guideMinimumWidth: CGFloat = 200
 
-    private func pitchGuide(zoom: CGFloat) -> some View {
-        PianoRollView(notes: pianoRollNotes,
+    private func pitchGuide(size: CGSize) -> some View {
+        let heightZoom = defaultGuideFrame.height > 0 ? size.height / defaultGuideFrame.height : 1
+        let widthZoom = defaultGuideFrame.width > 0 ? size.width / defaultGuideFrame.width : 1
+        let contentZoom = min(max(heightZoom, 0.6), 2.5)
+        let sliderLyricsScale = PianoRollView.scaled(pitchGuideScale, low: 0.75, mid: 1.0, high: 1.3)
+        let panelLyricsZoom = min(max(min(widthZoom, heightZoom), 0.6), 1.6)
+        let lyricsScale = min(max(sliderLyricsScale * panelLyricsZoom, 0.55), 1.65)
+        let scaledLyricsHeight = RecordingDisplaySettings.guideLyricsHeight * lyricsScale
+        return PianoRollView(notes: pianoRollNotes,
                       voiceDot: viewModel.voiceDot,
                       focusMIDI: focusMIDI,
                       songTime: viewModel.displaySongTime,
                       dimmedBefore: viewModel.singingFrom,
                       isPaused: confirmsEnd || confirmsDeleteLast || showsSettings,
                       wordLabels: wordLabels,
-                      lyricsHeight: lyricsInPanel ? RecordingDisplaySettings.guideLyricsHeight : 0,
+                      lyricsHeight: lyricsInPanel ? scaledLyricsHeight : 0,
                       scale: pitchGuideScale,
                       fixedRows: Double(RecordingDisplaySettings.guideRows),
-                      contentZoom: min(max(zoom, 0.6), 2.5))
+                      contentZoom: contentZoom)
             .overlay(alignment: .bottom) {
                 if lyricsInPanel {
-                    RecordingGuideLyricsView(lines: viewModel.lyrics, songTime: viewModel.displaySongTime)
-                        .frame(height: RecordingDisplaySettings.guideLyricsHeight)
+                    RecordingGuideLyricsView(lines: viewModel.lyrics, songTime: viewModel.displaySongTime,
+                                             scale: lyricsScale, dimmedBefore: viewModel.singingFrom)
+                        .frame(height: scaledLyricsHeight)
                         .padding(.bottom, PianoRollView.bottomInset / 2)
                 }
             }
@@ -512,6 +535,7 @@ struct RecordingView: View {
     /// the last clip of a short video. The session pauses while the dialog is open.
     private var deleteButton: some View {
         Button {
+            deleteDeletesCurrentSegment = viewModel.loop.phase == .singing
             viewModel.pause()
             confirmsDeleteLast = true
         } label: {
