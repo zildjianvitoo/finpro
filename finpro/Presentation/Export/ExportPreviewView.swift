@@ -760,8 +760,8 @@ struct ExportPreviewView: View {
             return
         }
         let alert = UIAlertController(
-            title: "Save changes?",
-            message: "Save the vocal and music volume you set before leaving?",
+            title: "Save Changes?",
+            message: "Your edits haven't been saved. Would you like to save them before leaving?",
             preferredStyle: .alert
         )
         alert.view.tintColor = .systemBlue
