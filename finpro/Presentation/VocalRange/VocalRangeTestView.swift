@@ -40,7 +40,12 @@ struct VocalRangeTestView: View {
                     stage = .intro
                 }, onBack: {
                     viewModel.redoHighest()
-                    stage = viewModel.lowestMIDI == nil ? .intro : .highest
+                    if viewModel.lowestMIDI == nil {
+                        stage = .intro
+                    } else {
+                        stage = .highest
+                        viewModel.listen()
+                    }
                 })
             } else {
                 testStep
@@ -316,9 +321,14 @@ struct VocalRangeTestView: View {
         case .warmup: viewModel.restart(); stage = .intro
         case .hummingGuide:
             viewModel.restart(); stage = .warmup
-        case .lowest: viewModel.resetCapture(); stage = .hummingGuide
+        case .lowest:
+            viewModel.resetCapture()
+            stage = .hummingGuide
+            viewModel.listen(practice: true)
         case .highest:
-            viewModel.previous(); stage = .lowest
+            viewModel.previous()
+            stage = .lowest
+            viewModel.listen()
         default: stage = .intro
         }
     }

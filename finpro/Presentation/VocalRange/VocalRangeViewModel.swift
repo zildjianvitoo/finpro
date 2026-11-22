@@ -95,6 +95,7 @@ final class VocalRangeViewModel {
         holdProgress = 0
         liveMIDI = nil
         hasStartedListening = false
+        hasPracticedHumming = false
         waveformLevels = []
     }
 
