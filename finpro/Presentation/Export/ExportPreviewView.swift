@@ -319,15 +319,11 @@ struct ExportPreviewView: View {
             player?.pause()
             requestLeave()
         }
-        // A centred system alert (it pops in over a dimmed screen), not a dialog: Cancel stays here.
-        .alert("Leave recording?", isPresented: $confirmsLeave) {
-            // The cover is already on Home (saved after each export): keep it as a draft, or remove it.
-            Button("Save to Draft") { saveCoverThen(onSaveDraft) }
-            Button("Discard", role: .destructive, action: onDiscard)
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Keep this cover as a draft, or discard it?")
-        }
+        .saveChangesAlert(
+            isPresented: $confirmsLeave,
+            onCancel: { keepsCoverOnLeave ? onStartOver() : onDiscard() },
+            onSave: { saveCoverThen(keepsCoverOnLeave ? onStartOver : onSaveDraft) }
+        )
         .alert("Couldn't Save Your Cover", isPresented: Binding(get: { soundSaveError != nil }, set: { if !$0 { soundSaveError = nil } })) {
             Button("Leave Without Changes", role: .destructive) {
                 soundSaveError = nil
@@ -743,34 +739,7 @@ struct ExportPreviewView: View {
     }
 
     private func requestLeave() {
-        guard keepsCoverOnLeave else {
-            confirmsLeave = true
-            return
-        }
-        // Present via UIAlertController so the preferred "Save" button uses native iOS blue
-        // instead of the app's plum AccentColor.
-        let window = UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-            .first { $0.isKeyWindow }
-        var top = window?.rootViewController
-        while let presented = top?.presentedViewController { top = presented }
-        guard let presenter = top else {
-            confirmsLeave = true
-            return
-        }
-        let alert = UIAlertController(
-            title: "Save Changes?",
-            message: "Your edits haven't been saved. Would you like to save them before leaving?",
-            preferredStyle: .alert
-        )
-        alert.view.tintColor = .systemBlue
-        let cancel = UIAlertAction(title: "Cancel", style: .cancel) { _ in onStartOver() }
-        let save = UIAlertAction(title: "Save", style: .default) { _ in saveCoverThen(onStartOver) }
-        alert.addAction(cancel)
-        alert.addAction(save)
-        alert.preferredAction = save
-        presenter.present(alert, animated: true)
+        confirmsLeave = true
     }
 
     private func startExport() {
