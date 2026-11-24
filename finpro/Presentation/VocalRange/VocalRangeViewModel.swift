@@ -48,6 +48,8 @@ final class VocalRangeViewModel {
 
     func listen() { startListening() }
 
+    func monitorWarmup() { startListening(waveformOnly: true) }
+
     /// Clears only the current input, keeping the measured range.
     func resetCapture() {
         stopListening()
@@ -58,12 +60,12 @@ final class VocalRangeViewModel {
         waveformLevels = []
     }
 
-    private func startListening() {
+    private func startListening(waveformOnly: Bool = false) {
         stopListening()
-        hasStartedListening = true
+        if !waveformOnly { hasStartedListening = true }
         waveformLevels = []
         let token = generation
-        status = .listening
+        if !waveformOnly { status = .listening }
         microphoneName = nil
         holdProgress = 0
         liveMIDI = nil
@@ -85,6 +87,7 @@ final class VocalRangeViewModel {
                             / max(1, configuration.vocalWaveformCeilingDBFS - configuration.noiseGateDBFS))) : 0
                     waveformLevels.append(amplitude)
                     if waveformLevels.count > configuration.vocalWaveformFrameCount { waveformLevels.removeFirst() }
+                    guard !waveformOnly else { continue }
                     let note = detector.ingest(sample)
                     liveMIDI = display.execute(midi: detector.latestMIDI, time: sample.captureTime.seconds)
                     holdProgress = min(1, detector.stableDuration / configuration.vocalRangeHoldDuration)
@@ -100,7 +103,9 @@ final class VocalRangeViewModel {
                 }
             } catch {
                 guard generation == token, !Task.isCancelled else { return }
-                status = .failed((error as? any UserFacingConvertible)?.userFacingError ?? .vocalRangeCaptureFailed)
+                if !waveformOnly {
+                    status = .failed((error as? any UserFacingConvertible)?.userFacingError ?? .vocalRangeCaptureFailed)
+                }
             }
             if generation == token { source.stop() }
         }

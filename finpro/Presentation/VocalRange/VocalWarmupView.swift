@@ -14,11 +14,17 @@ struct VocalWarmupView: View {
     let isActive: Bool
     let onBack: () -> Void
     let authorizeMicrophone: () async -> Bool
+    let monitorVoice: () -> Void
+    let stopVoice: () -> Void
+    let voiceLevels: () -> [Float]
     let onContinue: () -> Void
 
     @State private var phase: Phase = .idle
     @State private var round = 1
     @State private var seconds = phaseSeconds
+    @State private var phaseStartedAt: ContinuousClock.Instant?
+    @State private var warmupStartedAt: ContinuousClock.Instant?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var session: Task<Void, Never>?
     @Environment(\.scenePhase) private var scenePhase
 
@@ -63,7 +69,13 @@ struct VocalWarmupView: View {
                 .font(.appHeadline)
                 .monospacedDigit()
                 .frame(width: 60, height: 60)
-                .background { Circle().strokeBorder(Color.primary300, lineWidth: 1) }
+                .foregroundStyle(Color.plumNight)
+                .background {
+                    Circle().strokeBorder(Color.primary300, lineWidth: 1)
+                    progressArc(start: warmupStartedAt, duration: Self.totalSeconds,
+                                color: .primary500, lineWidth: 2, finished: phase == .complete)
+                        .padding(1)
+                }
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.top, AppSpacing.regular)
                 .accessibilityLabel("Warm-up time remaining")
@@ -72,16 +84,21 @@ struct VocalWarmupView: View {
                 .font(.appHeadline)
                 .padding(.leading, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            HStack {
+            HStack(spacing: 0) {
                 ForEach(1...Self.rounds, id: \.self) { number in
                     Text("\(number)")
                         .font(.appHeadline)
-                        .frame(width: 54, height: 54)
-                        .background(phase != .idle && number <= round ? Color.primaryButton : Color.primary100, in: Circle())
+                        .frame(width: 45, height: 45)
+                        .background {
+                            if phase != .idle && number <= round { Circle().fill(Color.primary300) }
+                        }
                         .foregroundStyle(phase != .idle && number <= round ? .white : Color.primaryBrand)
+                        .frame(width: 60, height: 60)
+                        .background(Color.ringHalo.opacity(0.4), in: Circle())
                         .frame(maxWidth: .infinity)
                 }
             }
+            .padding(.horizontal, 8)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Round \(round) of \(Self.rounds)")
 
@@ -93,29 +110,57 @@ struct VocalWarmupView: View {
                     .foregroundStyle(Color.plumNight)
                     .multilineTextAlignment(.center)
             }
-            .padding(.top, 24)
+            .padding(.top, 18)
 
             Button(action: start) {
-                VocalRangeRing(progress: phase == .complete ? 1 : 1 - Double(seconds) / Double(Self.phaseSeconds),
-                               isListening: phase == .hum, hearsVoice: false, label: "Microphone",
-                               showsMicrophoneIcon: phase == .idle, levels: [], diameter: 140)
-                    .overlay {
-                        if phase == .rest { Image(systemName: "pause.fill").font(.appLargeTitle) }
-                        if phase == .complete { Image(systemName: "checkmark").font(.appLargeTitle) }
+                ZStack {
+                    Circle().fill(Color.ringHalo)
+                    Circle().fill(Color.primaryButton).padding(13)
+                    Circle().strokeBorder(Color.ringStroke, lineWidth: 5).padding(13)
+                    if phase == .hum {
+                        progressArc(start: phaseStartedAt, duration: Self.phaseSeconds,
+                                    color: .secBrand, lineWidth: 5)
+                            .padding(16)
+                        ListeningWaveform(isActive: true, hearsVoice: true,
+                                          barColor: .white, levels: voiceLevels())
+                            .scaleEffect(0.9)
+                    } else {
+                        Image(systemName: phase == .rest ? "pause.fill" : phase == .complete ? "checkmark" : "mic.fill")
+                            .font(.system(size: 31, weight: .semibold))
+                            .foregroundStyle(.white)
                     }
+                }
+                .frame(width: 140, height: 140)
             }
             .buttonStyle(.plain)
-            .disabled(phase != .idle || session != nil)
+            .allowsHitTesting(phase == .idle && session == nil)
+            .accessibilityHidden(phase != .idle)
             .accessibilityLabel("Start warm-up microphone")
             .padding(.top, 16)
 
             Text("\(seconds)s")
                 .monospacedDigit()
+                .foregroundStyle(Color.plumNight)
                 .opacity(phase == .hum || phase == .rest ? 1 : 0)
                 .accessibilityHidden(phase == .idle || phase == .complete)
         }
         .foregroundStyle(Color.primaryBrand)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func progressArc(start: ContinuousClock.Instant?, duration: Int,
+                             color: Color, lineWidth: CGFloat, finished: Bool = false) -> some View {
+        TimelineView(.animation(minimumInterval: 1 / 24, paused: start == nil || finished || reduceMotion)) { _ in
+            let progress = start.map {
+                min(1, max(0, ($0.duration(to: .now) / .seconds(duration))))
+            } ?? 0
+            Circle()
+                .trim(from: 0, to: finished ? 1 : progress)
+                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .accessibilityHidden(true)
+        .allowsHitTesting(false)
     }
 
     private var totalSecondsRemaining: Int {
@@ -153,10 +198,13 @@ struct VocalWarmupView: View {
             do {
                 let clock = ContinuousClock()
                 var nextTick = clock.now
+                warmupStartedAt = nextTick
                 for number in 1...Self.rounds {
                     round = number
                     for nextPhase in number == Self.rounds ? [Phase.hum] : [.hum, .rest] {
+                        phaseStartedAt = nextTick
                         phase = nextPhase
+                        if nextPhase == .hum { monitorVoice() } else { stopVoice() }
                         for remaining in stride(from: Self.phaseSeconds, through: 1, by: -1) {
                             seconds = remaining
                             nextTick += .seconds(1)
@@ -165,6 +213,7 @@ struct VocalWarmupView: View {
                         }
                     }
                 }
+                stopVoice()
                 phase = .complete
             } catch {
                 // Leaving or backgrounding the screen cancels this timed exercise.
@@ -174,7 +223,10 @@ struct VocalWarmupView: View {
 
     private func interrupt() {
         session?.cancel()
+        if phase == .hum { stopVoice() }
         guard phase != .complete else { return }
+        warmupStartedAt = nil
+        phaseStartedAt = nil
         phase = .idle
         round = 1
         seconds = Self.phaseSeconds

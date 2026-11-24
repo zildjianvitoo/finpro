@@ -128,7 +128,10 @@ struct VocalRangeTestView: View {
             }
         case .warmup:
             VocalWarmupView(isActive: isTop, onBack: back,
-                            authorizeMicrophone: authorizeMicrophone) {
+                            authorizeMicrophone: authorizeMicrophone,
+                            monitorVoice: viewModel.monitorWarmup,
+                            stopVoice: viewModel.stopListening,
+                            voiceLevels: { viewModel.waveformLevels }) {
                 viewModel.resetCapture()
                 transition(to: .lowest)
             }
