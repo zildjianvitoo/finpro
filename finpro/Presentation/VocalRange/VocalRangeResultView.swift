@@ -57,7 +57,7 @@ struct VocalRangeResultView: View {
             .padding(.horizontal, 16).padding(.top, Self.chartTop).padding(.bottom, 32)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Measured range, \(note(range.lowestMIDI)) to \(note(range.highestMIDI))")
-            VStack(spacing: 10) {
+            VStack(spacing: 8) {
                 Button("Start Cover", action: onDone).buttonStyle(.appPrimary)
                 Button("Redo Test", action: onRetake).buttonStyle(.appSecondary)
             }
@@ -86,14 +86,14 @@ struct VocalRangeResultView: View {
                 .offset(x: -51, y: 18 + (appeared ? 0 : 60))
                 .accessibilityHidden(true)
             VStack(spacing: 0) {
-                Text("Your vocal range").font(.appLargeTitle.weight(.regular))
+                Text("Your vocal range:").font(.appTitle2.weight(.regular))
                     .frame(height: 41)
                 Text("(\(note(range.lowestMIDI))-\(note(range.highestMIDI)))")
                     .font(.appDisplay(size: 60).weight(.semibold))
                     .minimumScaleFactor(0.6).lineLimit(1)
                     .padding(.top, 6)
             }
-            .foregroundStyle(Color.primaryBrand)
+            .foregroundStyle(.primary)
             .padding(.top, 22).padding(.horizontal, AppSpacing.medium)
             .frame(width: Self.cardSize.width, height: Self.cardSize.height, alignment: .top)
             .background(Color.secondaryButton, in: RoundedRectangle(cornerRadius: AppRadius.large))
@@ -110,7 +110,7 @@ struct VocalRangeResultView: View {
                     .buttonStyle(.appIcon(.glass)).accessibilityLabel("Back to highest note")
                 Spacer()
             }
-            .padding(.horizontal, 16).padding(.top, 8)
+            .padding(.horizontal, 16)
         }
         .frame(maxWidth: .infinity).frame(height: Self.headerHeight, alignment: .top)
         .onAppear {
