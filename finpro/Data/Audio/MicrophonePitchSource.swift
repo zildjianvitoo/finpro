@@ -6,9 +6,12 @@
 //  Engine lifecycle and route changes are serialised; no silent fallback to iPhone input.
 //
 
+import Accelerate
 import AVFoundation
+import OSLog
 
 nonisolated final class MicrophonePitchSource: LivePitchSource, MicrophoneInputProviding, @unchecked Sendable {
+    private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "VocalMic")
     private var engine: AVAudioEngine?
     private let worker = PitchWorker()
     private let queue = DispatchQueue(label: "vocal-range.microphone", qos: .userInitiated)
@@ -23,14 +26,25 @@ nonisolated final class MicrophonePitchSource: LivePitchSource, MicrophoneInputP
     var isHeadsetMicrophoneActive: Bool { lock.withLock { activeMicrophoneName != nil } }
 
     func start() async throws -> AsyncStream<PitchSample> {
+        try await start(levelOnly: false)
+    }
+
+    func startLevelMonitoring() async throws -> AsyncStream<PitchSample> {
+        try await start(levelOnly: true)
+    }
+
+    private func start(levelOnly: Bool) async throws -> AsyncStream<PitchSample> {
+        let startedAt = ContinuousClock.now
+        Self.log.notice("Starting vocal mic: level-only=\(levelOnly)")
         let token = beginNewGeneration()
         queue.async { [self] in stopAudioOnQueue() }
-        try await worker.prepare()
+        if !levelOnly { try await worker.prepare() }
         try Task.checkCancellation()
         return try await withCheckedThrowingContinuation { result in
             queue.async { [self] in
                 do {
                     guard self.isCurrent(token) else { throw CancellationError() }
+                    Self.log.notice("Activating vocal audio session")
                     let microphoneUID = try HeadsetMicrophoneSession.activate(mode: .measurement)
                     let (stream, continuation) = AsyncStream.makeStream(of: PitchSample.self, bufferingPolicy: .bufferingNewest(64))
                     let kept = self.lock.withLock { () -> Bool in
@@ -53,6 +67,17 @@ nonisolated final class MicrophonePitchSource: LivePitchSource, MicrophoneInputP
                     input.installTap(onBus: 0, bufferSize: tapBufferSize, format: format) { [weak self] buffer, time in
                         guard let self else { return }
                         let start = time.isHostTimeValid ? AVAudioTime.seconds(forHostTime: time.hostTime) : ProcessInfo.processInfo.systemUptime
+                        if levelOnly {
+                            guard self.isCurrent(token),
+                                  let channel = buffer.floatChannelData?[0], buffer.frameLength > 0 else { return }
+                            let stride = buffer.format.isInterleaved ? Int(buffer.format.channelCount) : 1
+                            var rms: Float = 0
+                            vDSP_rmsqv(channel, stride, &rms, vDSP_Length(buffer.frameLength))
+                            continuation.yield(PitchSample(
+                                captureTime: CMTime(seconds: start, preferredTimescale: 60_000),
+                                frequency: nil, rmsDecibels: rms > 0 ? 20 * log10(rms) : -.infinity))
+                            return
+                        }
                         self.worker.accept(buffer, start: start) { [weak self] estimate, frameStart, _, failure in
                             guard failure == nil else { return }
                             let decibels = estimate.rms > 0 ? Float(20 * log10(estimate.rms)) : -.infinity
@@ -79,8 +104,13 @@ nonisolated final class MicrophonePitchSource: LivePitchSource, MicrophoneInputP
                             }
                         }
                     }
+                    let elapsed = (ContinuousClock.now - startedAt) / .seconds(1)
+                    Self.log.notice("Vocal mic started in \(elapsed, format: .fixed(precision: 3)) s")
                     result.resume(returning: stream)
                 } catch {
+                    if !(error is CancellationError) {
+                        Self.log.error("Vocal mic start failed: \(error.localizedDescription, privacy: .public)")
+                    }
                     if self.isCurrent(token) {
                         _ = self.beginNewGeneration()
                         self.stopAudioOnQueue()

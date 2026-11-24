@@ -27,6 +27,10 @@ struct FinproApp: App {
         Self.log.notice("app init finished in \(initElapsed, format: .fixed(precision: 3)) s")
     }
 
+    private var canPrewarm: Bool {
+        flow.step != .onboarding && flow.step != .vocalRange
+    }
+
     var body: some Scene {
         WindowGroup {
             Group {
@@ -47,10 +51,11 @@ struct FinproApp: App {
                 Self.log.notice("first frame appeared in \(elapsed, format: .fixed(precision: 3)) s")
             }
             .task {
-                // Defer TipKit store setup and heavy CoreML/VideoToolbox prewarm until after the
-                // first SwiftUI frame paints, avoiding a long white launch screen on fresh installs.
                 try? Tips.configure()
-                flow.startBackgroundWarmUp()
+            }
+            .task(id: canPrewarm) {
+                // Song separation and encoding are first needed after onboarding.
+                if canPrewarm { flow.startBackgroundWarmUp() }
             }
         }
         // Leaving the app copies the newest messages right away (it may not come back).

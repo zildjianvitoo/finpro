@@ -76,7 +76,7 @@ final class VocalRangeViewModel {
                 // Keep simulator samples tied to the prompt across retries and Redo Test.
                 (source as? FakeLivePitchSource)?.selectNote(at: prompt.rawValue)
                 #endif
-                let samples = try await source.start()
+                let samples = try await (waveformOnly ? source.startLevelMonitoring() : source.start())
                 microphoneName = (source as? any MicrophoneInputProviding)?.microphoneName
                 var display = StabilizePitchDisplayUseCase(configuration: configuration)
                 var detector = DetectVocalRangeUseCase(configuration: configuration, duration: configuration.vocalRangeHoldDuration)
