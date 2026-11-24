@@ -6,64 +6,47 @@
 import SwiftUI
 
 struct OnboardingView: View {
-    let onFinish: () -> Void
-    var isActive: Bool = true
-    @State private var currentStep: Int
-    @State private var walkthroughRevealProgress: CGFloat = 0
+    let onContinue: () -> Void
+    @State private var showsWelcome: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    init(initialStep: Int = -2, isActive: Bool = true, onFinish: @escaping () -> Void) {
-        self.onFinish = onFinish
-        self.isActive = isActive
-        _currentStep = State(initialValue: initialStep)
+    init(startsAtWelcome: Bool = false, onContinue: @escaping () -> Void) {
+        _showsWelcome = State(initialValue: startsAtWelcome)
+        self.onContinue = onContinue
     }
 
-    private let titles = ["Stay on pitch,\nas you sing.", "Retake less.\nCreate more.", "Find a key that fits\nyour voice."]
-    private let subtitles = [
-        "Follow visual pitch and timing cues while recording your cover.",
-        "We’ll highlight clips that need a retake, so you can re-record just that section.",
-        "We'll transpose songs to match your voice, so you can sing with confidence."
-    ]
-
     var body: some View {
-        let showsWalkthrough = currentStep >= 0
         Group {
-            if currentStep == -2 {
-                // Splash (1.1): the logo a little above the middle (top at ~34% of the safe area).
+            if showsWelcome {
+                welcome
+            } else {
                 GeometryReader { proxy in
                     BrandLogoView()
                         .frame(maxWidth: .infinity)
-                        .padding(.top, proxy.size.height * 0.338)
+                        .padding(.top, logoTop(in: proxy))
                 }
                 .task {
                     try? await Task.sleep(for: .seconds(1))
                     guard !Task.isCancelled else { return }
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.25)) { currentStep = -1 }
+                    showsWelcome = true
                 }
-            } else {
-                ZStack {
-                    welcome
-                        .background(Color.screenBackground.ignoresSafeArea())
-                        .hierarchicalUnderlay(isCovered: showsWalkthrough, revealProgress: walkthroughRevealProgress)
-                    if showsWalkthrough {
-                        walkthrough
-                            .transition(.move(edge: .trailing))
-                            .zIndex(1)
-                    }
-                }
-                .animation(reduceMotion ? nil : .easeInOut(duration: 0.28), value: showsWalkthrough)
             }
         }
         .background(Color.screenBackground.ignoresSafeArea())
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: currentStep == -2)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: showsWelcome)
+    }
+
+    /// The logo starts at y=322 on the 874 pt Sketch canvas.
+    private func logoTop(in proxy: GeometryProxy) -> CGFloat {
+        let screenHeight = proxy.size.height + proxy.safeAreaInsets.top + proxy.safeAreaInsets.bottom
+        return max(0, screenHeight * (322.0 / 874.0) - proxy.safeAreaInsets.top)
     }
 
     private var welcome: some View {
-        // Logo in the upper part, as in the 1.2 Welcome Screen design (top at ~30% of the safe area).
         GeometryReader { proxy in
             VStack(spacing: 0) {
                 BrandLogoView()
-                    .padding(.top, proxy.size.height * 0.3)
+                    .padding(.top, logoTop(in: proxy))
                 Spacer(minLength: 24)
                 VStack(spacing: 0) {
                     Text("Record covers effortlessly").font(.appTitle2).fontWeight(.bold)
@@ -72,12 +55,7 @@ struct OnboardingView: View {
                         .font(.appBody).foregroundStyle(Color.primary300)
                 }
                 .multilineTextAlignment(.center)
-                Button("Get Started") {
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.28)) {
-                        walkthroughRevealProgress = 0
-                        currentStep = 0
-                    }
-                }
+                Button("Get Started", action: onContinue)
                     .buttonStyle(.appPrimary)
                     .padding(.top, 65)
                     .padding(.bottom, 16)
@@ -87,96 +65,6 @@ struct OnboardingView: View {
         }
     }
 
-    /// Page illustrations, each animated from its layers while its page is shown.
-    @ViewBuilder private func illustration(_ index: Int) -> some View {
-        switch index {
-        case 0: PitchGuideIllustration(isActive: isActive && currentStep == 0)
-        case 1: RetakeIllustration(isActive: isActive && currentStep == 1)
-        default: VocalRangeIllustration(isActive: isActive && currentStep == 2)
-        }
-    }
-
-    private var isLastPage: Bool { currentStep == 2 }
-    private var pageAnimation: Animation? { reduceMotion ? nil : .easeInOut(duration: 0.25) }
-
-    private var walkthrough: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Button {
-                    withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.28)) {
-                        if currentStep == 0 { walkthroughRevealProgress = 0 }
-                        currentStep -= 1
-                    }
-                } label: {
-                    Image(systemName: "chevron.left")
-                }
-                .buttonStyle(.appIcon(.glass))
-                .accessibilityLabel("Back")
-                Spacer()
-                // Shown on every page, the last one too (design 1.5).
-                Button("Skip", action: onFinish)
-                    .font(.appBody).fontWeight(.medium).foregroundStyle(Color.primary)
-                    .glassPillButtonStyle()
-            }
-            .padding(.horizontal, 16)
-
-            TabView(selection: $currentStep) {
-                ForEach(0..<3) { index in
-                    GeometryReader { proxy in
-                        ScrollView {
-                            VStack(alignment: .leading, spacing: 0) {
-                                Text(titles[index]).font(.appLargeTitle)
-                                    .foregroundStyle(Color.primaryBrand)
-                                    .accessibilityAddTraits(.isHeader)
-                                Text(subtitles[index]).font(.appBody)
-                                    .foregroundStyle(Color.primary300)
-                                    .frame(maxWidth: 335, alignment: .leading)
-                                    .padding(.top, 8)
-                                    .frame(minHeight: 52, alignment: .topLeading)
-                                illustration(index)
-                                    .frame(maxWidth: .infinity)
-                                    .frame(height: max(220, proxy.size.height - 212))
-                                    .padding(.top, 34)
-                            }
-                            .padding(.horizontal, 24)
-                            .padding(.top, 44)
-                        }
-                        .scrollBounceBehavior(.basedOnSize)
-                    }
-                    .tag(index)
-                }
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-
-            HStack(spacing: 8) {
-                ForEach(0..<3) { index in
-                    Capsule().fill(index == currentStep ? Color.plumNight : Color.gray.opacity(0.4))
-                        .frame(width: index == currentStep ? 20 : 8, height: 8)
-                }
-            }
-            .animation(pageAnimation, value: currentStep)
-            .padding(.horizontal, 12).padding(.vertical, 8)
-            .background(Color.searchField, in: Capsule())
-            .accessibilityLabel("Page \(currentStep + 1) of 3")
-            .padding(.top, 15)
-
-            // Always laid out (faded in on the last page), so nothing moves when it appears.
-            Button("Find my vocal range", action: onFinish).buttonStyle(.appPrimary)
-                .opacity(isLastPage ? 1 : 0)
-                .offset(y: isLastPage || reduceMotion ? 0 : 8)
-                .disabled(!isLastPage)
-                .accessibilityHidden(!isLastPage)
-                .animation(pageAnimation, value: isLastPage)
-                .padding(.horizontal, 25).padding(.top, 16).padding(.bottom, 16)
-        }
-        .background(Color.screenBackground.ignoresSafeArea())
-        .edgeSwipeBack(isEnabled: isActive && currentStep == 0, interactiveSlide: true, onProgress: { walkthroughRevealProgress = $0 }) {
-            withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.28)) {
-                walkthroughRevealProgress = 0
-                currentStep = -1
-            }
-        }
-    }
 }
 
-#Preview { OnboardingView(onFinish: {}) }
+#Preview { OnboardingView(onContinue: {}) }

@@ -26,9 +26,9 @@ struct RootView: View {
             case .onboarding, .vocalRange where flow.vocalRangeOrigin == .onboarding:
                 let showsVocalRange = flow.step == .vocalRange
                 ZStack {
-                    OnboardingView(initialStep: showsVocalRange ? 2 : -2, isActive: !showsVocalRange, onFinish: {
+                    OnboardingView(startsAtWelcome: showsVocalRange, onContinue: {
                         vocalRangeRevealProgress = 0
-                        flow.onboardingFinished()
+                        flow.startOnboardingVocalRange()
                     })
                     .hierarchicalUnderlay(isCovered: showsVocalRange, revealProgress: vocalRangeRevealProgress)
                     if showsVocalRange {

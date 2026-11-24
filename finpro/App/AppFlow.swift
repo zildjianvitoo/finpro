@@ -134,15 +134,10 @@ final class AppFlow {
     }
     #endif
 
-    /// User completed or skipped the onboarding walkthrough.
-    func onboardingFinished() {
-        UserDefaults.standard.set(true, forKey: Self.hasCompletedOnboardingKey)
-        if container.vocalRange.load() == nil {
-            vocalRangeOrigin = .onboarding
-            step = .vocalRange
-        } else {
-            step = .home
-        }
+    /// Welcome continues directly to the vocal test intro.
+    func startOnboardingVocalRange() {
+        vocalRangeOrigin = .onboarding
+        step = .vocalRange
     }
 
     /// Replay onboarding (for testing or debugging).
@@ -155,11 +150,14 @@ final class AppFlow {
     /// Dismiss vocal range test back to previous step (Home if already tested, or Onboarding).
     func dismissVocalRange() {
         container.audioPreview.stop()
-        step = vocalRangeOrigin == .onboarding && container.vocalRange.load() == nil ? .onboarding : .home
+        step = vocalRangeOrigin == .onboarding ? .onboarding : .home
     }
 
     /// Vocal range screen (Ikzaz) saved a range.
     func vocalRangeSaved() {
+        if vocalRangeOrigin == .onboarding {
+            UserDefaults.standard.set(true, forKey: Self.hasCompletedOnboardingKey)
+        }
         vocalRangeCompletionCount += 1
         step = .home
     }

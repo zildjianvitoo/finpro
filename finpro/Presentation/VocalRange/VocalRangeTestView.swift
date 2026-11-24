@@ -102,7 +102,7 @@ struct VocalRangeTestView: View {
     private func stageLayer(for layerStage: Stage, isTop: Bool) -> some View {
         switch layerStage {
         case .intro:
-            VocalRangeIntroView(onBack: onDismiss) {
+            VocalRangeIntroView(isActive: isTop, onBack: onDismiss) {
                 transition(to: .warmup)
             }
             .edgeSwipeBack(isEnabled: isTop && onDismiss != nil, onProgress: onDismissRevealProgress) {
