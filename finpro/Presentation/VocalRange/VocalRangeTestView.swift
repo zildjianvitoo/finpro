@@ -84,6 +84,7 @@ struct VocalRangeTestView: View {
         }
         .onChange(of: stage) { _, stage in
             if stage == .intro { offeredEarphoneSetup = false }
+            if stage == .lowest || stage == .highest { startMicrophone(for: stage) }
             offerEarphoneSetupIfNeeded()
         }
         .onChange(of: outputRoute) { _, _ in
@@ -96,7 +97,7 @@ struct VocalRangeTestView: View {
             for await route in routeMonitor.routeChanges() { outputRoute = route }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active, viewModel.status == .listening {
+            if phase == .background, viewModel.status == .listening {
                 viewModel.resetCapture()
             }
         }
@@ -274,7 +275,7 @@ struct VocalRangeTestView: View {
         .buttonStyle(.plain).contentShape(Circle())
         .disabled(isAuthorizingMicrophone)
         .accessibilityLabel(listening ? "Stop microphone" : "Start microphone")
-        .accessibilityHint("Tap and hold a comfortable note for 1 second")
+        .accessibilityHint(listening ? "Hold a comfortable note for 1 second" : "Start listening again")
         .accessibilityValue(Text(progress, format: .percent.precision(.fractionLength(0))))
     }
 
@@ -284,10 +285,15 @@ struct VocalRangeTestView: View {
             viewModel.resetCapture()
             return
         }
+        startMicrophone(for: stepStage)
+    }
+
+    private func startMicrophone(for stepStage: Stage) {
+        guard !isAuthorizingMicrophone else { return }
         isAuthorizingMicrophone = true
         Task {
             defer { isAuthorizingMicrophone = false }
-            guard await authorizeMicrophone(), stage == stepStage else { return }
+            guard await authorizeMicrophone(), stage == stepStage, scenePhase != .background else { return }
             viewModel.listen()
         }
     }
