@@ -28,29 +28,29 @@ struct VocalRangeIntroView: View {
             }
             .padding(.horizontal, AppSpacing.large)
             .padding(.top, AppSpacing.large)
-            .frame(maxHeight: .infinity)
+            .frame(maxHeight: .infinity, alignment: .top)
 
-            Button("Start vocal test", action: onContinue)
+            Button("Let's Begin", action: onContinue)
                 .buttonStyle(.appPrimary)
                 .padding(.horizontal, 25)
-                .padding(.bottom, AppSpacing.medium)
+                .padding(.bottom, 20)
         }
         .background(Color.screenBackground.ignoresSafeArea())
     }
 
     private var introduction: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("Let's Get Your\nVoice Ready")
+            Text("Let's Get Your Voice\nReady")
                 .font(.appLargeTitle)
                 .foregroundStyle(Color.primaryBrand)
                 .accessibilityAddTraits(.isHeader)
-            Text("We'll find your vocal range and adjust song keys to fit your voice.")
+            Text("We'll find your vocal range and adjust song keys to make them more comfortable for you to sing.")
                 .font(.appBody)
-                .foregroundStyle(Color.primary300)
+                .foregroundStyle(.primary)
                 .padding(.top, AppSpacing.small)
             VocalRangeIllustration(isActive: isActive)
                 .frame(maxWidth: .infinity)
-                .padding(.top, 36)
+                .padding(.top, 40)
         }
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .fixedSize(horizontal: false, vertical: true)

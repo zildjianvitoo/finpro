@@ -9,11 +9,13 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct RootView: View {
     let flow: AppFlow
     @State private var songListRevealProgress: CGFloat = 0
     @State private var vocalRangeRevealProgress: CGFloat = 0
+    @State private var showsMicrophoneSettings = false
     #if DEBUG
     @State private var showsDebugSettings = false
     @State private var opensSyncTest = false
@@ -92,6 +94,16 @@ struct RootView: View {
             ImportSongView(viewModel: makeImportViewModel(), onBack: flow.closeImport)
         }
         .animation(.default, value: flow.step)
+        .alert(UserFacingError.permissionDenied([.microphone]).title, isPresented: $showsMicrophoneSettings) {
+            Button("Open Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(UserFacingError.permissionDenied([.microphone]).message)
+        }
         #if DEBUG
         // Debug Settings has no button (the designed screens have none): launch with
         // `-startScreen debugSettings` to open it.
@@ -126,22 +138,35 @@ struct RootView: View {
     }
 
     private var vocalRangeScreen: some View {
-        PermissionGate([.microphone], provider: flow.container.permissions) {
-            VocalRangeTestView(
-                viewModel: VocalRangeViewModel(
-                    source: flow.container.livePitch,
-                    repository: flow.container.vocalRange,
-                    configuration: flow.container.configuration,
-                    onSaved: {
-                        vocalRangeRevealProgress = 0
-                        flow.vocalRangeSaved()
-                    }),
-                routeMonitor: flow.container.audioRoute,
-                onDismiss: {
+        VocalRangeTestView(
+            viewModel: VocalRangeViewModel(
+                source: flow.container.livePitch,
+                repository: flow.container.vocalRange,
+                configuration: flow.container.configuration,
+                onSaved: {
                     vocalRangeRevealProgress = 0
-                    flow.dismissVocalRange()
-                },
-                onDismissRevealProgress: { vocalRangeRevealProgress = $0 })
+                    flow.vocalRangeSaved()
+                }),
+            routeMonitor: flow.container.audioRoute,
+            onDismiss: {
+                vocalRangeRevealProgress = 0
+                flow.dismissVocalRange()
+            },
+            onDismissRevealProgress: { vocalRangeRevealProgress = $0 },
+            authorizeMicrophone: authorizeVocalTestMicrophone)
+    }
+
+    private func authorizeVocalTestMicrophone() async -> Bool {
+        let gate = PermissionGateModel(permissions: [.microphone], provider: flow.container.permissions)
+        switch gate.state {
+        case .granted: return true
+        case .needsRequest:
+            await gate.requestMissing()
+            return gate.state == .granted
+        case .denied:
+            showsMicrophoneSettings = true
+            return false
+        case .checking: return false
         }
     }
 

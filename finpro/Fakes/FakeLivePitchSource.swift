@@ -2,7 +2,7 @@
 //  FakeLivePitchSource.swift
 //  finpro
 //
-//  Fake for the simulator and previews. Every `start()` "sings" the next note of `notes`
+//  Fake for the simulator and previews. Each `start()` "sings" the selected note of `notes`
 //  (MIDI), held steady, so the vocal range test can be walked through without a microphone.
 //
 
@@ -23,14 +23,18 @@ nonisolated final class FakeLivePitchSource: LivePitchSource, Sendable {
 
     /// Default: lowest C3, highest G4.
     init(notes: [Float] = [48, 67]) {
+        precondition(!notes.isEmpty)
         self.notes = notes
+    }
+
+    func selectNote(at index: Int) {
+        state.withLock { $0.index = index }
     }
 
     func start() async throws -> AsyncStream<PitchSample> {
         stop()
         let (stream, continuation) = AsyncStream.makeStream(of: PitchSample.self)
         let midi = state.withLock { state -> Float in
-            defer { state.index += 1 }
             return notes[min(state.index, notes.count - 1)]
         }
         let frequency = Float(440 * pow(2, (Double(midi) - 69) / 12))

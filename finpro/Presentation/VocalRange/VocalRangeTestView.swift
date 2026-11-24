@@ -7,7 +7,7 @@ import SwiftUI
 
 struct VocalRangeTestView: View {
     enum Stage: Int, Equatable, Comparable, CaseIterable, Identifiable {
-        case intro = 0, warmup, hummingGuide, lowest, highest, result
+        case intro = 0, warmup, lowest, highest, result
         var id: Int { rawValue }
         static func < (lhs: Stage, rhs: Stage) -> Bool { lhs.rawValue < rhs.rawValue }
     }
@@ -17,6 +17,8 @@ struct VocalRangeTestView: View {
     /// Snapshot of the finished range so `VocalRangeResultView` keeps rendering while sliding out.
     @State private var completedRange: VocalRange?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let authorizeMicrophone: () async -> Bool
+    @State private var isAuthorizingMicrophone = false
     let onDismiss: (() -> Void)?
     let onDismissRevealProgress: ((CGFloat) -> Void)?
     /// Where audio goes now; nil until known. Earphones plugged in or out update it.
@@ -30,9 +32,11 @@ struct VocalRangeTestView: View {
     @State private var offeredEarphoneSetup = false
 
     init(viewModel: VocalRangeViewModel, routeMonitor: (any AudioRouteMonitor)? = nil,
-         onDismiss: (() -> Void)? = nil, onDismissRevealProgress: ((CGFloat) -> Void)? = nil) {
+         onDismiss: (() -> Void)? = nil, onDismissRevealProgress: ((CGFloat) -> Void)? = nil,
+         authorizeMicrophone: @escaping () async -> Bool = { true }) {
         _viewModel = State(initialValue: viewModel)
         self.routeMonitor = routeMonitor
+        self.authorizeMicrophone = authorizeMicrophone
         self.onDismiss = onDismiss
         self.onDismissRevealProgress = onDismissRevealProgress
     }
@@ -66,7 +70,7 @@ struct VocalRangeTestView: View {
         .alert(failure?.title ?? "", isPresented: $showsFailure, presenting: failure) { _ in
             Button("Try Again") {
                 viewModel.resetCapture()
-                viewModel.toggleMicrophone(practice: stage == .hummingGuide)
+                microphoneTapped(for: stage)
             }
             Button("OK", role: .cancel) { viewModel.resetCapture() }
         } message: { error in
@@ -122,10 +126,18 @@ struct VocalRangeTestView: View {
                     onSwipeProgress: { stageDragProgress = $0 }
                 )
             }
-        case .warmup, .hummingGuide, .lowest, .highest:
+        case .warmup:
+            VocalWarmupView(isActive: isTop, onBack: back,
+                            authorizeMicrophone: authorizeMicrophone) {
+                viewModel.resetCapture()
+                transition(to: .lowest)
+            }
+            .edgeSwipeBack(isEnabled: isTop && !showsEarphoneSetup, interactiveSlide: true,
+                           onProgress: { stageDragProgress = $0 }, action: back)
+        case .lowest, .highest:
             testStep(for: layerStage, isActive: isTop)
                 .background(Color.screenBackground.ignoresSafeArea())
-                .edgeSwipeBack(isEnabled: isTop && !showsFailure && !showsEarphoneSetup,
+                .edgeSwipeBack(isEnabled: isTop && !isAuthorizingMicrophone && !showsFailure && !showsEarphoneSetup,
                                interactiveSlide: true,
                                onProgress: { stageDragProgress = $0 },
                                action: back)
@@ -177,72 +189,61 @@ struct VocalRangeTestView: View {
         return viewModel.liveMIDI
     }
 
-    private func title(for stepStage: Stage) -> String {
-        switch stepStage {
-        case .warmup: "Let’s warm up"
-        case .hummingGuide: "Humming"
-        case .lowest: "Find your lowest\nnote"
-        default: "Now, find your\nhighest note"
-        }
-    }
-
-    /// Width of the subtitle's text box in the design, so its lines break where the design's do.
-    private func subtitleWidth(for stepStage: Stage) -> CGFloat {
-        switch stepStage {
-        case .warmup: 294
-        case .hummingGuide: 273
-        case .lowest: 295
-        default: 303
-        }
-    }
-
-    private func subtitle(for stepStage: Stage) -> String {
-        switch stepStage {
-        case .warmup: "Read the sentences below in your everyday speaking voice."
-        case .hummingGuide: "Start from a low tone and slowly glide up."
-        case .lowest: "Sing “Do” as low as comfortably possible and hold it."
-        default: "Sing “Do” as high as feels comfortable and hold it."
-        }
-    }
-
     private func testStep(for stepStage: Stage, isActive: Bool) -> some View {
-        let isWarmup = stepStage == .warmup
-        let showsPill = showsEarphonePill(for: stepStage)
+        let isLowest = stepStage == .lowest
+        let progress = isActive ? viewModel.holdProgress : 1.0
         return GeometryReader { proxy in
-            let diameter = min(AppLayout.microphoneDiameter, max(120, proxy.size.height * 0.224))
-            // Mic centre at y 633 of the 874 pt design frames (2.2–2.5).
+            let diameter = min(140, max(100, proxy.size.height * 0.19))
             let micCenter = proxy.size.height * 0.734
-            let headerHeight = proxy.size.height * (isWarmup ? 0.31 : 0.25)
-            let hintHeight: CGFloat = showsPill ? 32 : 0
-            let contentHeight = max(40, micCenter - diameter / 2 - headerHeight - AppSpacing.regular - hintHeight)
+            let showsPill = showsEarphonePill(for: stepStage)
+            let headerHeight = proxy.size.height * 0.304
+            let contentHeight = max(40, micCenter - diameter / 2 - headerHeight - (showsPill ? 32 : 0))
             ZStack(alignment: .topLeading) {
-                header(for: stepStage, height: headerHeight)
+                VStack(alignment: .leading, spacing: 0) {
+                    VocalTestProgressHeader(step: isLowest ? 2 : 3, onBack: back)
+                    VStack(alignment: .leading, spacing: AppSpacing.small) {
+                        Text(isLowest ? "Let’s find your lowest note" : "Now, find your highest note")
+                            .font(.appLargeTitle)
+                            .foregroundStyle(Color.primaryBrand)
+                            .accessibilityAddTraits(.isHeader)
+                        Text(isLowest
+                             ? "Sing “Do” as low as comfortably possible and hold it."
+                             : "Sing “Do” as high as feels comfortable and hold it.")
+                            .font(.appBody)
+                            .foregroundStyle(.primary)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 35)
+                    .padding(.top, AppSpacing.large)
+                }
                 ScrollView {
-                    stepContent(for: stepStage, isActive: isActive)
+                    VocalPitchMeter(midi: displayMIDI(for: stepStage, isActive: isActive),
+                                    referenceMIDI: viewModel.lowestMIDI ?? 57,
+                                    direction: isLowest ? .lowest : .highest,
+                                    holdProgress: progress,
+                                    isCaptured: isCaptured(for: stepStage, isActive: isActive))
+                        .frame(maxWidth: .infinity)
                 }
                 .scrollBounceBehavior(.basedOnSize)
-                .frame(width: max(1, proxy.size.width - AppSpacing.textInset * 2), height: contentHeight)
+                .frame(width: proxy.size.width, height: contentHeight)
                 .position(x: proxy.size.width / 2, y: headerHeight + contentHeight / 2)
 
                 if showsPill {
                     earphoneHint
                         .position(x: proxy.size.width / 2, y: micCenter - diameter / 2 - AppSpacing.regular)
-                        .transition(.opacity)
                 }
-
                 microphone(for: stepStage, isActive: isActive, diameter: diameter)
                     .position(x: proxy.size.width / 2, y: micCenter)
 
                 VStack {
                     Spacer(minLength: 0)
                     action(for: stepStage, isActive: isActive).buttonStyle(.appPrimary)
-                        .padding(.horizontal, AppSpacing.large)
-                        .padding(.bottom, AppSpacing.medium)
+                        .padding(.horizontal, 25)
+                        .padding(.bottom, 20)
                 }
                 .frame(width: proxy.size.width, height: proxy.size.height)
             }
             .frame(width: proxy.size.width, height: proxy.size.height)
-            .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: showsPill)
         }
     }
 
@@ -254,71 +255,13 @@ struct VocalRangeTestView: View {
             .background(Color.primary100, in: Capsule())
     }
 
-    private func header(for stepStage: Stage, height: CGFloat) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button(action: back) { Image(systemName: "chevron.left") }
-                .buttonStyle(.appIcon(.glass)).accessibilityLabel("Back")
-                .padding(.horizontal, AppSpacing.regular)
-            VStack(alignment: .leading, spacing: AppSpacing.small) {
-                Text(title(for: stepStage)).font(.appLargeTitle).foregroundStyle(Color.primaryBrand)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .accessibilityAddTraits(.isHeader)
-                Text(subtitle(for: stepStage)).font(.appBody)
-                    .foregroundStyle(Color.primary300)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: subtitleWidth(for: stepStage), alignment: .leading)
-            }
-            .padding(.horizontal, AppSpacing.textInset).padding(.top, AppSpacing.large)
-            Spacer(minLength: 0)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading).frame(height: height)
-        .background {
-            if stepStage == .warmup {
-                SpeechBubbleShape().fill(Color.primary100)
-                    .ignoresSafeArea(edges: .top)
-            }
-        }
-    }
-
-    @ViewBuilder private func stepContent(for stepStage: Stage, isActive: Bool) -> some View {
-        let progress = isActive ? viewModel.holdProgress : 1.0
-        VStack(alignment: .leading, spacing: AppSpacing.large) {
-            if stepStage == .warmup {
-                Text(passage(progress: progress)).font(.appTitle2.weight(.bold))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 294, alignment: .leading)
-                    .accessibilityLabel(VocalRangeViewModel.speakingPassage)
-                    .padding(.top, AppSpacing.medium)
-            } else if stepStage == .hummingGuide {
-                Text("“Hummmmmm…”").font(.appDisplay(size: 24)).foregroundStyle(Color.primary)
-                    .frame(maxWidth: .infinity, minHeight: 80)
-                    .background(Color.primary100, in: RoundedRectangle(cornerRadius: AppRadius.medium))
-                    .padding(.top, AppSpacing.spacious + AppSpacing.section)
-            } else {
-                VocalPitchMeter(midi: displayMIDI(for: stepStage, isActive: isActive),
-                                referenceMIDI: viewModel.baselineMIDI ?? 57,
-                                direction: stepStage == .lowest ? .lowest : .highest,
-                                holdProgress: progress,
-                                isCaptured: isCaptured(for: stepStage, isActive: isActive))
-                    .id(stepStage)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, AppSpacing.spacious + AppSpacing.tiny)
-            }
-        }
-        // Full width and leading, so the text lines up with the title (a scroll view centres
-        // content narrower than itself).
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
     private func microphone(for stepStage: Stage, isActive: Bool, diameter: CGFloat) -> some View {
-        let isWarmup = stepStage == .warmup
-        let isHumming = stepStage == .hummingGuide
         let progress = isActive ? viewModel.holdProgress : 1.0
         let listening = isActive && viewModel.status == .listening
         let hearsVoice = isActive && viewModel.liveMIDI != nil
         let showsMicIcon = isActive ? !viewModel.hasStartedListening : false
         let levels = isActive ? viewModel.waveformLevels : []
-        return Button { viewModel.toggleMicrophone(practice: isHumming) } label: {
+        return Button { microphoneTapped(for: stepStage) } label: {
             VocalRangeRing(progress: progress,
                            isListening: listening,
                            hearsVoice: hearsVoice, label: "Microphone",
@@ -326,24 +269,24 @@ struct VocalRangeTestView: View {
                            levels: levels, diameter: diameter)
         }
         .buttonStyle(.plain).contentShape(Circle())
+        .disabled(isAuthorizingMicrophone)
         .accessibilityLabel(listening ? "Stop microphone" : "Start microphone")
-        .accessibilityHint(isWarmup ? "Tap and read the paragraph aloud" : "Tap and hold a comfortable note for 1 second")
+        .accessibilityHint("Tap and hold a comfortable note for 1 second")
         .accessibilityValue(Text(progress, format: .percent.precision(.fractionLength(0))))
     }
 
-    private func passage(progress: Double) -> AttributedString {
-        let source = VocalRangeViewModel.speakingPassage
-        var text = AttributedString(source)
-        text.foregroundColor = Color.passageUnread
-        // Highlight only complete words. Time advances while the microphone hears speech (short pauses included).
-        let words = source.split(whereSeparator: \.isWhitespace)
-        let count = Int(Double(words.count) * progress)
-        let readCount = words.prefix(count).last.map {
-            source.distance(from: source.startIndex, to: $0.endIndex)
-        } ?? 0
-        let end = text.index(text.startIndex, offsetByCharacters: readCount)
-        text[text.startIndex..<end].foregroundColor = .primary
-        return text
+    private func microphoneTapped(for stepStage: Stage) {
+        guard !isAuthorizingMicrophone else { return }
+        if viewModel.status == .listening {
+            viewModel.resetCapture()
+            return
+        }
+        isAuthorizingMicrophone = true
+        Task {
+            defer { isAuthorizingMicrophone = false }
+            guard await authorizeMicrophone(), stage == stepStage else { return }
+            viewModel.listen()
+        }
     }
 
     @ViewBuilder private func action(for stepStage: Stage, isActive: Bool) -> some View {
@@ -351,21 +294,12 @@ struct VocalRangeTestView: View {
             Button("Try again") { viewModel.resetCapture() }
         } else {
             Button("Continue") {
-                if stepStage == .warmup {
-                    viewModel.next()
-                    transition(to: .hummingGuide)
-                    viewModel.listen(practice: true)
-                } else if stepStage == .hummingGuide {
-                    viewModel.resetCapture()
-                    transition(to: .lowest)
-                    viewModel.listen()
-                } else if case .finished(let range) = viewModel.status {
+                if case .finished(let range) = viewModel.status {
                     completedRange = range
                     transition(to: .result)
                 } else if stepStage == .lowest {
                     viewModel.next()
                     transition(to: .highest)
-                    viewModel.listen()
                 }
             }
             .disabled(!canContinue(for: stepStage, isActive: isActive))
@@ -374,7 +308,6 @@ struct VocalRangeTestView: View {
 
     private func canContinue(for stepStage: Stage, isActive: Bool) -> Bool {
         guard isActive else { return true }
-        if stepStage == .hummingGuide { return viewModel.hasPracticedHumming }
         if case .captured = viewModel.status { return true }
         if case .finished = viewModel.status { return true }
         return false
@@ -386,17 +319,12 @@ struct VocalRangeTestView: View {
         case .warmup:
             viewModel.restart()
             transition(to: .intro)
-        case .hummingGuide:
+        case .lowest:
             viewModel.restart()
             transition(to: .warmup)
-        case .lowest:
-            viewModel.resetCapture()
-            transition(to: .hummingGuide)
-            viewModel.listen(practice: true)
         case .highest:
-            viewModel.previous()
+            viewModel.restart()
             transition(to: .lowest)
-            viewModel.listen()
         default:
             transition(to: .intro)
         }
@@ -408,7 +336,6 @@ struct VocalRangeTestView: View {
             transition(to: .intro)
         } else {
             transition(to: .highest)
-            viewModel.listen()
         }
     }
 }
@@ -416,7 +343,7 @@ struct VocalRangeTestView: View {
 #if DEBUG
 #Preview {
     VocalRangeTestView(viewModel: VocalRangeViewModel(
-        source: FakeLivePitchSource(notes: [57, 57, 48, 67]),
+        source: FakeLivePitchSource(),
         repository: FakeVocalRangeRepository(), configuration: .default, onSaved: {}))
 }
 #endif

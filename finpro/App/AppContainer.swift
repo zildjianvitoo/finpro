@@ -103,7 +103,7 @@ final class AppContainer {
         let playback: any ReferencePlaybackRepository = FakeReferencePlaybackRepository(latency: 0.12) { singer.playbackStarted(from: $0, heard: $1) }
         let audioRoute: any AudioRouteMonitor = FakeAudioRouteMonitor()
         let videoComposition: any VideoCompositionRepository = FakeVideoCompositionRepository()
-        let livePitch: any LivePitchSource = FakeLivePitchSource(notes: [57, 57, 48, 67])
+        let livePitch: any LivePitchSource = FakeLivePitchSource()
         #else
         let cameraCapture = CaptureRepositoryImpl()
         let capture: any CaptureRepository = cameraCapture
@@ -154,7 +154,7 @@ final class AppContainer {
             audioAnalysis: FakeAudioAnalysisRepository(),
             audioTransposition: FakeAudioTranspositionRepository(),
             vocalRange: FakeVocalRangeRepository(initial: vocalRange),
-            livePitch: FakeLivePitchSource(notes: [57, 57, 48, 67]),
+            livePitch: FakeLivePitchSource(),
             capture: FakeCaptureRepository(),
             referencePlayback: FakeReferencePlaybackRepository(),
             audioRoute: FakeAudioRouteMonitor(),
