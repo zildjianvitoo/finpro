@@ -36,7 +36,7 @@ struct VocalWarmupView: View {
                 .buttonStyle(.appPrimary)
                 .disabled(phase != .complete)
                 .padding(.horizontal, 25)
-                .padding(.bottom, 20)
+                .padding(.bottom, 16)
         }
         .background(Color.screenBackground.ignoresSafeArea())
         .onChange(of: isActive) { _, active in if !active { interrupt() } }
@@ -59,14 +59,18 @@ struct VocalWarmupView: View {
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: AppRadius.medium))
                     .shadow(color: .black.opacity(0.14), radius: 4, y: 3)
             }
-            Text("\(Self.totalSeconds)s")
+            Text("\(totalSecondsRemaining)s")
                 .font(.appHeadline)
+                .monospacedDigit()
                 .frame(width: 60, height: 60)
                 .background { Circle().strokeBorder(Color.primary300, lineWidth: 1) }
                 .frame(maxWidth: .infinity, alignment: .trailing)
                 .padding(.top, AppSpacing.regular)
+                .accessibilityLabel("Warm-up time remaining")
+                .accessibilityValue("\(totalSecondsRemaining) seconds")
             Text("Round")
                 .font(.appHeadline)
+                .padding(.leading, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
             HStack {
                 ForEach(1...Self.rounds, id: \.self) { number in
@@ -85,9 +89,11 @@ struct VocalWarmupView: View {
                 Text(phaseTitle).font(.appLargeTitle)
                     .opacity(phase == .idle ? 0 : 1)
                     .accessibilityHidden(phase == .idle)
-                Text(phaseInstruction).font(.appSubheadline)
+                Text(phaseInstruction).font(.appBody)
+                    .foregroundStyle(Color.plumNight)
                     .multilineTextAlignment(.center)
             }
+            .padding(.top, 24)
 
             Button(action: start) {
                 VocalRangeRing(progress: phase == .complete ? 1 : 1 - Double(seconds) / Double(Self.phaseSeconds),
@@ -101,6 +107,7 @@ struct VocalWarmupView: View {
             .buttonStyle(.plain)
             .disabled(phase != .idle || session != nil)
             .accessibilityLabel("Start warm-up microphone")
+            .padding(.top, 16)
 
             Text("\(seconds)s")
                 .monospacedDigit()
@@ -109,6 +116,16 @@ struct VocalWarmupView: View {
         }
         .foregroundStyle(Color.primaryBrand)
         .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private var totalSecondsRemaining: Int {
+        switch phase {
+        case .idle: return Self.totalSeconds
+        case .complete: return 0
+        case .hum, .rest:
+            let completedPhases = (round - 1) * 2 + (phase == .rest ? 1 : 0)
+            return Self.totalSeconds - (completedPhases + 1) * Self.phaseSeconds + seconds
+        }
     }
 
     private var phaseTitle: String {
