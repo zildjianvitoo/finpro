@@ -20,13 +20,9 @@ struct OnboardingView: View {
             if showsWelcome {
                 welcome
             } else {
-                GeometryReader { proxy in
-                    BrandLogoView()
-                        .frame(maxWidth: .infinity)
-                        .padding(.top, logoTop(in: proxy))
-                }
+                OnboardingSplashView(logoTop: logoTop)
                 .task {
-                    try? await Task.sleep(for: .seconds(1))
+                    try? await Task.sleep(for: reduceMotion ? .milliseconds(650) : OnboardingSplashView.duration)
                     guard !Task.isCancelled else { return }
                     showsWelcome = true
                 }
@@ -64,7 +60,6 @@ struct OnboardingView: View {
             .padding(.horizontal, 25)
         }
     }
-
 }
 
 #Preview { OnboardingView(onContinue: {}) }
