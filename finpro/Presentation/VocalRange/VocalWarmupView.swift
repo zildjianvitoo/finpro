@@ -115,7 +115,7 @@ struct VocalWarmupView: View {
             Button(action: start) {
                 ZStack {
                     Circle().fill(Color.ringHalo)
-                    Circle().fill(Color.primaryButton).padding(13)
+                    Circle().fill(phase == .complete ? Color.secBrand : Color.primaryButton).padding(13)
                     Circle().strokeBorder(Color.ringStroke, lineWidth: 5).padding(13)
                     if phase == .hum {
                         progressArc(start: phaseStartedAt, duration: Self.phaseSeconds,
@@ -127,7 +127,7 @@ struct VocalWarmupView: View {
                     } else {
                         Image(systemName: phase == .rest ? "pause.fill" : phase == .complete ? "checkmark" : "mic.fill")
                             .font(.system(size: 31, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(phase == .complete ? Color.primary500 : .white)
                     }
                 }
                 .frame(width: 140, height: 140)
