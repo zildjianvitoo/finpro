@@ -216,13 +216,13 @@ struct VocalRangeTestView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     VocalTestProgressHeader(step: isLowest ? 2 : 3, onBack: back)
                     VStack(alignment: .leading, spacing: AppSpacing.small) {
-                        Text(isLowest ? "Let’s find your lowest note" : "Now, find your highest note")
+                        Text(isLowest ? "Let’s find your\nlowest note" : "Now, find your\nhighest note")
                             .font(.appLargeTitle)
                             .foregroundStyle(Color.primaryBrand)
                             .accessibilityAddTraits(.isHeader)
                         Text(isLowest
-                             ? "Sing “Do” as low as comfortably possible and hold it."
-                             : "Sing “Do” as high as feels comfortable and hold it.")
+                             ? "Sing \"Do\" as low as comfortably possible and hold it."
+                             : "Sing \"Do\" as high as feels comfortable and hold it.")
                             .font(.appBody)
                             .foregroundStyle(.primary)
                     }

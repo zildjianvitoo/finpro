@@ -130,7 +130,7 @@ final class AppFlow {
     }
     #endif
 
-    /// Welcome continues directly to the vocal test intro.
+    /// The splash continues directly to the vocal test intro.
     func startOnboardingVocalRange() {
         vocalRangeOrigin = .onboarding
         step = .vocalRange

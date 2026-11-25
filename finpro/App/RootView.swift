@@ -25,21 +25,10 @@ struct RootView: View {
     var body: some View {
         Group {
             switch flow.step {
-            case .onboarding, .vocalRange where flow.vocalRangeOrigin == .onboarding:
-                let showsVocalRange = flow.step == .vocalRange
-                ZStack {
-                    OnboardingView(startsAtWelcome: showsVocalRange, onContinue: {
-                        vocalRangeRevealProgress = 0
-                        flow.startOnboardingVocalRange()
-                    })
-                    .hierarchicalUnderlay(isCovered: showsVocalRange, revealProgress: vocalRangeRevealProgress)
-                    if showsVocalRange {
-                        vocalRangeScreen
-                            .transition(.move(edge: .trailing))
-                            .zIndex(1)
-                    }
-                }
-                .animation(.easeInOut(duration: 0.3), value: showsVocalRange)
+            case .onboarding:
+                OnboardingView(onContinue: flow.startOnboardingVocalRange)
+            case .vocalRange where flow.vocalRangeOrigin == .onboarding:
+                vocalRangeScreen
             case .home, .songList, .importSong, .vocalRange:
                 let showsSongList = flow.step == .songList || (flow.step == .importSong && flow.importOrigin == .songList)
                 let showsVocalRange = flow.step == .vocalRange
@@ -148,7 +137,7 @@ struct RootView: View {
                     flow.vocalRangeSaved()
                 }),
             routeMonitor: flow.container.audioRoute,
-            onDismiss: {
+            onDismiss: flow.vocalRangeOrigin == .onboarding ? nil : {
                 vocalRangeRevealProgress = 0
                 flow.dismissVocalRange()
             },
