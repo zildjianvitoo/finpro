@@ -45,21 +45,26 @@ struct ImportSongView: View {
             case .idle, .loading:
                 ZStack(alignment: .bottom) {
                     Color.black.opacity(0.60).ignoresSafeArea()
-                        .onTapGesture(perform: onBack)
+                        .onTapGesture(perform: dismissImportPrompt)
                         .accessibilityHidden(true)
-                    VStack(spacing: AppSpacing.small) {
-                        Capsule().fill(Color.secondary.opacity(0.35))
-                            .frame(width: 60, height: 4)
-                            .accessibilityHidden(true)
+                    VStack(spacing: 0) {
+                        Button(action: dismissImportPrompt) {
+                            Capsule().fill(Color.secondary.opacity(0.35))
+                                .frame(width: 60, height: 4)
+                                .frame(width: 80, height: 20)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Dismiss import sheet")
                         importPrompt.disabled(viewModel.status == .loading)
                     }
                     .padding(.horizontal, AppSpacing.large)
-                    .padding(.vertical, AppSpacing.small)
+                    .padding(.bottom, AppSpacing.small)
                     .frame(maxWidth: .infinity)
                     .frame(height: AppLayout.importSheetHeight)
                     .gesture(DragGesture(minimumDistance: 12).onEnded { drag in
                         if drag.translation.height > 48 && drag.translation.height > abs(drag.translation.width) {
-                            onBack()
+                            dismissImportPrompt()
                         }
                     })
                     .background {
@@ -120,6 +125,12 @@ struct ImportSongView: View {
             }
         }
         .onDisappear { viewModel.suspend() }
+    }
+
+    private func dismissImportPrompt() {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { onBack() }
     }
 
     private var preparingScreen: some View {
