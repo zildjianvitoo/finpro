@@ -185,21 +185,34 @@ struct RecordingView: View {
             ) { settingsSheetHeight = $0 }
         }
         .alert(stoppedError?.title ?? "", isPresented: $showsStopped, presenting: stoppedError) { _ in
-            // The way forward takes the cancel role, so iOS adds no extra Cancel that would leave
-            // an empty screen behind the alert.
             if case .blocked = viewModel.status {
-                Button("Try Again", role: .cancel) { Task { await viewModel.start() } }
-                Button("Start Over", role: .destructive) { Task { await viewModel.discard() } }
-            } else if viewModel.completedCount > 0 {
-                Button("Export \(viewModel.completedCount) of \(viewModel.segmentCount)", role: .cancel) {
-                    viewModel.exportAfterInterruption()
+                Button("Try Again", role: .cancel) { Task { await viewModel.retryStart() } }
+                if viewModel.isContinuingAfterInterruption && viewModel.canExportAfterInterruption {
+                    Button("Export Saved Clips") { viewModel.exportAfterInterruption() }
+                } else {
+                    Button("Back", role: .destructive) { Task { await viewModel.discard() } }
                 }
-                Button("Start Over", role: .destructive) { Task { await viewModel.discard() } }
+            } else if case .interrupted = viewModel.status {
+                if viewModel.canContinueAfterInterruption {
+                    Button("Continue", role: .cancel) { Task { await viewModel.continueAfterInterruption() } }
+                }
+                if viewModel.canExportAfterInterruption {
+                    Button("Export Saved Clips", role: viewModel.canContinueAfterInterruption ? nil : .cancel) {
+                        viewModel.exportAfterInterruption()
+                    }
+                }
+                if !viewModel.canContinueAfterInterruption && !viewModel.canExportAfterInterruption {
+                    Button("Back", role: .cancel) { Task { await viewModel.discard() } }
+                }
             } else {
-                Button("Start Over", role: .cancel) { Task { await viewModel.discard() } }
+                Button("Back", role: .cancel) { Task { await viewModel.discard() } }
             }
         } message: { error in
-            Text(error.message)
+            if case .interrupted = viewModel.status, viewModel.canContinueAfterInterruption {
+                Text(interruptionMessage(for: error))
+            } else {
+                Text(error.message)
+            }
         }
         .task(id: stoppedError) {
             guard stoppedError != nil else { showsStopped = false; return }
@@ -220,7 +233,7 @@ struct RecordingView: View {
             guard viewModel.status == .ready else { showsTips = false; return }
             // Only before the first recording of a song: a retake, continuing, or the same song
             // again starts with the record button instead.
-            guard showsTipsForThisSong else { return }
+            guard !viewModel.isContinuingAfterInterruption, showsTipsForThisSong else { return }
             // UIKit refuses an alert while the screen is still sliding in; wait for it to settle.
             try? await Task.sleep(for: Self.tipsDelay)
             if !Task.isCancelled { showsTips = true }
@@ -640,11 +653,20 @@ struct RecordingView: View {
         }
     }
 
+    private func interruptionMessage(for error: UserFacingError) -> String {
+        let next = "Continue from segment \(viewModel.loop.segmentIndex + 1)."
+        let saved = viewModel.canExportAfterInterruption
+            ? " Your finished clips are saved. You can export them now."
+            : ""
+        let setup = error == .headsetMicrophoneRequired ? " Connect headphones with a microphone first." : ""
+        return next + saved + setup
+    }
+
     // MARK: - Data for the pitch guide
 
     private var pianoRollNotes: [PianoRollView.Note] {
         let plan = viewModel.song.transposition
-        return viewModel.song.segments.flatMap(\.targetNotes).map {
+        return (viewModel.leadInNotes + viewModel.song.segments.flatMap(\.targetNotes)).map {
             PianoRollView.Note(id: $0.id, midi: plan.transposed($0), start: $0.startTime, end: $0.endTime)
         }
     }

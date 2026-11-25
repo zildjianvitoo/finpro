@@ -60,6 +60,7 @@ nonisolated struct PrepareSongUseCase: Sendable {
         /// The song just before the trimmed part, separated but not transposed; rendered into each
         /// key as `PreparedSong.leadIn`. Nil when the part starts at the song's start.
         var leadIn: LeadInStems?
+        var leadInGuideNotes: [TargetMIDINote] = []
         /// How many seconds earlier than the requested trim the part starts: the chosen start fell
         /// inside a sung phrase, so it was moved back to where that phrase begins (`phraseStartBackoff`).
         /// Times on the requested trim's timeline are this much later on the prepared song's.
@@ -109,13 +110,26 @@ nonisolated struct PrepareSongUseCase: Sendable {
         try Task.checkCancellation()
         // A start inside a sung phrase: start where the phrase starts instead (the chunks are
         // cached, so separating again mostly reassembles them).
-        let clipStartShift = await phraseStartBackoff(separated.leadIn)
+        var leadInNotes = await extractLeadInNotes(separated.leadIn)
+        let clipStartShift = separated.leadIn.map {
+            Self.phraseStartBackoff(notes: leadInNotes, leadInDuration: $0.duration)
+        } ?? 0
         if clipStartShift > 0 {
             trimRange = (trimRange.lowerBound - clipStartShift)...trimRange.upperBound
             separated = try await separate(audioURL: audioURL, trimRange: trimRange, progress: progress)
+            leadInNotes = await extractLeadInNotes(separated.leadIn)
             try Task.checkCancellation()
         }
         let (stems, leadIn) = separated
+        let leadInGuideNotes = leadIn.map { lead in
+            leadInNotes.compactMap { note -> TargetMIDINote? in
+                let start = max(0, note.startTime)
+                let end = min(lead.duration, note.endTime)
+                guard end > start else { return nil }
+                return TargetMIDINote(id: note.id, midiNote: note.midiNote,
+                                      startTime: start - lead.duration, duration: end - start)
+            }
+        } ?? []
         let duration = trimRange.upperBound - trimRange.lowerBound
         let lyricLines = clipStartShift > 0 ? lyricLines.map { line in
             LyricGuideNotesUseCase.Line(start: line.start + clipStartShift, end: line.end + clipStartShift,
@@ -143,6 +157,7 @@ nonisolated struct PrepareSongUseCase: Sendable {
                                                 duration: duration,
                                                 vocalRange: vocalRange, recommendationLimit: recommendationLimit,
                                                 leadIn: leadIn, progress: progress)
+            choices.leadInGuideNotes = leadInGuideNotes
             choices.clipStartShift = clipStartShift
             return choices
         }
@@ -151,6 +166,7 @@ nonisolated struct PrepareSongUseCase: Sendable {
                                             recommendationLimit: recommendationLimit, leadIn: leadIn, progress: progress)
         choices.guideWords = lyricGuide.words
         choices.lyricLineShift = lyricGuide.lineShift
+        choices.leadInGuideNotes = leadInGuideNotes
         choices.clipStartShift = clipStartShift
         return choices
     }
@@ -173,10 +189,9 @@ nonisolated struct PrepareSongUseCase: Sendable {
     /// How far before the part the phrase sung across its start begins (seconds), from the pitch
     /// notes of the lead-in's vocal stem; 0 when nothing is sung across the start, no quiet gap is
     /// found within `maximumPhraseBackoff`, or the lead-in can't be analysed.
-    private func phraseStartBackoff(_ leadIn: LeadInStems?) async -> TimeInterval {
-        guard let leadIn,
-              let notes = try? await analysis.extractVocalGuideNotes(from: leadIn.stems.vocalGuideURL) else { return 0 }
-        return Self.phraseStartBackoff(notes: notes, leadInDuration: leadIn.duration)
+    private func extractLeadInNotes(_ leadIn: LeadInStems?) async -> [TargetMIDINote] {
+        guard let leadIn else { return [] }
+        return (try? await analysis.extractVocalGuideNotes(from: leadIn.stems.vocalGuideURL)) ?? []
     }
 
     /// `notes` on the lead-in's timeline (0 = its start, `leadInDuration` = the part's start).

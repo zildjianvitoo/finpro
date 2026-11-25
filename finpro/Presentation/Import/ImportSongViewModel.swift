@@ -315,8 +315,14 @@ final class ImportSongViewModel {
                 guard generation == token else { return }
                 preparedChoices = choices
                 // The part may start earlier than chosen (at the start of the phrase it cut into).
-                preparedLyrics = Self.lyrics(Self.delayed(lyrics, by: choices.clipStartShift),
-                                             sungAt: choices.guideWords, shift: choices.lyricLineShift)
+                let preparedStart = trim.lowerBound - choices.clipStartShift
+                let leadDuration = choices.leadIn?.duration ?? 0
+                let leadLyrics = leadDuration > 0
+                    ? Self.delayed(lyricsOnPreparedTimeline(max(0, preparedStart - leadDuration)...preparedStart),
+                                   by: -leadDuration)
+                    : []
+                preparedLyrics = leadLyrics + Self.lyrics(Self.delayed(lyrics, by: choices.clipStartShift),
+                                                          sungAt: choices.guideWords, shift: choices.lyricLineShift)
                 Self.logPreparationTiming(duration: trim.upperBound - trim.lowerBound, started: started, finished: finished,
                                           marks: marks.withLock { $0 })
                 Self.logPrepared(choices, lyricLines: lyricLines.count, file: audio.url.lastPathComponent,
