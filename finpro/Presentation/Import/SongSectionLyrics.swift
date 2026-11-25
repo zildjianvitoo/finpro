@@ -52,10 +52,19 @@ struct SongSectionLyrics: View {
 
     private func lyricsList(_ song: SongLyrics) -> some View {
         let activeID = userScrolling ? centeredID : viewModel.activeLineID ?? viewModel.firstSelectedLineID
+        let neighbors = activeID.flatMap { id in
+            song.lines.firstIndex { $0.id == id }
+        }.map { index in
+            Set(song.lines[max(0, index - 1)...min(song.lines.count - 1, index + 1)].map(\.id))
+        }
         return ScrollView {
             LazyVStack(spacing: 0) {
                 ForEach(song.lines) { line in
+                    let isVisible = userScrolling || neighbors?.contains(line.id) != false
                     lyricRow(line, isHighlighted: line.id == activeID)
+                        .opacity(isVisible ? 1 : 0)
+                        .allowsHitTesting(isVisible)
+                        .accessibilityHidden(!isVisible)
                 }
             }
             .scrollTargetLayout()
