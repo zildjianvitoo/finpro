@@ -6,18 +6,28 @@
 import SwiftUI
 
 struct SongSectionLyrics: View {
-    static let lineHeight: CGFloat = 48
+    private static let viewportHeight: CGFloat = 215
+    private static let rowPadding = AppSpacing.small
+    private static let scrollSpace = "song-section-lyrics"
+
+    private nonisolated struct RowCenters: PreferenceKey {
+        static let defaultValue: [Int: CGFloat] = [:]
+
+        static func reduce(value: inout [Int: CGFloat], nextValue: () -> [Int: CGFloat]) {
+            value.merge(nextValue(), uniquingKeysWith: { _, next in next })
+        }
+    }
+
     @Bindable var viewModel: ImportSongViewModel
     /// Lyric colour: plum with the surrounding lines at half strength (design 4.4).
     var tint: Color = .primaryBrand
     var dimmedOpacity = 0.45
-    /// Scroll position of the lyrics; one line is `lineHeight` tall, so line `i` is in the middle
-    /// at offset `i × lineHeight` (the content has one line of space above the first line).
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var position = ScrollPosition(idType: Int.self)
-    /// Index of the line in the middle of the lyrics.
-    @State private var centeredIndex: Int?
-    /// A finger is scrolling the lyrics (not the lyrics following the song).
     @State private var userScrolling = false
+
+    @State private var centeredID: Int?
+
     var body: some View {
         Group {
             switch viewModel.lyrics {
@@ -37,44 +47,42 @@ struct SongSectionLyrics: View {
             case .failed(let error): search(error)
             }
         }
-        .frame(maxWidth: .infinity).frame(height: Self.lineHeight * 3)
+        .frame(maxWidth: .infinity, minHeight: Self.viewportHeight, maxHeight: Self.viewportHeight)
     }
 
     private func lyricsList(_ song: SongLyrics) -> some View {
-        let activeID = highlightedLineID(in: song.lines)
+        let activeID = userScrolling ? centeredID : viewModel.activeLineID ?? viewModel.firstSelectedLineID
         return ScrollView {
-            // Lines sit close together and three show at once (design 4.3).
             LazyVStack(spacing: 0) {
                 ForEach(song.lines) { line in
                     lyricRow(line, isHighlighted: line.id == activeID)
                 }
             }
-            .padding(.vertical, Self.lineHeight)
+            .scrollTargetLayout()
+            .padding(.vertical, Self.viewportHeight / 2 - Self.rowPadding)
         }
         .scrollIndicators(.hidden)
-        .scrollPosition($position)
-        .onScrollGeometryChange(for: Int.self) { geometry in
-            Int(((geometry.contentOffset.y + geometry.contentInsets.top) / Self.lineHeight).rounded())
-        } action: { _, index in centeredIndex = index }
+        .scrollPosition($position, anchor: .center)
+        .coordinateSpace(name: Self.scrollSpace)
+        .onPreferenceChange(RowCenters.self) { centers in
+            let midpoint = Self.viewportHeight / 2
+            centeredID = centers.min {
+                abs($0.value - midpoint) < abs($1.value - midpoint)
+            }?.key
+        }
         .onScrollPhaseChange { _, phase in handleScrollPhase(phase, lines: song.lines) }
-        // A light picker tick for each lyric line that passes the center while scrolling.
-        .sensoryFeedback(.selection, trigger: clampedCenteredIndex(in: song.lines)) { old, new in
+        .sensoryFeedback(.selection, trigger: centeredID) { old, new in
             userScrolling && old != nil && new != nil
         }
-        // While the user scrolls, the line in the middle starts the selection (the
-        // waveform follows live).
-        .onChange(of: centeredIndex) { _, index in
-            guard userScrolling, let index, !song.lines.isEmpty else { return }
-            let line = song.lines[min(max(index, 0), song.lines.count - 1)]
+        .onChange(of: centeredID) { _, id in
+            guard userScrolling, let line = song.lines.first(where: { $0.id == id }) else { return }
             viewModel.selectionStart = min(line.start, viewModel.maximumStart)
         }
-        // Otherwise the lyrics follow the song: the line being played, or the selection's
-        // first line after the waveform moved.
-        .onChange(of: viewModel.activeLineID) { _, id in follow(id, in: song.lines) }
+        .onChange(of: viewModel.activeLineID) { _, id in follow(id) }
         .onChange(of: viewModel.firstSelectedLineID) { _, id in
-            if viewModel.activeLineID == nil { follow(id, in: song.lines) }
+            if viewModel.activeLineID == nil { follow(id) }
         }
-        .onAppear { follow(viewModel.firstSelectedLineID, in: song.lines, animated: false) }
+        .onAppear { follow(viewModel.firstSelectedLineID, animated: false) }
     }
 
     private func lyricRow(_ line: LyricLine, isHighlighted: Bool) -> some View {
@@ -82,13 +90,19 @@ struct SongSectionLyrics: View {
             Text(text(line, isHighlighted: isHighlighted))
                 .font(.appTitle3.weight(.bold))
                 .multilineTextAlignment(.center)
-                .lineLimit(2)
-                .minimumScaleFactor(0.8)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, AppSpacing.large)
+                .padding(.vertical, Self.rowPadding)
                 .frame(maxWidth: .infinity)
-                .frame(height: Self.lineHeight)
         }
         .buttonStyle(.plain)
+        .background {
+            GeometryReader { proxy in
+                Color.clear.preference(key: RowCenters.self, value: [
+                    line.id: proxy.frame(in: .named(Self.scrollSpace)).midY
+                ])
+            }
+        }
         .id(line.id)
         .contextMenu {
             Button("Start selection here") { viewModel.selectLyric(line) }
@@ -102,40 +116,21 @@ struct SongSectionLyrics: View {
             viewModel.beginSelectionEditing()
         } else if phase == .idle, userScrolling {
             userScrolling = false
-            // Settle on the line in the middle, like Instagram's lyric picker, then
-            // play the preview from it. (Not `.viewAligned`: its snapping put
-            // programmatic scrolls a line off.)
-            if !lines.isEmpty, let centeredIndex {
-                let clamped = min(max(centeredIndex, 0), lines.count - 1)
-                let line = lines[clamped]
+            if let id = centeredID, let line = lines.first(where: { $0.id == id }) {
                 viewModel.selectionStart = min(line.start, viewModel.maximumStart)
-                withAnimation(.easeOut(duration: 0.2)) {
-                    position.scrollTo(y: CGFloat(clamped) * Self.lineHeight)
+                withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                    position.scrollTo(id: id, anchor: .center)
                 }
             }
             viewModel.endSelectionEditing()
         }
     }
 
-    /// Scrolls so the line is in the middle, unless a finger is on the lyrics.
-    private func follow(_ id: Int?, in lines: [LyricLine], animated: Bool = true) {
-        guard let id, !userScrolling, let index = lines.firstIndex(where: { $0.id == id }),
-              index != centeredIndex else { return }
-        withAnimation(animated ? .easeInOut(duration: 0.25) : nil) {
-            position.scrollTo(y: CGFloat(index) * Self.lineHeight)
+    private func follow(_ id: Int?, animated: Bool = true) {
+        guard let id, !userScrolling, id != centeredID else { return }
+        withAnimation(animated && !reduceMotion ? .easeInOut(duration: 0.25) : nil) {
+            position.scrollTo(id: id, anchor: .center)
         }
-    }
-
-    private func clampedCenteredIndex(in lines: [LyricLine]) -> Int? {
-        guard !lines.isEmpty, let centeredIndex else { return nil }
-        return min(max(centeredIndex, 0), lines.count - 1)
-    }
-
-    private func highlightedLineID(in lines: [LyricLine]) -> Int? {
-        if userScrolling, let index = clampedCenteredIndex(in: lines) {
-            return lines[index].id
-        }
-        return viewModel.activeLineID ?? viewModel.firstSelectedLineID
     }
 
     private func text(_ line: LyricLine, isHighlighted: Bool) -> AttributedString {
@@ -143,7 +138,6 @@ struct SongSectionLyrics: View {
         text.foregroundColor = isHighlighted ? tint : tint.opacity(dimmedOpacity)
         return text
     }
-    /// Fits the three-line lyrics area, so the sheet keeps its height when no lyrics are found.
     private func search(_ error: UserFacingError) -> some View {
         VStack(spacing: AppSpacing.tiny) {
             Text("\(error.title). Search by title, or pick a part on the waveform.")
