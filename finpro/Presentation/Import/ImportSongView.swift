@@ -196,11 +196,16 @@ struct ImportSongView: View {
 
     private func sectionPicker(_ audio: ImportedAudio) -> some View {
         VStack(spacing: 0) {
+            HStack {
+                backButton
+                Spacer()
+            }
+            .padding(.horizontal, AppSpacing.regular)
+
             ViewThatFits(in: .vertical) {
                 clipControls(audio)
                 ScrollView { clipControls(audio) }
             }
-            .padding(.top, 44)
             Spacer(minLength: AppSpacing.small)
             VStack(spacing: AppSpacing.small) {
                 if let error = viewModel.actionError {
