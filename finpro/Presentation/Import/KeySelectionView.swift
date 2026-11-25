@@ -16,6 +16,14 @@ struct KeySelectionView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack {
+                Button(action: goBack) { Image(systemName: "chevron.left") }
+                    .buttonStyle(.appIcon(.glass))
+                    .accessibilityLabel("Back to song section")
+                Spacer()
+            }
+            .padding(.horizontal, AppSpacing.regular)
+
             if viewModel.choices.options.isEmpty {
                 ContentUnavailableView("No key fits this range", systemImage: "music.note.list",
                     description: Text("Try a shorter section or test your comfortable vocal range again."))
@@ -71,7 +79,7 @@ struct KeySelectionView: View {
                 .accessibilityElement(children: .combine)
             }
         }
-        .padding(.top, 59)
+        .padding(.top, 15)
         .padding(.horizontal, AppSpacing.regular)
     }
 
@@ -90,6 +98,9 @@ struct KeySelectionView: View {
             }
         }
         .pickerStyle(.wheel)
+        .sensoryFeedback(.selection, trigger: viewModel.selectedShift) { old, new in
+            old != nil && new != nil
+        }
         .frame(maxWidth: wheelWidth + 18)
         .frame(height: wheelHeight)
         .clipped()
