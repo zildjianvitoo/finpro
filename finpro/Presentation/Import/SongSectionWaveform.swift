@@ -143,10 +143,7 @@ struct SongSectionWaveform: View {
     }
 
     private func handle(at position: CGFloat, width: CGFloat, scale: CGFloat, leading: Bool) -> some View {
-        Group {
-            if leading { Color.clear }
-            else { edge() }
-        }
+        edge(leading: leading)
             .frame(width: edgeHitWidth).contentShape(Rectangle()).offset(x: position - edgeHitWidth / 2)
             .highPriorityGesture(DragGesture(minimumDistance: 1)
                 .onChanged { value in
@@ -168,16 +165,19 @@ struct SongSectionWaveform: View {
             }
     }
 
-    /// The right edge has a white grip. Both ends still have full-size drag targets.
-    private func edge() -> some View {
+    /// Mirrors the grip and rounds the outside corners of each edge.
+    private func edge(leading: Bool) -> some View {
         ZStack {
             UnevenRoundedRectangle(cornerRadii: RectangleCornerRadii(
-                bottomTrailing: AppRadius.extraSmall, topTrailing: AppRadius.extraSmall))
+                topLeading: leading ? AppRadius.extraSmall : 0,
+                bottomLeading: leading ? AppRadius.extraSmall : 0,
+                bottomTrailing: leading ? 0 : AppRadius.extraSmall,
+                topTrailing: leading ? 0 : AppRadius.extraSmall))
                 .fill(Color.plumDeep)
             Capsule().fill(.white).frame(width: gripSize.width, height: gripSize.height)
         }
         .frame(width: edgeWidth)
-        .offset(x: -edgeWidth / 2)
+        .offset(x: leading ? edgeWidth / 2 : -edgeWidth / 2)
     }
 
     /// Moves one edge, keeping the clip at least 15 s long and inside the song.
