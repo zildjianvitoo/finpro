@@ -174,8 +174,12 @@ struct RootView: View {
             }, onOpenSong: flow.openSong, onOpenDraft: flow.openDraft,
             onCreateCover: flow.createNewCover,
             onRetestVocalRange: {
-                vocalRangeRevealProgress = 0
-                flow.retestVocalRange()
+                var transaction = Transaction(animation: nil)
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    vocalRangeRevealProgress = 0
+                    flow.retestVocalRange()
+                }
             }),
             isActive: isActive,
             vocalRangeCompletionCount: flow.vocalRangeCompletionCount)

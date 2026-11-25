@@ -124,11 +124,7 @@ struct VocalRangeTestView: View {
             if let range = activeResultRange {
                 VocalRangeResultView(
                     range: range, isFemale: false, onDone: viewModel.save,
-                    onRetake: {
-                        viewModel.restart()
-                        completedRange = nil
-                        transition(to: .intro)
-                    },
+                    onRetake: restartFromResult,
                     onBack: backFromResult,
                     isSwipeBackEnabled: isTop,
                     onSwipeProgress: { stageDragProgress = $0 }
@@ -158,6 +154,18 @@ struct VocalRangeTestView: View {
                                interactiveSlide: true,
                                onProgress: { stageDragProgress = $0 },
                                action: back)
+        }
+    }
+
+    private func restartFromResult() {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            viewModel.restart()
+            completedRange = nil
+            hidesPreviousDuringPush = false
+            stageDragProgress = 0
+            stage = .intro
         }
     }
 
