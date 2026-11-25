@@ -145,6 +145,7 @@ private nonisolated struct Record: Codable {
     let attempts: [Take]
     let lyrics: [LyricLine]
     let songName: String?
+    let takePitch: [UUID: [PreviewPitchPoint]]?
 
     init(draft: CoverDraft, mix: String, instrumental: String, planInstrumental: String, rawVideos: [String]) {
         self.mix = mix
@@ -166,6 +167,7 @@ private nonisolated struct Record: Codable {
         attempts = (draft.attempts + draft.plan.validTakes.filter { !logged.contains($0.id) }).map(Take.init)
         lyrics = draft.lyrics
         songName = draft.songName
+        takePitch = draft.takePitch
     }
 
     func draft(in folder: URL) -> CoverDraft {
@@ -179,6 +181,6 @@ private nonisolated struct Record: Codable {
             validTakes: validTakeIDs.compactMap { byID[$0] }, endTime: endTime,
             crossfadeDuration: CMTime(seconds: crossfadeSeconds, preferredTimescale: 48_000),
             instrumentalFadeOut: instrumentalFadeOut, vocalGain: vocalGain, instrumentalGain: instrumentalGain)
-        return CoverDraft(song: song, plan: plan, attempts: attempts, lyrics: lyrics, songName: songName)
+        return CoverDraft(song: song, plan: plan, attempts: attempts, lyrics: lyrics, songName: songName, takePitch: takePitch ?? [:])
     }
 }

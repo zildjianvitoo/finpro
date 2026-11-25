@@ -82,6 +82,7 @@ struct PianoRollView: View {
     let notes: [Note]
     /// Where the lime voice dot sits (smoothed, see VoiceDotFilter); nil hides it.
     var voiceDot: RecordingViewModel.VoiceDot?
+    var playbackVoiceDot: ((TimeInterval) -> RecordingViewModel.VoiceDot?)?
     /// How the notes are coloured: while recording, or the results in the cover preview.
     var noteStyle: NoteStyle = .live
     /// Notes of the current segment, used to centre the vertical range.
@@ -91,8 +92,6 @@ struct PianoRollView: View {
     var dimmedBefore: TimeInterval?
     /// Stops redrawing (e.g. while a dialog is open) to leave CPU time for audio and video.
     var isPaused = false
-    /// The lime dot of the live voice (off in the preview, which has no voice data).
-    var showsVoiceDot = true
     /// Lyric word sung on a note, drawn under it.
     var wordLabels: [UUID: String] = [:]
     /// Height reserved at the bottom for content drawn over the roll (the lyrics, in Concept 2).
@@ -412,7 +411,7 @@ struct PianoRollView: View {
         // The voice is a dot at the playhead, without a trail behind it (trail removed again on
         // 2026-11-21, user request). The pitch pipeline lags the song clock by ~0.1 s, so a voice
         // heard within this long still counts as singing now.
-        let dotHold = 0.3
+        let dotHold = VoiceDotFilter.phraseGap
 
         // Playhead, with a dot where the voice is now.
         var playhead = Path()
@@ -425,7 +424,7 @@ struct PianoRollView: View {
         // - singing within the green tolerance of the note being sung: it sits exactly on the note;
         // - singing further off: it shows the voice's real pitch.
         // Every move glides (VoiceDotMotion) instead of jumping.
-        guard showsVoiceDot else { return }
+        let voiceDot = playbackVoiceDot?(current) ?? self.voiceDot
         let magnet = notes.first { $0.start <= current && current < $0.end }
         let singing = voiceDot.map { current - $0.songTime < dotHold } ?? false
         var targetY = rowsTop + rowsHeight / 2

@@ -398,11 +398,11 @@ struct ExportPreviewView: View {
         let songTime: () -> TimeInterval? = { pausedTime ?? player.liveTime() }
         // No lyric lines on the preview (user decision 2026-11-21); the word under each note stays.
         return PianoRollView(notes: notes,
+                             playbackVoiceDot: viewModel.voiceDot,
                              noteStyle: .review(hit: viewModel.hitNoteIDs, missed: viewModel.missedNoteIDs),
                              focusMIDI: focus,
                              songTime: songTime,
                              isPaused: !isPlaying,
-                             showsVoiceDot: false,
                              wordLabels: viewModel.wordLabels,
                              fixedRows: Double(guideRows))
             .frame(height: PianoRollView.height(rows: CGFloat(guideRows)))

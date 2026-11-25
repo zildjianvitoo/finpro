@@ -94,6 +94,8 @@ final class CompingViewModel {
     }
 
     let plan: CompingCompositionPlan
+    private let previewPitch: [PreviewPitchPoint]
+
     /// Notes of the song in the key it was sung in, for the pitch guide over the preview.
     let guideNotes: [PianoRollView.Note]
     /// Fallback MIDI range for the pitch guide while playing (the roll tracks visible notes live).
@@ -144,7 +146,8 @@ final class CompingViewModel {
          onExported: @escaping (URL, CompingCompositionPlan) -> Void = { _, _ in },
          onSavedToPhotos: @escaping () -> Void = {},
          transposition: TranspositionPlan? = nil,
-         lyrics: [LyricLine] = []) {
+         lyrics: [LyricLine] = [], takePitch: [UUID: [PreviewPitchPoint]] = [:]) {
+        previewPitch = plan.validTakes.flatMap { takePitch[$0.id] ?? [] }.sorted { $0.songTime < $1.songTime }
         guideNotes = plan.segments.flatMap(\.targetNotes).map {
             PianoRollView.Note(id: $0.id, midi: transposition?.transposed($0) ?? $0.midiNote, start: $0.startTime, end: $0.endTime)
         }
@@ -175,6 +178,12 @@ final class CompingViewModel {
         selectedClipID = plan.validTakes.first?.segmentIndex
         if let existingExport, FileManager.default.fileExists(atPath: existingExport.path) {
             exportState = .finished(existingExport)
+        }
+    }
+
+    func voiceDot(at time: TimeInterval) -> RecordingViewModel.VoiceDot? {
+        PreviewPitchPoint.last(at: time, in: previewPitch).map {
+            RecordingViewModel.VoiceDot(midi: $0.midi, songTime: $0.songTime)
         }
     }
 

@@ -14,4 +14,5 @@ nonisolated struct CoverDraft: Sendable {
     let attempts: [TakeAttemptLog]
     let lyrics: [LyricLine]
     let songName: String?
+    let takePitch: [UUID: [PreviewPitchPoint]]
 }

@@ -226,6 +226,7 @@ struct RootView: View {
             lyrics: song.leadIn == nil ? flow.recordingLyrics.filter { $0.end > 0 } : flow.recordingLyrics,
             leadInNotes: song.leadIn == nil ? [] : (flow.keyChoices?.leadInGuideNotes ?? []),
             pass: flow.recordingPass,
+            onTakePitch: flow.storeTakePitch,
             onFinish: flow.sessionEnded,
             onDiscard: flow.sessionDiscarded)
     }
@@ -242,7 +243,8 @@ struct RootView: View {
             onExported: { flow.coverExported($0, plan: $1) },
             onSavedToPhotos: flow.coverSavedToPhotos,
             transposition: flow.preparedSong?.transposition,
-            lyrics: flow.recordingLyrics.filter { $0.end > 0 })
+            lyrics: flow.recordingLyrics.filter { $0.end > 0 },
+            takePitch: flow.takePitch)
     }
 }
 

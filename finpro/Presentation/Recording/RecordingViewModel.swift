@@ -101,6 +101,8 @@ final class RecordingViewModel {
     /// brought up to date (nil outside singing).
     @ObservationIgnored private var singingTime: TimeInterval = 0
     @ObservationIgnored private var lastTimerTick: TimeInterval?
+    @ObservationIgnored private var pendingVoiceDots: [PreviewPitchPoint] = []
+    @ObservationIgnored private let onTakePitch: (UUID, [PreviewPitchPoint]) -> Void
     @ObservationIgnored private var voiceDotFilter = VoiceDotFilter()
     /// Song time at which the part being sung starts (the segment a start or a resume began with);
     /// notes before it are previous material.
@@ -153,6 +155,7 @@ final class RecordingViewModel {
          leadInNotes: [TargetMIDINote] = [],
          pass: RecordingPass = .session,
          frames: any ClipThumbnailProviding = AVClipThumbnailProvider(),
+         onTakePitch: @escaping (UUID, [PreviewPitchPoint]) -> Void = { _, _ in },
          onFinish: @escaping (CompingCompositionPlan) -> Void,
          onDiscard: @escaping () -> Void) {
         self.song = song
@@ -166,6 +169,7 @@ final class RecordingViewModel {
         self.takeLog = takeLog
         self.planner = planner
         self.configuration = configuration
+        self.onTakePitch = onTakePitch
         self.onFinish = onFinish
         self.onDiscard = onDiscard
         self.allowsSpeaker = allowsSpeaker
@@ -426,6 +430,7 @@ final class RecordingViewModel {
         lastTimerTick = nil
         anchor = nil
         evaluations = []
+        pendingVoiceDots = []
         trail = []
         resetVoiceDot()
     }
@@ -449,6 +454,7 @@ final class RecordingViewModel {
             lastTimerTick = nil
             anchor = nil
             evaluations = []
+            pendingVoiceDots = []
             trail = []
             resetVoiceDot()
             if !isPaused { perform(loop.pause()) }
@@ -470,6 +476,7 @@ final class RecordingViewModel {
         lastTimerTick = nil
         anchor = nil
         evaluations = []
+        pendingVoiceDots = []
         trail = []
         resetVoiceDot()
         perform(loop.goBackOneSegment(now: now))
@@ -527,6 +534,7 @@ final class RecordingViewModel {
         singingFrom = nil
         trail = []
         evaluations = []
+        pendingVoiceDots = []
         resetVoiceDot()
         isContinuingAfterInterruption = true
         status = .starting
@@ -636,6 +644,7 @@ final class RecordingViewModel {
         case .startPlayback(let referenceTime):
             singingFrom = loop.currentSegment?.audioStartTime
             evaluations = []
+            pendingVoiceDots = []
             trail = []
             resetVoiceDot()
             trailDisplay.reset()
@@ -674,14 +683,18 @@ final class RecordingViewModel {
             return
         }
         // A segment is never repeated: it is kept whatever its score, which stays in the log.
-        takeLog.logAttempt(TakeAttemptLog(
+        let take = TakeAttemptLog(
             segmentIndex: index,
             attemptNumber: takeLog.allAttempts().filter { $0.segmentIndex == index }.count + 1,
             recordingPass: recordingPassIndex,
             videoTimeRange: range,
             accuracyScore: result.score,
             missedNoteIDs: result.missedNoteIDs,
-            status: .completed))
+            status: .completed)
+        takeLog.logAttempt(take)
+        let points = pendingVoiceDots.filter { segment.audioStartTime <= $0.songTime && $0.songTime < segment.audioEndTime }
+        onTakePitch(take.id, points)
+        pendingVoiceDots.removeAll { $0.songTime < segment.audioEndTime }
         // The next segment is already being sung; keep only its evaluations.
         evaluations.removeAll { $0.referenceTime < segment.audioEndTime - configuration.pitchHop }
         perform(loop.segmentEvaluated())
@@ -783,7 +796,10 @@ final class RecordingViewModel {
                               foldToDot: evaluation.targetNoteID == nil)
         if let dotMIDI = voiceDotFilter.midi, let heard = voiceDotFilter.lastVoicedTime {
             let dot = VoiceDot(midi: dotMIDI, songTime: heard)
-            if dot != voiceDot { voiceDot = dot }
+            if dot != voiceDot {
+                voiceDot = dot
+                pendingVoiceDots.append(PreviewPitchPoint(midi: dot.midi, songTime: dot.songTime))
+            }
         }
         trail.removeAll { $0.songTime < evaluation.referenceTime - Self.trailLength }
     }

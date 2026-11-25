@@ -59,6 +59,7 @@ final class AppFlow {
     private(set) var recordingPass = RecordingPass.session
     /// Lyrics of the chosen part on the prepared song's timeline, for the recording screen.
     private(set) var recordingLyrics: [LyricLine] = []
+    @ObservationIgnored private(set) var takePitch: [UUID: [PreviewPitchPoint]] = [:]
     /// "Artist - Title" of the imported song, for the final result screens (nil for the demo).
     private(set) var songName: String?
     /// The Home library entry of the cover being made, so a re-export after a retake or
@@ -263,6 +264,7 @@ final class AppFlow {
             return
         }
         container.takeLog.clear()
+        takePitch.removeAll()
         SessionFiles.cleanUp()
         try? SessionFiles.prepareDirectory()
         savedCoverID = nil
@@ -311,6 +313,8 @@ final class AppFlow {
         step = .recording
     }
 
+    func storeTakePitch(_ id: UUID, _ points: [PreviewPitchPoint]) { takePitch[id] = points }
+
     /// Final result screen: the cover was exported; keep one Home library entry per cover.
     /// Also keeps its working files (raw videos, song audio, takes), so it can be opened as a
     /// draft later, even after the app was closed without choosing Save to Draft.
@@ -319,8 +323,10 @@ final class AppFlow {
                                                    isDraft: plan.isPartial, replacing: savedCoverID) ?? savedCoverID
         compingPlanExportURL = savedCoverURL
         guard let id = savedCoverID, let preparedSong else { return }
+        let keptIDs = Set(plan.validTakes.map(\.id))
         let draft = CoverDraft(song: preparedSong, plan: plan, attempts: container.takeLog.allAttempts(),
-                               lyrics: recordingLyrics, songName: songName)
+                               lyrics: recordingLyrics, songName: songName,
+                               takePitch: takePitch.filter { keptIDs.contains($0.key) })
         let drafts = container.coverDrafts
         let previous = draftSave
         draftSave = Task {
@@ -347,6 +353,7 @@ final class AppFlow {
         preparationError = nil
         preparedSong = draft.song
         recordingLyrics = draft.lyrics
+        takePitch = draft.takePitch
         songName = draft.songName
         compingPlan = draft.plan
         recordingPass = .session
@@ -417,6 +424,7 @@ final class AppFlow {
         songName = nil
         keyChoices = nil
         recordingLyrics = []
+        takePitch.removeAll()
         preparationError = nil
         preparedSong = nil
         compingPlan = nil
