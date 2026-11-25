@@ -117,11 +117,7 @@ final class AppFlow {
     func startBackgroundWarmUp() {
         guard !warmUpStarted else { return }
         warmUpStarted = true
-        let prewarmer = container.modelPrewarmer
-        Task.detached(priority: .utility) {
-            try? await Task.sleep(for: .seconds(1.5))
-            prewarmer?.start()
-        }
+        container.modelPrewarmer?.start()
     }
 
     #if DEBUG

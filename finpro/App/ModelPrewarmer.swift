@@ -2,42 +2,61 @@
 //  ModelPrewarmer.swift
 //  finpro
 //
-//  Loads the CoreML models in the background when the app opens, so Preparation (htdemucs,
-//  CREPE guide) and the vocal range test / recording (live CREPE) don't wait for them.
-//  Failures are ignored here: each feature loads (and reports) its model again when used.
-//  The log line counts prewarms since install, to see whether the slow first htdemucs run (the
-//  GPU compile, ~25 s right after install) comes back on later launches.
+//  Stages CoreML preparation so launch and the first microphone activation stay responsive.
+//  Features load their own models when background preparation is unavailable.
 //
 
 import Foundation
 import os
+import UIKit
 
 nonisolated struct ModelPrewarmer: Sendable {
     let htDemucs: HTDemucsStemSeparationRepository
 
     private static let log = Logger(subsystem: Bundle.main.bundleIdentifier ?? "finpro", category: "Prewarm")
-    /// UserDefaults keys (cleared on uninstall): prewarms started and finished since install.
-    private static let startedKey = "prewarm.started"
-    private static let finishedKey = "prewarm.finished"
+    func preloadSeparation() {
+        #if !targetEnvironment(simulator)
+        Task.detached(priority: .utility) { [htDemucs] in
+            let started = ContinuousClock.now
+            do {
+                guard await Self.isActive(), try htDemucs.preload() else { return }
+                let seconds = (ContinuousClock.now - started) / .seconds(1)
+                Self.log.notice("HTDemucs loaded in \(seconds, format: .fixed(precision: 2)) s")
+            } catch {
+                Self.log.error("HTDemucs preload failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        #endif
+    }
+
+    func warmSeparation() {
+        #if !targetEnvironment(simulator)
+        Task(priority: .utility) { await warmSeparationIfActive() }
+        #endif
+    }
+
+    func cancelSeparationWarmup() {
+        Task { await htDemucs.cancelPrewarm() }
+    }
 
     func start() {
-        // Not a model, but the same idea: the first video encoder start after an install is slow.
         VideoEncoderWarmUp.start()
-        Task.detached(priority: .utility) { [htDemucs] in
-            let defaults = UserDefaults.standard
-            let run = defaults.integer(forKey: Self.startedKey) + 1
-            let finishedBefore = defaults.integer(forKey: Self.finishedKey)
-            defaults.set(run, forKey: Self.startedKey)
-            let clock = ContinuousClock()
-            // CREPE first: it is small and the vocal range test may need it right away.
-            let crepe = clock.measure { try? CrepePitchDetector.prewarm() }
-            let separation = clock.measure { try? htDemucs.prewarm() }
-            defaults.set(finishedBefore + 1, forKey: Self.finishedKey)
-            Self.log.notice("""
-                prewarm: CREPE \(crepe / .seconds(1), format: .fixed(precision: 2)) s, \
-                htdemucs \(separation / .seconds(1), format: .fixed(precision: 2)) s \
-                (prewarm \(run) since install, \(finishedBefore) finished before)
-                """)
+        Task.detached(priority: .utility) {
+            let crepe = ContinuousClock().measure { try? CrepePitchDetector.prewarm() }
+            Self.log.notice("CREPE prewarm: \(crepe / .seconds(1), format: .fixed(precision: 2)) s")
+            #if !targetEnvironment(simulator)
+            await warmSeparationIfActive()
+            #endif
         }
+    }
+
+    private func warmSeparationIfActive() async {
+        do { try await htDemucs.prewarm(isActive: Self.isActive) }
+        catch is CancellationError { return }
+        catch { Self.log.error("HTDemucs warm-up failed: \(error.localizedDescription, privacy: .public)") }
+    }
+
+    @MainActor private static func isActive() -> Bool {
+        UIApplication.shared.applicationState == .active
     }
 }

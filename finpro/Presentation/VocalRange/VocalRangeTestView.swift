@@ -18,6 +18,8 @@ struct VocalRangeTestView: View {
     @State private var completedRange: VocalRange?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let authorizeMicrophone: () async -> Bool
+    let onWarmupAudioReady: () -> Void
+    @State private var notifiedWarmupAudioReady = false
     @State private var isAuthorizingMicrophone = false
     let onDismiss: (() -> Void)?
     let onDismissRevealProgress: ((CGFloat) -> Void)?
@@ -33,10 +35,12 @@ struct VocalRangeTestView: View {
 
     init(viewModel: VocalRangeViewModel, routeMonitor: (any AudioRouteMonitor)? = nil,
          onDismiss: (() -> Void)? = nil, onDismissRevealProgress: ((CGFloat) -> Void)? = nil,
-         authorizeMicrophone: @escaping () async -> Bool = { true }) {
+         authorizeMicrophone: @escaping () async -> Bool = { true },
+         onWarmupAudioReady: @escaping () -> Void = {}) {
         _viewModel = State(initialValue: viewModel)
         self.routeMonitor = routeMonitor
         self.authorizeMicrophone = authorizeMicrophone
+        self.onWarmupAudioReady = onWarmupAudioReady
         self.onDismiss = onDismiss
         self.onDismissRevealProgress = onDismissRevealProgress
     }
@@ -130,7 +134,13 @@ struct VocalRangeTestView: View {
         case .warmup:
             VocalWarmupView(isActive: isTop, onBack: back,
                             authorizeMicrophone: authorizeMicrophone,
-                            monitorVoice: viewModel.monitorWarmup,
+                            monitorVoice: {
+                                viewModel.monitorWarmup {
+                                    guard !notifiedWarmupAudioReady, stage == .warmup, scenePhase == .active else { return }
+                                    notifiedWarmupAudioReady = true
+                                    onWarmupAudioReady()
+                                }
+                            },
                             stopVoice: viewModel.stopListening,
                             voiceLevels: { viewModel.waveformLevels }) {
                 viewModel.resetCapture()

@@ -153,7 +153,12 @@ struct RootView: View {
                 flow.dismissVocalRange()
             },
             onDismissRevealProgress: { vocalRangeRevealProgress = $0 },
-            authorizeMicrophone: authorizeVocalTestMicrophone)
+            authorizeMicrophone: authorizeVocalTestMicrophone,
+            onWarmupAudioReady: {
+                if flow.vocalRangeOrigin == .onboarding {
+                    flow.container.modelPrewarmer?.warmSeparation()
+                }
+            })
     }
 
     private func authorizeVocalTestMicrophone() async -> Bool {

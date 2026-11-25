@@ -15,6 +15,7 @@ struct FinproApp: App {
     private let launchedAt: ContinuousClock.Instant
     @State private var flow: AppFlow
     @State private var loggedFirstFrame = false
+    @State private var startedSeparationPreload = false
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -53,14 +54,25 @@ struct FinproApp: App {
             .task {
                 try? Tips.configure()
             }
-            .task(id: canPrewarm) {
+            .task(id: scenePhase) {
+                guard scenePhase == .active, !startedSeparationPreload else { return }
+                do { try await Task.sleep(for: .milliseconds(1_500)) } catch { return }
+                guard !Task.isCancelled else { return }
+                startedSeparationPreload = true
+                flow.container.modelPrewarmer?.preloadSeparation()
+            }
+            .task(id: canPrewarm && scenePhase == .active) {
                 // Song separation and encoding are first needed after onboarding.
-                if canPrewarm { flow.startBackgroundWarmUp() }
+                guard canPrewarm && scenePhase == .active else { return }
+                do { try await Task.sleep(for: .milliseconds(1_500)) } catch { return }
+                guard !Task.isCancelled else { return }
+                flow.startBackgroundWarmUp()
             }
         }
         // Leaving the app copies the newest messages right away (it may not come back).
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { AppEventLog.shared.flush() }
+            if phase == .background { flow.container.modelPrewarmer?.cancelSeparationWarmup() }
         }
     }
 }

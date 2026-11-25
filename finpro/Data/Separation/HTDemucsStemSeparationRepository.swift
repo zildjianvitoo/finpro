@@ -255,13 +255,68 @@ nonisolated final class HTDemucsStemSeparationRepository: StemSeparationReposito
 
     // MARK: - Model
 
-    /// Loads the model and separates one silent window, so the first song doesn't wait for the
-    /// model load and the GPU set-up (ModelPrewarmer, at app start).
-    func prewarm() throws {
-        let model = try loadModel()
-        // Shorter than one chunk stride, so it is a single model call.
-        let silence = [Float](repeating: 0, count: Self.segmentSamples / 2)
-        _ = try Self.separate([silence, silence], model: model)
+    /// Load the compiled model without running a prediction.
+    func preload() throws -> Bool {
+        guard Self.hasSpeculativeHeadroom else { return false }
+        _ = try loadModel()
+        return true
+    }
+
+    /// Warm one window on the same GPU queue that prepares actual songs.
+    func prewarm(isActive: @escaping @Sendable () async -> Bool) async throws {
+        try await coordinator.warmIfIdle {
+            guard !Self.firstRunFinished.withLock({ $0 }), await isActive() else { return }
+            guard Self.hasSpeculativeHeadroom else {
+                Self.log.notice("HTDemucs warm-up deferred due to memory or thermal headroom")
+                return
+            }
+            try Task.checkCancellation()
+            let model = try self.loadModel()
+            guard await isActive(), Self.hasSpeculativeHeadroom else { return }
+            try Task.checkCancellation()
+            let started = ContinuousClock.now
+            Self.log.notice("HTDemucs speculative prediction started")
+            let prediction = try await model.prediction(from: Self.silentPredictionInput(), options: .init())
+            _ = try Self.predictionArrays(prediction)
+            Self.firstRunFinished.withLock { $0 = true }
+            let seconds = (ContinuousClock.now - started) / .seconds(1)
+            Self.log.notice("HTDemucs speculative prediction finished in \(seconds, format: .fixed(precision: 2)) s")
+        }
+    }
+
+    func cancelPrewarm() async {
+        await coordinator.cancelWarmup()
+    }
+
+    private static func silentPredictionInput() throws -> MLDictionaryFeatureProvider {
+        let frames = DemucsSpectrogram().frameCount(sampleCount: segmentSamples)
+        let mix = try MLMultiArray(shape: [1, 2, NSNumber(value: segmentSamples)], dataType: .float32)
+        let spec = try MLMultiArray(shape: [1, 4, NSNumber(value: DemucsSpectrogram.bins), NSNumber(value: frames)], dataType: .float32)
+        for array in [mix, spec] {
+            let samples = array.dataPointer.bindMemory(to: Float.self, capacity: array.count)
+            vDSP_vclr(samples, 1, vDSP_Length(array.count))
+        }
+        return try MLDictionaryFeatureProvider(dictionary: ["mix": mix, "spec": spec])
+    }
+
+    private static func predictionArrays(_ prediction: any MLFeatureProvider) throws -> (MLMultiArray, MLMultiArray) {
+        guard let spec = prediction.featureValue(for: "spec_out")?.multiArrayValue,
+              let wave = prediction.featureValue(for: "wave_out")?.multiArrayValue,
+              spec.dataType == .float32, wave.dataType == .float32 else {
+            throw CoreMLSeparationError.modelUnavailable
+        }
+        return (spec, wave)
+    }
+
+    /// The cold prediction increased the observed iPhone footprint by about 1.3 GB.
+    /// Keep additional headroom for audio, UI, and concurrent system activity.
+    private static var hasSpeculativeHeadroom: Bool {
+        #if !os(iOS) || targetEnvironment(simulator)
+        false
+        #else
+        os_proc_available_memory() >= 2_000_000_000
+            && [.nominal, .fair].contains(ProcessInfo.processInfo.thermalState)
+        #endif
     }
 
     private func loadModel() throws -> MLModel {
@@ -321,13 +376,9 @@ nonisolated final class HTDemucsStemSeparationRepository: StemSeparationReposito
 
             let modelStarted = clock.now
             let prediction = try model.prediction(from: MLDictionaryFeatureProvider(dictionary: ["mix": mixInput, "spec": specInput]))
-            firstRunFinished.withLock { $0 = true }
             let outputStarted = clock.now
-            guard let specOut = prediction.featureValue(for: "spec_out")?.multiArrayValue,
-                  let waveOut = prediction.featureValue(for: "wave_out")?.multiArrayValue,
-                  specOut.dataType == .float32, waveOut.dataType == .float32 else {
-                throw CoreMLSeparationError.modelUnavailable
-            }
+            let (specOut, waveOut) = try predictionArrays(prediction)
+            firstRunFinished.withLock { $0 = true }
             let so = specOut.strides.map(\.intValue)
             let wo = waveOut.strides.map(\.intValue)
             let specValues = UnsafePointer(specOut.dataPointer.bindMemory(to: Float.self, capacity: specOut.count))
@@ -841,6 +892,24 @@ nonisolated final class HTDemucsStemSeparationRepository: StemSeparationReposito
         private var inFlightSources: [String: Task<(url: URL, samples: Int), any Error>] = [:]
         private var inFlightChunks: [ChunkID: Task<ChunkStats, any Error>] = [:]
         private var gpuTail: Task<Void, Never>?
+        private var warmTask: Task<Void, any Error>?
+
+        func warmIfIdle(work: @escaping @Sendable () async throws -> Void) async throws {
+            guard warmTask == nil, inFlightChunks.isEmpty else { return }
+            let previous = gpuTail
+            let task = Task.detached(priority: .utility) {
+                await previous?.value
+                try await work()
+            }
+            gpuTail = Task { _ = try? await task.value }
+            warmTask = task
+            defer { warmTask = nil }
+            try await task.value
+        }
+
+        func cancelWarmup() {
+            warmTask?.cancel()
+        }
 
         func ensureDecodedSource(songKey: String, songFolder: URL, asset: AVAsset, track: AVAssetTrack,
                                  chunksRoot: URL) async throws -> (url: URL, samples: Int) {

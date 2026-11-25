@@ -48,7 +48,9 @@ final class VocalRangeViewModel {
 
     func listen() { startListening() }
 
-    func monitorWarmup() { startListening(waveformOnly: true) }
+    func monitorWarmup(onFirstSample: @escaping () -> Void) {
+        startListening(waveformOnly: true, onFirstSample: onFirstSample)
+    }
 
     /// Clears only the current input, keeping the measured range.
     func resetCapture() {
@@ -60,7 +62,7 @@ final class VocalRangeViewModel {
         waveformLevels = []
     }
 
-    private func startListening(waveformOnly: Bool = false) {
+    private func startListening(waveformOnly: Bool = false, onFirstSample: (() -> Void)? = nil) {
         stopListening()
         if !waveformOnly { hasStartedListening = true }
         waveformLevels = []
@@ -80,11 +82,14 @@ final class VocalRangeViewModel {
                 microphoneName = (source as? any MicrophoneInputProviding)?.microphoneName
                 var display = StabilizePitchDisplayUseCase(configuration: configuration)
                 var detector = DetectVocalRangeUseCase(configuration: configuration, duration: configuration.vocalRangeHoldDuration)
+                var firstSample = onFirstSample
                 for await sample in samples {
                     guard !Task.isCancelled, generation == token else { return }
                     let amplitude = sample.rmsDecibels.isFinite
                         ? min(1, max(0, (sample.rmsDecibels - configuration.noiseGateDBFS)
                             / max(1, configuration.vocalWaveformCeilingDBFS - configuration.noiseGateDBFS))) : 0
+                    firstSample?()
+                    firstSample = nil
                     waveformLevels.append(amplitude)
                     if waveformLevels.count > configuration.vocalWaveformFrameCount { waveformLevels.removeFirst() }
                     guard !waveformOnly else { continue }
