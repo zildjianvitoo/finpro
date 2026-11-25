@@ -14,6 +14,7 @@ struct VocalRangeTestView: View {
     @State private var viewModel: VocalRangeViewModel
     @State private var stage: Stage = .intro
     @State private var stageDragProgress: CGFloat = 0
+    @State private var hidesPreviousDuringPush = false
     /// Snapshot of the finished range so `VocalRangeResultView` keeps rendering while sliding out.
     @State private var completedRange: VocalRange?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -59,16 +60,18 @@ struct VocalRangeTestView: View {
             ForEach(Stage.allCases.filter { $0 <= stage }) { layerStage in
                 let isTop = layerStage == stage
                 let isImmediateUnderlay = layerStage.rawValue == stage.rawValue - 1
-                let isVisible = isTop || isImmediateUnderlay
+                let isVisible = isTop || (isImmediateUnderlay && (!hidesPreviousDuringPush || stageDragProgress > 0))
                 stageLayer(for: layerStage, isTop: isTop)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .hierarchicalUnderlay(isCovered: !isTop, revealProgress: isImmediateUnderlay ? stageDragProgress : 0)
                     .opacity(isVisible ? 1 : 0)
+                    .animation(nil, value: isVisible)
                     .zIndex(Double(layerStage.rawValue))
                     .transition(layerStage == .intro ? .identity : .move(edge: .trailing))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.screenBackground.ignoresSafeArea())
         .animation(stageTransitionAnimation, value: stage)
         .onDisappear { viewModel.stopListening() }
         .alert(failure?.title ?? "", isPresented: $showsFailure, presenting: failure) { _ in
@@ -160,6 +163,7 @@ struct VocalRangeTestView: View {
 
     private func transition(to target: Stage) {
         withAnimation(stageTransitionAnimation) {
+            hidesPreviousDuringPush = target > stage
             stageDragProgress = 0
             stage = target
         }
@@ -218,13 +222,13 @@ struct VocalRangeTestView: View {
                     VStack(alignment: .leading, spacing: AppSpacing.small) {
                         Text(isLowest ? "Let’s find your\nlowest note" : "Now, find your\nhighest note")
                             .font(.appLargeTitle)
-                            .foregroundStyle(Color.primaryBrand)
+                            .foregroundStyle(.primary)
                             .accessibilityAddTraits(.isHeader)
                         Text(isLowest
                              ? "Sing \"Do\" as low as comfortably possible and hold it."
                              : "Sing \"Do\" as high as feels comfortable and hold it.")
                             .font(.appBody)
-                            .foregroundStyle(.primary)
+                            .foregroundStyle(Color.plumNight)
                     }
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, 35)

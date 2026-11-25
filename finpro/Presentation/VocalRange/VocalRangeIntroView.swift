@@ -42,11 +42,11 @@ struct VocalRangeIntroView: View {
         VStack(alignment: .leading, spacing: 0) {
             Text("Let's Get Your Voice\nReady")
                 .font(.appLargeTitle)
-                .foregroundStyle(Color.primaryBrand)
+                .foregroundStyle(.primary)
                 .accessibilityAddTraits(.isHeader)
             Text("We'll find your vocal range and adjust song keys to make them more comfortable for you to sing.")
                 .font(.appBody)
-                .foregroundStyle(.primary)
+                .foregroundStyle(Color.plumNight)
                 .padding(.top, AppSpacing.small)
             VocalRangeIllustration(isActive: isActive)
                 .frame(maxWidth: .infinity)

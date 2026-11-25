@@ -59,7 +59,7 @@ struct VocalWarmupView: View {
                     .accessibilityHidden(true)
                 Text("Let's warm up your voice first! Hum a gentle \"mmm\" for 5 seconds, then rest for 5 seconds. Just follow the 5 rounds below!")
                     .font(.appBody.weight(.semibold))
-                    .foregroundStyle(Color.plumNight)
+                    .foregroundStyle(phase == .complete ? Color.plumNight : Color.primary)
                     .padding(.horizontal, 11)
                     .padding(.vertical, 16)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -102,10 +102,11 @@ struct VocalWarmupView: View {
 
             VStack(spacing: AppSpacing.tiny) {
                 Text(phaseTitle).font(.appLargeTitle)
+                    .foregroundStyle(.primary)
                     .opacity(phase == .idle ? 0 : 1)
                     .accessibilityHidden(phase == .idle)
                 Text(phaseInstruction).font(.appBody)
-                    .foregroundStyle(Color.plumNight)
+                    .foregroundStyle(phase == .idle ? Color.plumNight : Color.primary)
                     .multilineTextAlignment(.center)
             }
             .padding(.top, 80)

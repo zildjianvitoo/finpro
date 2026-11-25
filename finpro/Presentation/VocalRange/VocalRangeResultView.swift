@@ -93,7 +93,7 @@ struct VocalRangeResultView: View {
                     .minimumScaleFactor(0.6).lineLimit(1)
                     .padding(.top, 6)
             }
-            .foregroundStyle(.primary)
+            .foregroundStyle(Color.plumNight)
             .padding(.top, 22).padding(.horizontal, AppSpacing.medium)
             .frame(width: Self.cardSize.width, height: Self.cardSize.height, alignment: .top)
             .background(Color.secondaryButton, in: RoundedRectangle(cornerRadius: AppRadius.large))
