@@ -24,6 +24,11 @@ struct ImportSongView: View {
     }
 
     @State private var picking = false
+    @State private var showsImportPrompt = false
+    @State private var isDismissingPrompt = false
+    @GestureState(resetTransaction: Transaction(animation: .snappy)) private var promptDragOffset: CGFloat = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let promptAnimation = Animation.easeOut(duration: 0.24)
     @State private var preset: ClipPreset = .long
     #if DEBUG
     /// `-importFile` opens once per app launch, not every time this sheet opens again.
@@ -42,9 +47,10 @@ struct ImportSongView: View {
             switch viewModel.status {
             case .idle where viewModel.restoresClip:
                 Color.screenBackground.ignoresSafeArea()
-            case .idle, .loading:
+            case _ where isDismissingPrompt, .idle, .loading:
                 ZStack(alignment: .bottom) {
-                    Color.black.opacity(0.60).ignoresSafeArea()
+                    Color.black.opacity(isDismissingPrompt ? 0 : 0.60).ignoresSafeArea()
+                        .animation(nil, value: isDismissingPrompt)
                         .onTapGesture(perform: dismissImportPrompt)
                         .accessibilityHidden(true)
                     VStack(spacing: 0) {
@@ -62,17 +68,24 @@ struct ImportSongView: View {
                     .padding(.bottom, AppSpacing.small)
                     .frame(maxWidth: .infinity)
                     .frame(height: AppLayout.importSheetHeight)
-                    .gesture(DragGesture(minimumDistance: 12).onEnded { drag in
-                        if drag.translation.height > 48 && drag.translation.height > abs(drag.translation.width) {
-                            dismissImportPrompt()
-                        }
-                    })
                     .background {
                         let corners = UnevenRoundedRectangle(topLeadingRadius: AppRadius.sheet, topTrailingRadius: AppRadius.sheet)
                         corners.fill(.ultraThinMaterial)
                             .overlay { corners.fill(Color.screenBackground.opacity(0.55)) }
                             .overlay { corners.strokeBorder(.white.opacity(0.4), lineWidth: 1) }
                             .ignoresSafeArea(edges: .bottom)
+                    }
+                    .contentShape(Rectangle())
+                    .simultaneousGesture(promptDismissDrag)
+                    .offset(y: showsImportPrompt ? promptDragOffset : AppLayout.importSheetHeight + 64)
+                    .allowsHitTesting(!isDismissingPrompt)
+                    .task {
+                        guard !showsImportPrompt, !isDismissingPrompt else { return }
+                        await Task.yield()
+                        guard !Task.isCancelled, !isDismissingPrompt else { return }
+                        withAnimation(reduceMotion ? nil : promptAnimation) {
+                            showsImportPrompt = true
+                        }
                     }
                 }
             case .trimming(let audio):
@@ -127,10 +140,31 @@ struct ImportSongView: View {
         .onDisappear { viewModel.suspend() }
     }
 
+    private var promptDismissDrag: some Gesture {
+        DragGesture(minimumDistance: 8)
+            .updating($promptDragOffset) { drag, offset, _ in
+                if drag.translation.height > abs(drag.translation.width) {
+                    offset = drag.translation.height
+                }
+            }
+            .onEnded { drag in
+                let down = drag.translation.height
+                guard down > abs(drag.translation.width),
+                      down > 48 || (down > 16 && drag.predictedEndTranslation.height > 80) else { return }
+                dismissImportPrompt()
+            }
+    }
+
     private func dismissImportPrompt() {
-        var transaction = Transaction(animation: nil)
-        transaction.disablesAnimations = true
-        withTransaction(transaction) { onBack() }
+        guard !isDismissingPrompt else { return }
+        isDismissingPrompt = true
+        withAnimation(reduceMotion ? nil : promptAnimation) {
+            showsImportPrompt = false
+        } completion: {
+            var transaction = Transaction(animation: nil)
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { onBack() }
+        }
     }
 
     private var preparingScreen: some View {
