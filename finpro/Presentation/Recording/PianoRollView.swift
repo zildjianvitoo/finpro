@@ -173,7 +173,7 @@ struct PianoRollView: View {
         static let playhead = Color.primary800
         static let dot = Color.secBrand
         static let word = Color.secondaryButton
-        static let dimmedWord = Color.gray.opacity(0.85)
+        static let dimmedWord = Color.white.opacity(0.76)
     }
 
     private var noteHeight: CGFloat { Self.scaled(scale, low: 5, mid: 8, high: 16) * contentZoom }
