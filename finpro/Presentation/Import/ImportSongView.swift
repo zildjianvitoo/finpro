@@ -9,9 +9,22 @@ import UniformTypeIdentifiers
 /// Presented as a sheet above Covers or Song list.
 struct ImportSongView: View {
     @State private var viewModel: ImportSongViewModel
-    /// The sheet's current size, kept while the song is prepared.
-    @State private var detent: PresentationDetent = .height(AppLayout.importSheetHeight)
+    private enum ClipPreset: String, CaseIterable {
+        case short = "15sec"
+        case long = "60sec"
+        case custom = "Custom"
+
+        var duration: TimeInterval? {
+            switch self {
+            case .short: 15
+            case .long: 60
+            case .custom: nil
+            }
+        }
+    }
+
     @State private var picking = false
+    @State private var preset: ClipPreset = .custom
     #if DEBUG
     /// `-importFile` opens once per app launch, not every time this sheet opens again.
     private static var openedLaunchFile = false
@@ -25,32 +38,55 @@ struct ImportSongView: View {
     }
 
     var body: some View {
-        ZStack {
-            Group {
-                switch viewModel.status {
-                case .idle, .loading: importPrompt.disabled(viewModel.status == .loading)
-                case .trimming(let audio): sectionPicker(audio)
-                case .preparing, .prepared:
-                    if let audio = viewModel.selectionAudio { sectionPicker(audio).disabled(true) }
-                case .failed(let error):
-                    ErrorStateView(error: error, actionTitle: "Choose another song") {
-                        viewModel.reset(); picking = true
+        Group {
+            switch viewModel.status {
+            case .idle, .loading:
+                ZStack(alignment: .bottom) {
+                    Color.black.opacity(0.24).ignoresSafeArea()
+                        .onTapGesture(perform: onBack)
+                        .accessibilityHidden(true)
+                    VStack(spacing: AppSpacing.small) {
+                        Capsule().fill(Color.secondary.opacity(0.35))
+                            .frame(width: 36, height: 5)
+                            .accessibilityHidden(true)
+                        importPrompt.disabled(viewModel.status == .loading)
+                    }
+                    .padding(.horizontal, AppSpacing.large)
+                    .padding(.vertical, AppSpacing.small)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: AppLayout.importSheetHeight)
+                    .gesture(DragGesture(minimumDistance: 12).onEnded { drag in
+                        if drag.translation.height > 48 && drag.translation.height > abs(drag.translation.width) {
+                            onBack()
+                        }
+                    })
+                    .background {
+                        UnevenRoundedRectangle(topLeadingRadius: AppRadius.sheet, topTrailingRadius: AppRadius.sheet)
+                            .fill(.ultraThinMaterial)
+                            .ignoresSafeArea(edges: .bottom)
                     }
                 }
+            case .trimming(let audio):
+                sectionPicker(audio)
+            case .preparing, .prepared:
+                if let audio = viewModel.selectionAudio { sectionPicker(audio).disabled(true) }
+            case .failed(let error):
+                ErrorStateView(error: error, actionTitle: "Choose another song") {
+                    viewModel.reset(); picking = true
+                }
+                .padding(AppSpacing.large)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .topLeading) {
+                    backButton.padding(.leading, AppSpacing.regular)
+                }
+                .background(Color.screenBackground.ignoresSafeArea())
             }
-            .padding(.horizontal, AppSpacing.large).padding(.top, AppSpacing.large).padding(.bottom, AppSpacing.small)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .presentationBackground(.ultraThinMaterial)
-        .interactiveDismissDisabled(viewModel.isPreparing)
-        // While the song is prepared the sheet stays at the height it has (only resizing is locked).
-        .presentationDetents(viewModel.isPreparing ? [detent] : [.height(sheetHeight), .large], selection: $detent)
-        .onAppear { detent = .height(sheetHeight) }
-        .onChange(of: sheetHeight) { _, height in
-            if detent != .large { detent = .height(height) }
+        .presentationBackground(.clear)
+        .accessibilityAction(.escape) {
+            if !viewModel.isPreparing { onBack() }
         }
-        .presentationDragIndicator(viewModel.isPreparing ? .hidden : .visible)
-        .presentationCornerRadius(AppRadius.sheet)
         .fileImporter(isPresented: $picking, allowedContentTypes: [.mp3, .mpeg4Audio, .wav, .audio, .movie]) {
             viewModel.picked($0)
         }
@@ -66,7 +102,7 @@ struct ImportSongView: View {
         .onChange(of: viewModel.status) { _, status in
             if status == .prepared { viewModel.continueWithPreparedSong() }
         }
-        // The preparing screen covers the whole app (fading in); the sheet keeps its half height underneath.
+        // Preparation covers the clip picker until Find Your Key is ready.
         .crossDissolveCover(isPresented: viewModel.isPreparing) { preparingScreen }
         // Preparing a song can take a minute or more; locking would pause it.
         .keepsScreenAwake(viewModel.isPreparing)
@@ -137,49 +173,108 @@ struct ImportSongView: View {
         }
     }
 
-    private var sheetHeight: CGFloat {
-        if case .idle = viewModel.status { return AppLayout.importSheetHeight }
-        if case .loading = viewModel.status { return AppLayout.importSheetHeight }
-        return AppLayout.clipSheetHeight
+    private var backButton: some View {
+        Button(action: onBack) { Image(systemName: "chevron.left") }
+            .buttonStyle(.appIcon(.glass)).accessibilityLabel("Close song import")
     }
+
     private func sectionPicker(_ audio: ImportedAudio) -> some View {
-        VStack(spacing: AppSpacing.regular) {
-            Text("Select Clip")
-                .font(.appHeadline).foregroundStyle(Color.plumNight)
-                .frame(maxWidth: .infinity, minHeight: AppLayout.iconButton)
-            // Select Clip (design 4.4) keeps the lyrics close under the title.
-            SongSectionLyrics(viewModel: viewModel, tint: .primaryBrand, dimmedOpacity: 0.5)
-                .padding(.top, -15)
-            Spacer(minLength: 0)
-            SongSectionWaveform(viewModel: viewModel, audio: audio)
-                .frame(height: 80)
-                // The waveform scrolls off the sheet's edges (design 4.3).
-                .padding(.horizontal, -AppSpacing.large)
+        VStack(spacing: 0) {
             HStack {
-                Text(viewModel.selectionLength < 60 ? "\(Int(viewModel.selectionLength.rounded()))s selected"
-                     : "\(time(viewModel.selectionLength)) selected")
+                backButton
                 Spacer()
-                Text("\(time(viewModel.playbackTime ?? viewModel.selectionStart)) / \(time(audio.duration))")
             }
-            .font(.appFootnote.weight(.medium)).foregroundStyle(Color.primaryBrand).monospacedDigit()
-            .padding(.top, 11)
-            // The sheet keeps its height: an error takes the gap above the buttons instead of adding a row.
-            Group {
+            .padding(.horizontal, AppSpacing.regular)
+
+            ViewThatFits(in: .vertical) {
+                clipControls(audio)
+                ScrollView { clipControls(audio) }
+            }
+            Spacer(minLength: AppSpacing.small)
+            VStack(spacing: AppSpacing.small) {
                 if let error = viewModel.actionError {
                     Label(error.title, systemImage: error.systemImage)
                         .font(.appCaption).foregroundStyle(Color.primaryBrand)
-                        .lineLimit(1).minimumScaleFactor(0.8)
                 }
-            }
-            .frame(maxWidth: .infinity, minHeight: AppSpacing.large)
-            Spacer(minLength: 0)
-            VStack(spacing: 10) {
                 Button("Start Recording", action: viewModel.prepareSelection).buttonStyle(.appPrimary)
                 Button("Save to Song List", action: viewModel.saveToSongList).buttonStyle(.appSecondary)
             }
+            .padding(.horizontal, 25).padding(.bottom, 9)
+        }
+        .background(Color.screenBackground.ignoresSafeArea())
+    }
+
+    private func clipControls(_ audio: ImportedAudio) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: AppSpacing.small) {
+                Text("Select Clip").font(.appLargeTitle).accessibilityAddTraits(.isHeader)
+                Text("Scroll lyrics or drag waveform to choose your clip.").font(.appSubheadline)
+            }
+            .padding(.horizontal, AppSpacing.regular)
+            .padding(.top, 15)
+
+            SongSectionLyrics(viewModel: viewModel)
+                .frame(height: 215)
+                .background(Color.primary100, in: RoundedRectangle(cornerRadius: AppRadius.large))
+                .padding(.horizontal, 25)
+                .padding(.top, 25)
+
+            HStack(spacing: AppSpacing.regular) {
+                Text("Selected clip")
+                Spacer()
+                Text(clipTime(viewModel.selectionStart)).foregroundStyle(Color.secondaryText)
+                Image(systemName: "arrow.right").foregroundStyle(Color.secondaryText)
+                    .accessibilityHidden(true)
+                Text(clipTime(viewModel.selectionStart + viewModel.selectionLength))
+            }
+            .font(.appSubheadline).monospacedDigit()
+            .padding(.horizontal, 25)
+            .padding(.top, 20)
+            .accessibilityElement(children: .combine)
+
+            SongSectionWaveform(viewModel: viewModel, audio: audio)
+                .frame(height: 80)
+                .padding(.top, 20)
+
+            VStack(alignment: .leading, spacing: AppSpacing.small) {
+                Text("Quick presets").font(.appSubheadline)
+                HStack(spacing: 0) {
+                    ForEach(ClipPreset.allCases, id: \.self) { option in
+                        Button {
+                            if let duration = option.duration {
+                                viewModel.beginSelectionEditing()
+                                viewModel.selectionStart = min(viewModel.selectionStart, audio.duration - duration)
+                                viewModel.selectionLength = duration
+                                viewModel.endSelectionEditing()
+                            }
+                            preset = option
+                        } label: {
+                            Text(option.rawValue)
+                                .font(.appSubheadline)
+                                .frame(maxWidth: .infinity, minHeight: 36)
+                                .foregroundStyle(preset == option ? Color.white : Color.primary)
+                                .background(preset == option ? Color.primaryButton : .clear, in: Capsule())
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled((option.duration ?? 0) > audio.duration)
+                        .opacity((option.duration ?? 0) > audio.duration ? 0.4 : 1)
+                        .accessibilityAddTraits(preset == option ? .isSelected : [])
+                    }
+                }
+                .padding(4)
+                .background(Color.primary100, in: Capsule())
+                .shadow(color: .black.opacity(0.24), radius: 4, y: 4)
+            }
+            .padding(.horizontal, 25)
+            .padding(.top, 22)
+        }
+        .onChange(of: viewModel.selectionLength) { _, length in
+            if let duration = preset.duration, abs(length - duration) > 0.05 { preset = .custom }
         }
     }
-    private func time(_ seconds: TimeInterval) -> String {
-        Duration.seconds(max(0, seconds)).formatted(.time(pattern: .minuteSecond))
+
+    private func clipTime(_ seconds: TimeInterval) -> String {
+        seconds.formatted(.number.precision(.fractionLength(1))) + "s"
     }
 }

@@ -174,7 +174,7 @@ final class AppFlow {
         step = .importSong
     }
     func sourceSongSaved(_ id: UUID) { selectedLibrarySongID = id }
-    /// The import sheet was dismissed. SwiftUI also calls this after the sheet closed because the
+    /// The import screen was dismissed. SwiftUI also calls this after the screen closed because the
     /// flow moved on (e.g. to Find Your Key); the next screen's audio must keep playing then.
     func closeImport() {
         guard step == .importSong else { return }

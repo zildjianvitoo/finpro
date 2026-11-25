@@ -6,11 +6,11 @@
 import SwiftUI
 
 struct SongSectionLyrics: View {
-    static let lineHeight: CGFloat = 24
+    static let lineHeight: CGFloat = 48
     @Bindable var viewModel: ImportSongViewModel
     /// Lyric colour: plum with the surrounding lines at half strength (design 4.4).
     var tint: Color = .primaryBrand
-    var dimmedOpacity = 0.5
+    var dimmedOpacity = 0.45
     /// Scroll position of the lyrics; one line is `lineHeight` tall, so line `i` is in the middle
     /// at offset `i × lineHeight` (the content has one line of space above the first line).
     @State private var position = ScrollPosition(idType: Int.self)
@@ -80,9 +80,11 @@ struct SongSectionLyrics: View {
     private func lyricRow(_ line: LyricLine, isHighlighted: Bool) -> some View {
         Button { viewModel.selectLyric(line) } label: {
             Text(text(line, isHighlighted: isHighlighted))
-                .font(.appHeadline)
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
+                .font(.appTitle3.weight(.bold))
+                .multilineTextAlignment(.center)
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
+                .padding(.horizontal, AppSpacing.large)
                 .frame(maxWidth: .infinity)
                 .frame(height: Self.lineHeight)
         }
