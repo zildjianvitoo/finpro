@@ -21,7 +21,7 @@ struct SongSectionLyrics: View {
     @Bindable var viewModel: ImportSongViewModel
     /// Lyric colour: plum with the surrounding lines at half strength (design 4.4).
     var tint: Color = .primaryBrand
-    var dimmedOpacity = 0.45
+    var dimmedOpacity = 0.4
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var position = ScrollPosition(idType: Int.self)
     @State private var userScrolling = false
@@ -62,6 +62,15 @@ struct SongSectionLyrics: View {
             .padding(.vertical, Self.viewportHeight / 2 - Self.rowPadding)
         }
         .scrollIndicators(.hidden)
+        .mask {
+            VStack(spacing: 0) {
+                LinearGradient(colors: [.clear, .black], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 14)
+                Rectangle()
+                LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 14)
+            }
+        }
         .scrollPosition($position, anchor: .center)
         .coordinateSpace(name: Self.scrollSpace)
         .onPreferenceChange(RowCenters.self) { centers in
@@ -88,7 +97,7 @@ struct SongSectionLyrics: View {
     private func lyricRow(_ line: LyricLine, isHighlighted: Bool) -> some View {
         Button { viewModel.selectLyric(line) } label: {
             Text(text(line, isHighlighted: isHighlighted))
-                .font(.appTitle3.weight(.bold))
+                .font(.appTitle2.weight(.bold))
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, AppSpacing.large)

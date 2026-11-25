@@ -80,6 +80,11 @@ nonisolated final class LyricsSearchSpy: LyricsProviding, @unchecked Sendable {
         let lines = [LyricLine(id: 0, text: "first line", start: 10, end: 20, words: []),
                      LyricLine(id: 1, text: "second line", start: 20, end: 35, words: [])]
         let lyrics = SongLyrics(lines: lines, chorus: 0..<2, matchedTitle: "Actual song title", matchedArtist: "Artist")
+        try await clipRevisionChecks(directory: directory, audio: audio, lyrics: lyrics)
+        if CommandLine.arguments.contains("--clip-revision") {
+            print("PASS clip revision (\(count) checks)")
+            return
+        }
         let store = SongLibraryStore(directory: directory.appendingPathComponent("saved"))
         let library = SongLibrary(store: store)
         let first = try library.save(audio: audio, existingID: nil, start: 10, length: 30, lyrics: lyrics)
@@ -215,6 +220,38 @@ nonisolated final class LyricsSearchSpy: LyricsProviding, @unchecked Sendable {
               "Waveform viewport contains the entire chosen section")
         try await recognitionChecks(directory: directory, preview: preview, useCase: useCase)
         print("PASS SongSelectionChecks (\(count) checks)")
+    }
+
+    @MainActor static func clipRevisionChecks(directory: URL, audio: ImportedAudio, lyrics: SongLyrics) async throws {
+        let preview = SelectionPreviewSpy()
+        let pipeline = SelectionPipeline()
+        let useCase = PrepareSongUseCase(separation: pipeline, analysis: pipeline, fallbackAnalysis: nil, transposition: pipeline)
+        let explicitLibrary = SongLibrary(store: SongLibraryStore(directory: directory.appendingPathComponent("explicit")))
+        var completedSelection: ImportSongViewModel.ClipSelection?
+        let unsaved = ImportSongViewModel(inspector: SelectionInspector(audio: audio), lyrics: SelectionLyrics(value: lyrics),
+            previewer: preview, prepare: useCase, vocalRange: { VocalRange(lowestMIDI: 60, highestMIDI: 76) },
+            library: explicitLibrary, onClipPrepared: { completedSelection = $0 }, onPrepared: { _, _, _ in })
+        unsaved.picked(.success(audio.url))
+        await waitUntil { unsaved.audio != nil && unsaved.lyrics == .found(lyrics) }
+        check(unsaved.selectionLength == 60, "A new song defaults to 60 seconds after lyrics load")
+        unsaved.beginSelectionEditing()
+        unsaved.selectionStart = 12
+        unsaved.selectionLength = 30
+        unsaved.endSelectionEditing()
+        unsaved.prepareSelection()
+        await waitUntil { unsaved.status == .prepared }
+        unsaved.continueWithPreparedSong()
+        check(explicitLibrary.songs.isEmpty, "Starting recording does not add a new song")
+        let restored = ImportSongViewModel(inspector: SelectionInspector(audio: audio), lyrics: SelectionLyrics(value: lyrics),
+            previewer: preview, prepare: useCase, vocalRange: { nil }, library: explicitLibrary,
+            restoredSelection: completedSelection, onPrepared: { _, _, _ in })
+        restored.openInitialSong()
+        check(restored.selectionStart == 12 && restored.selectionLength == 30 && restored.lyrics == .found(lyrics),
+              "Returning from key selection restores the unsaved clip")
+        restored.saveToSongList()
+        check(explicitLibrary.songs.count == 1, "Only the explicit save adds the song")
+        unsaved.suspend()
+        restored.suspend()
     }
 
     /// Shazam names new songs and old unnamed ones, the lyrics search uses that name, and a name

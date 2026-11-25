@@ -21,7 +21,7 @@ struct AppButtonStyle: ButtonStyle {
 
     @Environment(\.isEnabled) private var isEnabled
 
-    private let height = AppLayout.buttonHeight
+    var height: CGFloat = AppLayout.buttonHeight
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label

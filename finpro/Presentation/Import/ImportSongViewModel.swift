@@ -47,7 +47,16 @@ final class ImportSongViewModel {
 
     /// The trimmed selection is at least 15 s; it may be as long as the whole song.
     static let minimumLength: TimeInterval = 15
-    private static let defaultLength: TimeInterval = 30
+    static let defaultLength: TimeInterval = 60
+    private static let firstPreparationEstimateDuration: TimeInterval = 30
+
+    struct ClipSelection {
+        let audio: ImportedAudio
+        let start: TimeInterval
+        let length: TimeInterval
+        let lyrics: SongLyrics?
+        let savedSongID: UUID?
+    }
     /// Waveform zoom: at least this much song is in view (less for shorter songs, see below).
     private static let waveformMinimumVisible: TimeInterval = 90
     /// …and the selection fills at most this share of the width, so both edges stay reachable.
@@ -66,6 +75,7 @@ final class ImportSongViewModel {
     private static let chorusLeadInClearance = AppConfiguration.default.segmentGap / 2
 
     var openedSavedSong: Bool { initialSong != nil }
+    var restoresClip: Bool { openedSavedSong || restoredSelection != nil }
     private(set) var savedSongID: UUID?
     private(set) var actionError: UserFacingError?
     private(set) var status: Status = .idle {
@@ -113,6 +123,8 @@ final class ImportSongViewModel {
     @ObservationIgnored private var importTask: Task<Void, Never>?
     @ObservationIgnored private let library: SongLibrary?
     @ObservationIgnored private let initialSong: SavedSong?
+    @ObservationIgnored private let restoredSelection: ClipSelection?
+    @ObservationIgnored private let onClipPrepared: (ClipSelection) -> Void
     @ObservationIgnored private let onSelectionSaved: (UUID) -> Void
     @ObservationIgnored private let onSavedToList: () -> Void
     @ObservationIgnored private var editingSelection = false
@@ -133,7 +145,8 @@ final class ImportSongViewModel {
          recognizer: (any SongRecognizing)? = nil, previewer: any AudioPreviewing,
          prepare: PrepareSongUseCase,
          vocalRange: @escaping () -> VocalRange?,
-         library: SongLibrary? = nil, initialSong: SavedSong? = nil,
+         library: SongLibrary? = nil, initialSong: SavedSong? = nil, restoredSelection: ClipSelection? = nil,
+         onClipPrepared: @escaping (ClipSelection) -> Void = { _ in },
          onSavedToList: @escaping () -> Void = {},
          onSelectionSaved: @escaping (UUID) -> Void = { _ in },
          onPrepared: @escaping (PrepareSongUseCase.Choices, [LyricLine], String?) -> Void) {
@@ -146,6 +159,8 @@ final class ImportSongViewModel {
         self.onPrepared = onPrepared
         self.library = library
         self.initialSong = initialSong
+        self.restoredSelection = restoredSelection
+        self.onClipPrepared = onClipPrepared
         self.onSavedToList = onSavedToList
         self.onSelectionSaved = onSelectionSaved
     }
@@ -185,7 +200,13 @@ final class ImportSongViewModel {
     }
 
     func openInitialSong() {
-        guard status == .idle, let initialSong, let library else { return }
+        guard status == .idle else { return }
+        if let restoredSelection {
+            savedSongID = restoredSelection.savedSongID
+            open(restoredSelection.audio, saved: initialSong, restoring: restoredSelection)
+            return
+        }
+        guard let initialSong, let library else { return }
         savedSongID = initialSong.id
         open(library.audio(for: initialSong), saved: initialSong)
     }
@@ -219,37 +240,37 @@ final class ImportSongViewModel {
         }
     }
 
-    private func open(_ audio: ImportedAudio, saved: SavedSong? = nil) {
+    private func open(_ audio: ImportedAudio, saved: SavedSong? = nil, restoring selection: ClipSelection? = nil) {
         guard audio.duration >= Self.minimumLength else {
             status = .failed(.songTooShort(minimumSeconds: Int(Self.minimumLength)))
             return
         }
         status = .loading
-        selectionStart = saved?.selectionStart ?? 0
-        selectionLength = saved?.selectionLength ?? min(Self.defaultLength, audio.duration)
+        selectionStart = selection?.start ?? saved?.selectionStart ?? 0
+        selectionLength = selection?.length ?? saved?.selectionLength ?? min(Self.defaultLength, audio.duration)
         status = .trimming(audio)
         clampSelection()
         // A song Shazam already named searches lyrics by that name.
         let named = saved?.isRecognitionDone == true || saved?.isRenamedByUser == true
         lyricsTitle = named ? saved?.title ?? audio.title : audio.title
         lyricsArtist = (named ? saved?.displayArtist : nil) ?? audio.artist ?? ""
-        userMovedSelection = saved != nil
+        userMovedSelection = saved != nil || selection != nil
         actionError = nil
         recognized = nil
         recognition?.cancel()
         isIdentifyingSong = false
         lyricsAwaitRecognition = false
-        appliedTimelineOffset = saved?.lyrics != nil
+        appliedTimelineOffset = selection?.lyrics != nil || saved?.lyrics != nil
         let recognizes = recognizer != nil && !named
         // Lyrics are searched right away with the file's name; Shazam runs alongside and, if the
         // file's name finds nothing, its name is tried as well.
-        if let cached = saved?.lyrics { lyrics = .found(cached) } else { searchLyrics() }
+        if let cached = selection?.lyrics ?? saved?.lyrics { lyrics = .found(cached) } else { searchLyrics() }
         if recognizes { recognize(audio) }
         startSelectionPreview()
         schedulePreseparation(delay: .milliseconds(800))
     }
 
-    /// Keeps a durable copy even when the user goes directly to key selection.
+    /// Persists the song only when the user explicitly saves it to the Song List.
     @discardableResult
     private func persistSelection() -> Bool {
         guard let library, let audio else { return true }
@@ -280,7 +301,10 @@ final class ImportSongViewModel {
     }
 
     func prepareSelection() {
-        guard let audio, let range = vocalRange(), persistSelection() else { return }
+        guard let audio, let range = vocalRange() else { return }
+        preparingDisplayName = savedSongID.flatMap { id in library?.songs.first { $0.id == id } }?.title
+            ?? (recognized ?? nil)?.title ?? Self.displayName(of: audio)
+        actionError = nil
         lyricsLookup?.cancel()
         lyricsLookup = nil
         pausePreseparation()
@@ -372,8 +396,12 @@ final class ImportSongViewModel {
 
     /// From the "audio is ready" screen: hand the key choices to the next step.
     func continueWithPreparedSong() {
-        guard let preparedChoices else { return }
-        onPrepared(preparedChoices, preparedLyrics, preparingDisplayName ?? preparingAudio.map(Self.displayName))
+        guard let preparedChoices, let preparingAudio else { return }
+        let cachedLyrics: SongLyrics?
+        if case .found(let song) = lyrics { cachedLyrics = song } else { cachedLyrics = nil }
+        onClipPrepared(ClipSelection(audio: preparingAudio, start: selectionStart, length: selectionLength,
+                                     lyrics: cachedLyrics, savedSongID: savedSongID))
+        onPrepared(preparedChoices, preparedLyrics, preparingDisplayName ?? Self.displayName(of: preparingAudio))
     }
 
     /// "Artist - Title", or just the title when the artist is unknown.
@@ -423,7 +451,7 @@ final class ImportSongViewModel {
             let next = index.flatMap { Self.progressSteps.dropFirst($0 + 1).first { $0.fraction > current.fraction } }?.fraction ?? 1
             let elapsed = stepStarted.map { (now - $0.at) / .seconds(1) } ?? 0
             // Separation and analysis take about as long as the part is; the easings are for 30 s.
-            let lengthFactor = max(1, preparingLength / Self.defaultLength)
+            let lengthFactor = max(1, preparingLength / Self.firstPreparationEstimateDuration)
             let easing = (current.separating ? Self.separatingEasing : Self.stepEasing) * lengthFactor
             let fraction = current.fraction + (next - current.fraction) * Self.stepFillLimit * (1 - exp(-max(0, elapsed) / easing))
             let stem: PreparationProgress.StemState = current.separating ? .processing : .done
@@ -520,7 +548,7 @@ final class ImportSongViewModel {
                     let shifted = song.shifted(by: offset, duration: audio.duration)
                     shiftedLyrics = shifted
                     lyrics = .found(shifted)
-                    if case .trimming = status, !userMovedSelection, !editingSelection { useChorusSuggestion() }
+                    if case .trimming = status, !userMovedSelection, !editingSelection { useChorusSuggestion(keepingDuration: true) }
                 }
             }
             if let outcome {
@@ -571,7 +599,7 @@ final class ImportSongViewModel {
                     appliedTimelineOffset = false
                     lyrics = .notFound
                 }
-                if case .trimming = status, !userMovedSelection, !editingSelection { useChorusSuggestion() }
+                if case .trimming = status, !userMovedSelection, !editingSelection { useChorusSuggestion(keepingDuration: true) }
 
             } catch is CancellationError {
             } catch {
@@ -603,12 +631,13 @@ final class ImportSongViewModel {
     }
 
     /// Selects the suggested chorus (automatically once lyrics arrive, or from "Back to Chorus").
-    func useChorusSuggestion() {
-        guard let suggestion = chorusSuggestion else { return }
+    func useChorusSuggestion(keepingDuration: Bool = false) {
+        guard let suggestion = chorusSuggestion, let audio else { return }
         let wasPlaying = isPlayingSelection
         applyingSuggestion = true
-        selectionStart = suggestion.start
-        selectionLength = suggestion.length
+        let length = keepingDuration ? selectionLength : suggestion.length
+        selectionStart = min(suggestion.start, max(0, audio.duration - length))
+        selectionLength = length
         applyingSuggestion = false
         if wasPlaying { startSelectionPreview() }
         schedulePreseparation(delay: .milliseconds(400))

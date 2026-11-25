@@ -12,7 +12,7 @@ enum AppLayout {
     static let headerPillHeight: CGFloat = 40
     /// The vocal test's microphone button, halo included (draft 2.5b).
     static let microphoneDiameter: CGFloat = 140
-    static let importSheetHeight: CGFloat = 435
+    static let importSheetHeight: CGFloat = 425
     static let clipSheetHeight: CGFloat = 466
     /// Opacity of the plum loading overlay (`Color.loadingOverlay`) over a screen.
     static let loadingOverlayOpacity: Double = 0.55

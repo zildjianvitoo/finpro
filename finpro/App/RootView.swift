@@ -206,7 +206,8 @@ struct RootView: View {
                                         configuration: container.configuration,
                                         wordRecognition: container.wordRecognition),
             vocalRange: { container.vocalRange.load() },
-            library: container.songLibrary, initialSong: flow.selectedLibrarySong,
+            library: container.songLibrary, initialSong: flow.selectedLibrarySong, restoredSelection: flow.importSelection,
+            onClipPrepared: flow.keepImportSelection,
             onSavedToList: flow.savedToSongList, onSelectionSaved: flow.sourceSongSaved,
             onPrepared: { flow.keysPrepared($0, lyrics: $1, songName: $2) })
     }

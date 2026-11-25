@@ -10,21 +10,21 @@ import UniformTypeIdentifiers
 struct ImportSongView: View {
     @State private var viewModel: ImportSongViewModel
     private enum ClipPreset: String, CaseIterable {
-        case short = "15sec"
+        case short = "30sec"
         case long = "60sec"
         case custom = "Custom"
 
         var duration: TimeInterval? {
             switch self {
-            case .short: 15
-            case .long: 60
+            case .short: 30
+            case .long: ImportSongViewModel.defaultLength
             case .custom: nil
             }
         }
     }
 
     @State private var picking = false
-    @State private var preset: ClipPreset = .custom
+    @State private var preset: ClipPreset = .long
     #if DEBUG
     /// `-importFile` opens once per app launch, not every time this sheet opens again.
     private static var openedLaunchFile = false
@@ -40,14 +40,16 @@ struct ImportSongView: View {
     var body: some View {
         Group {
             switch viewModel.status {
+            case .idle where viewModel.restoresClip:
+                Color.screenBackground.ignoresSafeArea()
             case .idle, .loading:
                 ZStack(alignment: .bottom) {
-                    Color.black.opacity(0.24).ignoresSafeArea()
+                    Color.black.opacity(0.60).ignoresSafeArea()
                         .onTapGesture(perform: onBack)
                         .accessibilityHidden(true)
                     VStack(spacing: AppSpacing.small) {
                         Capsule().fill(Color.secondary.opacity(0.35))
-                            .frame(width: 36, height: 5)
+                            .frame(width: 60, height: 4)
                             .accessibilityHidden(true)
                         importPrompt.disabled(viewModel.status == .loading)
                     }
@@ -61,8 +63,10 @@ struct ImportSongView: View {
                         }
                     })
                     .background {
-                        UnevenRoundedRectangle(topLeadingRadius: AppRadius.sheet, topTrailingRadius: AppRadius.sheet)
-                            .fill(.ultraThinMaterial)
+                        let corners = UnevenRoundedRectangle(topLeadingRadius: AppRadius.sheet, topTrailingRadius: AppRadius.sheet)
+                        corners.fill(.ultraThinMaterial)
+                            .overlay { corners.fill(Color.screenBackground.opacity(0.55)) }
+                            .overlay { corners.strokeBorder(.white.opacity(0.4), lineWidth: 1) }
                             .ignoresSafeArea(edges: .bottom)
                     }
                 }
@@ -149,25 +153,25 @@ struct ImportSongView: View {
 
     private var importPrompt: some View {
         VStack(spacing: 0) {
-            Text("Import Song").font(.appHeadline).foregroundStyle(Color.plumNight)
+            Text("Import Song").font(.appHeadline).foregroundStyle(.primary)
                 .padding(.top, AppSpacing.tiny)
             // Design asset (Sketch "TestFlight UT" 4.1, "Music Symbol").
             // Tinted as a template so it follows the brand colour (light and dark mode).
             Image("ImportMusicNotes").renderingMode(.template).resizable().scaledToFit()
-                .foregroundStyle(Color.primaryBrand)
+                .foregroundStyle(.primary)
                 .frame(width: 64, height: 68)
                 .frame(width: 142, height: 142)
                 .background(Color.white.opacity(0.5), in: RoundedRectangle(cornerRadius: AppRadius.medium))
                 .padding(.top, 24)
                 .accessibilityHidden(true)
             Text("Select an audio file containing full vocals and instrumental. We'll use the vocals as your pitch reference.")
-                .font(.appFootnote).foregroundStyle(Color.primaryBrand)
+                .font(.appFootnote).foregroundStyle(.primary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 260)
                 .padding(.top, 21)
             Text("Supported formats: MP3, M4A, WAV")
-                .font(.appCaption).foregroundStyle(Color.tertiaryText)
+                .font(.caption2).foregroundStyle(.primary)
                 .padding(.top, AppSpacing.small)
             Spacer(minLength: AppSpacing.large)
             Button("Choose File") { picking = true }.buttonStyle(.appPrimary)
@@ -181,25 +185,24 @@ struct ImportSongView: View {
 
     private func sectionPicker(_ audio: ImportedAudio) -> some View {
         VStack(spacing: 0) {
-            HStack {
-                backButton
-                Spacer()
-            }
-            .padding(.horizontal, AppSpacing.regular)
-
             ViewThatFits(in: .vertical) {
                 clipControls(audio)
                 ScrollView { clipControls(audio) }
             }
+            .padding(.top, 44)
             Spacer(minLength: AppSpacing.small)
             VStack(spacing: AppSpacing.small) {
                 if let error = viewModel.actionError {
                     Label(error.title, systemImage: error.systemImage)
                         .font(.appCaption).foregroundStyle(Color.primaryBrand)
                 }
-                Button("Start Recording", action: viewModel.prepareSelection).buttonStyle(.appPrimary)
+                Button("Start Recording", action: viewModel.prepareSelection)
+                    .buttonStyle(AppButtonStyle(kind: .primary, height: 52))
                 if !viewModel.openedSavedSong {
-                    Button("Save to Song List", action: viewModel.saveToSongList).buttonStyle(.appSecondary)
+                    Button(action: viewModel.saveToSongList) {
+                        Text("Save to Song List").foregroundStyle(.primary)
+                    }
+                    .buttonStyle(AppButtonStyle(kind: .secondary, height: 52))
                 }
             }
             .padding(.horizontal, 25).padding(.bottom, 9)
@@ -224,21 +227,18 @@ struct ImportSongView: View {
             HStack(spacing: AppSpacing.regular) {
                 Text("Selected clip")
                 Spacer()
-                Text(clipTime(viewModel.selectionStart)).foregroundStyle(Color.secondaryText)
-                Image(systemName: "arrow.right").foregroundStyle(Color.secondaryText)
-                    .accessibilityHidden(true)
-                Text(clipTime(viewModel.selectionStart + viewModel.selectionLength))
+                Text(clipTime(viewModel.selectionLength))
             }
             .font(.appSubheadline).monospacedDigit()
-            .padding(.horizontal, 25)
+            .padding(.leading, 25).padding(.trailing, 41)
             .padding(.top, 20)
             .accessibilityElement(children: .combine)
 
             SongSectionWaveform(viewModel: viewModel, audio: audio)
                 .frame(height: 80)
-                .padding(.top, 20)
+                .padding(.top, 22)
 
-            VStack(alignment: .leading, spacing: AppSpacing.small) {
+            VStack(alignment: .leading, spacing: 12) {
                 Text("Quick presets").font(.appSubheadline)
                 HStack(spacing: 0) {
                     ForEach(ClipPreset.allCases, id: \.self) { option in
@@ -253,10 +253,11 @@ struct ImportSongView: View {
                         } label: {
                             Text(option.rawValue)
                                 .font(.appSubheadline)
-                                .frame(maxWidth: .infinity, minHeight: 36)
+                                .frame(width: 100, height: 28)
                                 .foregroundStyle(preset == option ? Color.white : Color.primary)
                                 .background(preset == option ? Color.primaryButton : .clear, in: Capsule())
-                                .contentShape(Capsule())
+                                .frame(maxWidth: .infinity, minHeight: 36)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .disabled((option.duration ?? 0) > audio.duration)
@@ -264,12 +265,13 @@ struct ImportSongView: View {
                         .accessibilityAddTraits(preset == option ? .isSelected : [])
                     }
                 }
-                .padding(4)
                 .background(Color.primary100, in: Capsule())
-                .shadow(color: .black.opacity(0.24), radius: 4, y: 4)
             }
             .padding(.horizontal, 25)
             .padding(.top, 22)
+        }
+        .onAppear {
+            preset = ClipPreset.allCases.first { $0.duration == viewModel.selectionLength } ?? .custom
         }
         .onChange(of: viewModel.selectionLength) { _, length in
             if let duration = preset.duration, abs(length - duration) > 0.05 { preset = .custom }
@@ -277,6 +279,6 @@ struct ImportSongView: View {
     }
 
     private func clipTime(_ seconds: TimeInterval) -> String {
-        seconds.formatted(.number.precision(.fractionLength(1))) + "s"
+        seconds.formatted(.number.precision(.fractionLength(1)).locale(Locale(identifier: "en_US_POSIX"))) + "s"
     }
 }

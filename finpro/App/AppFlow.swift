@@ -10,6 +10,7 @@
 import CoreMedia
 import Foundation
 import Observation
+import SwiftUI
 import os
 
 @Observable
@@ -42,6 +43,7 @@ final class AppFlow {
     /// Incremented whenever the user saves a vocal range, so Home can close its saved-result overlay.
     private(set) var vocalRangeCompletionCount = 0
     private(set) var selectedLibrarySongID: UUID?
+    private(set) var importSelection: ImportSongViewModel.ClipSelection?
     var selectedLibrarySong: SavedSong? { container.songLibrary.songs.first { $0.id == selectedLibrarySongID } }
     private(set) var preparedSong: PreparedSong?
     private(set) var keyChoices: PrepareSongUseCase.Choices?
@@ -162,7 +164,10 @@ final class AppFlow {
     func createNewCover() {
         importOrigin = step == .songList ? .songList : .home
         selectedLibrarySongID = nil
-        step = .importSong
+        importSelection = nil
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) { step = .importSong }
     }
 
     func openSongList() { step = .songList }
@@ -171,17 +176,24 @@ final class AppFlow {
         container.audioPreview.stop()
         importOrigin = step == .songList ? .songList : .home
         selectedLibrarySongID = song.id
+        importSelection = nil
         step = .importSong
     }
+    func keepImportSelection(_ selection: ImportSongViewModel.ClipSelection) { importSelection = selection }
     func sourceSongSaved(_ id: UUID) { selectedLibrarySongID = id }
     /// The import screen was dismissed. SwiftUI also calls this after the screen closed because the
     /// flow moved on (e.g. to Find Your Key); the next screen's audio must keep playing then.
     func closeImport() {
         guard step == .importSong else { return }
         container.audioPreview.stop()
+        importSelection = nil
         step = importOrigin
     }
-    func savedToSongList() { container.audioPreview.stop(); step = .songList }
+    func savedToSongList() {
+        container.audioPreview.stop()
+        importSelection = nil
+        step = .songList
+    }
     func returnToSongSection() {
         container.audioPreview.stop()
         step = .importSong
@@ -401,6 +413,7 @@ final class AppFlow {
     }
 
     func startOver() {
+        importSelection = nil
         songName = nil
         keyChoices = nil
         recordingLyrics = []

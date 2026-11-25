@@ -49,7 +49,7 @@ struct SongSectionWaveform: View {
                     .frame(width: max(0, min(end, played) - start)).offset(x: start)
                     .allowsHitTesting(false)
                 RoundedRectangle(cornerRadius: AppRadius.extraSmall)
-                    .stroke(Color.plumDeep, lineWidth: 2)
+                    .strokeBorder(Color.plumDeep, lineWidth: 1)
                     .frame(width: max(0, end - start)).offset(x: start)
                     .allowsHitTesting(false)
                 handle(at: start, width: width, scale: scale, leading: true)
@@ -143,7 +143,10 @@ struct SongSectionWaveform: View {
     }
 
     private func handle(at position: CGFloat, width: CGFloat, scale: CGFloat, leading: Bool) -> some View {
-        edge(leading: leading)
+        Group {
+            if leading { Color.clear }
+            else { edge() }
+        }
             .frame(width: edgeHitWidth).contentShape(Rectangle()).offset(x: position - edgeHitWidth / 2)
             .highPriorityGesture(DragGesture(minimumDistance: 1)
                 .onChanged { value in
@@ -165,18 +168,16 @@ struct SongSectionWaveform: View {
             }
     }
 
-    /// A box edge: a solid bar with a white grip, inside the box (3.2c).
-    private func edge(leading: Bool) -> some View {
+    /// The right edge has a white grip. Both ends still have full-size drag targets.
+    private func edge() -> some View {
         ZStack {
             UnevenRoundedRectangle(cornerRadii: RectangleCornerRadii(
-                topLeading: leading ? AppRadius.extraSmall : 0, bottomLeading: leading ? AppRadius.extraSmall : 0,
-                bottomTrailing: leading ? 0 : AppRadius.extraSmall, topTrailing: leading ? 0 : AppRadius.extraSmall))
+                bottomTrailing: AppRadius.extraSmall, topTrailing: AppRadius.extraSmall))
                 .fill(Color.plumDeep)
             Capsule().fill(.white).frame(width: gripSize.width, height: gripSize.height)
         }
         .frame(width: edgeWidth)
-        // Inside the box, so the edge does not hide bars outside the selection.
-        .offset(x: leading ? edgeWidth / 2 : -edgeWidth / 2)
+        .offset(x: -edgeWidth / 2)
     }
 
     /// Moves one edge, keeping the clip at least 15 s long and inside the song.
