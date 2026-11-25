@@ -80,7 +80,9 @@ struct RootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .fullScreenCover(isPresented: Binding(get: { flow.step == .importSong }, set: { if !$0 { flow.closeImport() } })) {
-            ImportSongView(viewModel: makeImportViewModel(), onBack: flow.closeImport)
+            ImportSongView(viewModel: makeImportViewModel(),
+                           isFromSongList: flow.importOrigin == .songList,
+                           onBack: flow.closeImport)
         }
         .animation(.default, value: flow.step)
         .alert(UserFacingError.permissionDenied([.microphone]).title, isPresented: $showsMicrophoneSettings) {

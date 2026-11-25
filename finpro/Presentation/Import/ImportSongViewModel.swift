@@ -65,6 +65,7 @@ final class ImportSongViewModel {
     /// timed end is used, not its estimated last word, which often ends before it is really sung.
     private static let chorusLeadInClearance = AppConfiguration.default.segmentGap / 2
 
+    var openedSavedSong: Bool { initialSong != nil }
     private(set) var savedSongID: UUID?
     private(set) var actionError: UserFacingError?
     private(set) var status: Status = .idle {

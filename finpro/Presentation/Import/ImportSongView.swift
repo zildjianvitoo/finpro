@@ -30,10 +30,12 @@ struct ImportSongView: View {
     private static var openedLaunchFile = false
     #endif
     @Environment(\.scenePhase) private var scenePhase
+    private let isFromSongList: Bool
     let onBack: () -> Void
 
-    init(viewModel: ImportSongViewModel, onBack: @escaping () -> Void) {
+    init(viewModel: ImportSongViewModel, isFromSongList: Bool, onBack: @escaping () -> Void) {
         _viewModel = State(initialValue: viewModel)
+        self.isFromSongList = isFromSongList
         self.onBack = onBack
     }
 
@@ -197,7 +199,9 @@ struct ImportSongView: View {
                         .font(.appCaption).foregroundStyle(Color.primaryBrand)
                 }
                 Button("Start Recording", action: viewModel.prepareSelection).buttonStyle(.appPrimary)
-                Button("Save to Song List", action: viewModel.saveToSongList).buttonStyle(.appSecondary)
+                if !(isFromSongList && viewModel.openedSavedSong) {
+                    Button("Save to Song List", action: viewModel.saveToSongList).buttonStyle(.appSecondary)
+                }
             }
             .padding(.horizontal, 25).padding(.bottom, 9)
         }
