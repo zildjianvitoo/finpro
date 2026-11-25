@@ -132,10 +132,12 @@ struct VocalWarmupView: View {
             Circle().fill(Color.ringHalo)
             Circle().fill(phase == .complete ? Color.secBrand : Color.primaryButton).padding(13)
             Circle().strokeBorder(Color.ringStroke, lineWidth: 5).padding(13)
-            if phase == .hum {
+            if phase == .hum || phase == .rest {
                 progressArc(start: phaseStartedAt, duration: Self.phaseSeconds,
                             color: .secBrand, lineWidth: 5)
                     .padding(16)
+            }
+            if phase == .hum {
                 ListeningWaveform(isActive: true, hearsVoice: true,
                                   barColor: .white, levels: voiceLevels())
                     .scaleEffect(0.9)
