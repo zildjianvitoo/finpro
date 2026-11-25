@@ -12,8 +12,29 @@ struct KeySelectionView: View {
     let onRetest: () -> Void
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @GestureState private var dragTranslation: CGFloat = 0
-    private let rowHeight: CGFloat = 68
+    @State private var position: ScrollPosition
+    @State private var visibleShift: Int?
+    @State private var isScrollingKeys = false
+    private static let rowHeight: CGFloat = 68
+
+    private nonisolated struct KeyScrollSnap: ScrollTargetBehavior {
+        let rowHeight: CGFloat
+
+        func updateTarget(_ target: inout ScrollTarget, context: TargetContext) {
+            let maximumOffset = max(0, context.contentSize.height - context.containerSize.height)
+            let rowOffset = (target.rect.minY / rowHeight).rounded() * rowHeight
+            target.rect.origin.y = min(maximumOffset, max(0, rowOffset))
+        }
+    }
+
+    init(viewModel: KeySelectionViewModel, routeMonitor: any AudioRouteMonitor,
+         onChooseAnother: @escaping () -> Void, onRetest: @escaping () -> Void) {
+        _viewModel = State(initialValue: viewModel)
+        _position = State(initialValue: ScrollPosition(y: Self.offset(for: viewModel.selectedShift ?? 0)))
+        self.routeMonitor = routeMonitor
+        self.onChooseAnother = onChooseAnother
+        self.onRetest = onRetest
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -38,7 +59,7 @@ struct KeySelectionView: View {
                         .padding(.horizontal, AppSpacing.regular).padding(.bottom, AppSpacing.small)
                 }
                 Button("Use Selected Key", action: viewModel.confirm).buttonStyle(.appPrimary)
-                    .disabled(viewModel.isRendering || viewModel.selectedSong == nil)
+                    .disabled(isScrollingKeys || viewModel.isRendering || viewModel.selectedSong == nil)
                     .padding(.horizontal, 25).padding(.bottom, 16)
             }
         }
@@ -82,7 +103,7 @@ struct KeySelectionView: View {
     }
 
     private var dial: some View {
-        let centered = Int(dialValue.rounded())
+        let centered = visibleShift ?? viewModel.selectedShift ?? 0
         return ZStack {
             Capsule()
                 .fill(Color.primary100)
@@ -105,33 +126,41 @@ struct KeySelectionView: View {
                 }
                 .allowsHitTesting(false)
 
-            ForEach(TranspositionPlan.semitoneRange, id: \.self) { shift in
-                let offset = (dialValue - Double(shift)) * rowHeight
-                Button {
-                    if shift == viewModel.selectedShift { viewModel.previewSelected() }
-                    else { select(shift) }
-                } label: {
-                    Text(label(shift))
-                        .font(.appBody.weight(shift == centered ? .bold : .regular))
-                        .foregroundStyle(shift == centered ? Color.primaryBrand : Color.primary300)
-                        .monospacedDigit()
-                        .frame(maxWidth: .infinity)
-                        .frame(height: rowHeight)
-                        .contentShape(Rectangle())
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(Array(TranspositionPlan.semitoneRange.reversed()), id: \.self) { shift in
+                        Button {
+                            if shift == viewModel.selectedShift { viewModel.previewSelected() }
+                            else { select(shift) }
+                        } label: {
+                            Text(label(shift))
+                                .font(.appBody.weight(shift == centered ? .bold : .regular))
+                                .foregroundStyle(shift == centered ? Color.primaryBrand : Color.primary300)
+                                .monospacedDigit()
+                                .frame(maxWidth: .infinity)
+                                .frame(height: Self.rowHeight)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                .buttonStyle(.plain)
-                .offset(y: offset)
+                // Give the first and last key room to align with the fixed middle row.
+                .padding(.vertical, Self.rowHeight * 2)
+            }
+            .scrollIndicators(.hidden)
+            .scrollTargetBehavior(KeyScrollSnap(rowHeight: Self.rowHeight))
+            .scrollPosition($position)
+            .onScrollGeometryChange(for: Int.self) { middleShift(in: $0) } action: { _, shift in
+                visibleShift = shift
+            }
+            .onScrollPhaseChange { old, new, context in
+                isScrollingKeys = new != .idle
+                guard new == .idle, old == .interacting || old == .decelerating else { return }
+                let shift = middleShift(in: context.geometry)
+                if shift != viewModel.selectedShift { viewModel.chooseShift(shift) }
             }
         }
-        .frame(height: rowHeight * 5)
-        .clipped()
-        .contentShape(Rectangle())
-        .gesture(DragGesture(minimumDistance: 6)
-            .updating($dragTranslation) { value, translation, _ in translation = value.translation.height }
-            .onEnded { value in
-                let target = Int(clamped(Double(viewModel.selectedShift ?? 0) + value.translation.height / rowHeight).rounded())
-                select(target)
-            })
+        .frame(height: Self.rowHeight * 5)
         .sensoryFeedback(.selection, trigger: centered)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Selected key")
@@ -152,15 +181,22 @@ struct KeySelectionView: View {
         return "\(label(shift)) semitones" + (shift == viewModel.recommendedShift ? ", recommended" : "")
     }
 
-    private var dialValue: Double { clamped(Double(viewModel.selectedShift ?? 0) + dragTranslation / rowHeight) }
+    private func middleShift(in geometry: ScrollGeometry) -> Int {
+        let range = TranspositionPlan.semitoneRange
+        let row = Int((geometry.contentOffset.y / Self.rowHeight).rounded())
+        return max(range.lowerBound, min(range.upperBound, range.upperBound - row))
+    }
 
     private func select(_ shift: Int) {
         guard TranspositionPlan.semitoneRange.contains(shift), shift != viewModel.selectedShift else { return }
-        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { viewModel.chooseShift(shift) }
+        withAnimation(reduceMotion ? nil : .smooth(duration: 0.27)) {
+            position.scrollTo(y: Self.offset(for: shift))
+        }
+        viewModel.chooseShift(shift)
     }
 
-    private func clamped(_ shift: Double) -> Double {
-        min(Double(TranspositionPlan.semitoneRange.upperBound), max(Double(TranspositionPlan.semitoneRange.lowerBound), shift))
+    private static func offset(for shift: Int) -> CGFloat {
+        CGFloat(TranspositionPlan.semitoneRange.upperBound - shift) * rowHeight
     }
 
     private func label(_ shift: Int) -> String { "\(shift > 0 ? "+" : "")\(shift)" }
