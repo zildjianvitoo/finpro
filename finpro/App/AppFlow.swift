@@ -407,6 +407,7 @@ final class AppFlow {
     /// Recording screen (Takin) ended the session with at least one passed segment.
     func sessionEnded(with plan: CompingCompositionPlan) {
         Contract.assertValid(plan.validate())
+        saveSungSongToLibrary()
         compingPlan = plan
         // Keep `isReopenedCover` true when retaking/continuing an existing saved cover so
         // cancelling the leave alert never deletes the user's saved cover from Home.
@@ -414,6 +415,32 @@ final class AppFlow {
         // A retake or continue changed the cover after it was saved to Photos.
         isCoverExported = false
         step = .export
+    }
+
+    /// Saves the imported song to the Song List once the user has sung a cover of it.
+    private func saveSungSongToLibrary() {
+        guard let selection = importSelection else { return }
+        let library = container.songLibrary
+        let existingID = selection.savedSongID ?? selectedLibrarySongID ?? library.song(matching: selection.audio)?.id
+        guard let saved = try? library.save(
+            audio: selection.audio,
+            existingID: existingID,
+            start: selection.start,
+            length: selection.length,
+            lyrics: selection.lyrics
+        ) else { return }
+        selectedLibrarySongID = saved.id
+        importSelection = ImportSongViewModel.ClipSelection(
+            audio: selection.audio,
+            start: selection.start,
+            length: selection.length,
+            lyrics: selection.lyrics,
+            savedSongID: saved.id,
+            recognized: selection.recognized
+        )
+        if let outcome = selection.recognized {
+            library.applyRecognition(saved.id, song: outcome)
+        }
     }
 
     /// Recording screen (Takin) ended with nothing passed, or the user discarded the session.

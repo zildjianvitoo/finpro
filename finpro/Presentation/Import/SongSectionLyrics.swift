@@ -43,8 +43,11 @@ struct SongSectionLyrics: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .accessibilityElement(children: .combine)
             case .idle: Color.clear
-            case .notFound: search(.lyricsNotFound)
-            case .failed(let error): search(error)
+            case .notFound, .failed:
+                Text(UserFacingError.lyricsNotFound.title)
+                    .font(.appSubheadline)
+                    .foregroundStyle(Color.plumInk.opacity(0.6))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .frame(maxWidth: .infinity, minHeight: Self.viewportHeight, maxHeight: Self.viewportHeight)
@@ -157,22 +160,5 @@ struct SongSectionLyrics: View {
         var text = AttributedString(line.text)
         text.foregroundColor = isHighlighted ? tint : tint.opacity(dimmedOpacity)
         return text
-    }
-    private func search(_ error: UserFacingError) -> some View {
-        VStack(spacing: AppSpacing.tiny) {
-            Text("\(error.title). Search by title, or pick a part on the waveform.")
-                .font(.appCaption2).foregroundStyle(Color.secondaryText)
-                .lineLimit(1).minimumScaleFactor(0.8)
-            HStack(spacing: AppSpacing.small) {
-                TextField("Song title", text: $viewModel.lyricsTitle)
-                    .font(.appSubheadline).submitLabel(.search)
-                    .onSubmit { viewModel.searchLyrics() }
-                    .padding(.horizontal, AppSpacing.medium).frame(height: 36)
-                    .background(Color.searchField.opacity(0.8), in: Capsule())
-                Button { viewModel.searchLyrics() } label: { Image(systemName: "magnifyingglass") }
-                    .foregroundStyle(Color.primaryBrand)
-                    .accessibilityLabel("Search lyrics")
-            }
-        }
     }
 }
