@@ -73,6 +73,8 @@ final class AppFlow {
     private(set) var isCoverExported = false
     /// The last copy of the cover's working files to `CoverDraftStore`; later saves and deletes wait for it.
     @ObservationIgnored private var draftSave: Task<Void, Never>?
+    /// Queued recording start waiting for `draftSave` to finish copying raw videos out of SessionFiles.
+    @ObservationIgnored private var pendingRecordingStart: Task<Void, Never>?
     @ObservationIgnored private var warmUpStarted = false
 
     init(container: AppContainer) {
@@ -251,23 +253,30 @@ final class AppFlow {
 
     /// Ready screen: user tapped Record. A new session starts, so files from the last one go (ZV-16).
     func startRecording() {
-        guard preparedSong != nil else { return }
+        guard preparedSong != nil, pendingRecordingStart == nil else { return }
         // The previous cover's draft may still be copying its raw videos out of the session
         // folder; clearing the folder before that ends would leave the draft incomplete.
-        guard draftSave == nil else {
-            let pending = draftSave
-            draftSave = nil
-            Task {
-                await pending?.value
-                startRecording()
+        if let pending = draftSave {
+            pendingRecordingStart = Task {
+                await pending.value
+                pendingRecordingStart = nil
+                guard !Task.isCancelled, preparedSong != nil else { return }
+                draftSave = nil
+                beginFreshRecordingSession()
             }
             return
         }
+        beginFreshRecordingSession()
+    }
+
+    private func beginFreshRecordingSession() {
         container.takeLog.clear()
         takePitch.removeAll()
         SessionFiles.cleanUp()
         try? SessionFiles.prepareDirectory()
         savedCoverID = nil
+        isReopenedCover = false
+        isCoverExported = false
         // A new cover: its first recording locks the camera look again.
         (container.capture as? any CameraLookLocking)?.resetCameraLook()
         record(.session)
@@ -361,6 +370,7 @@ final class AppFlow {
         // The draft's plan is the one its saved video was exported from.
         compingPlanExportURL = savedCoverURL
         isReopenedCover = true
+        isCoverExported = container.coverLibrary.covers.first { $0.id == id }?.isDraft == false
         step = .export
         return true
     }
@@ -396,7 +406,9 @@ final class AppFlow {
     func sessionEnded(with plan: CompingCompositionPlan) {
         Contract.assertValid(plan.validate())
         compingPlan = plan
-        isReopenedCover = false
+        // Keep `isReopenedCover` true when retaking/continuing an existing saved cover so
+        // cancelling the leave alert never deletes the user's saved cover from Home.
+        if recordingPass.isSession { isReopenedCover = false }
         // A retake or continue changed the cover after it was saved to Photos.
         isCoverExported = false
         step = .export
@@ -420,6 +432,8 @@ final class AppFlow {
     }
 
     func startOver() {
+        pendingRecordingStart?.cancel()
+        pendingRecordingStart = nil
         importSelection = nil
         songName = nil
         keyChoices = nil

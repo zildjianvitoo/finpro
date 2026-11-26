@@ -172,6 +172,7 @@ struct ExportPreviewView: View {
         }
         .onDisappear {
             player?.pause()
+            viewModel.cancelSaveToPhotos()
             // Off to a retake, or discarded: this version's file is not needed (leaving to keep
             // the cover waits for it first).
             viewModel.cancelExport()
@@ -310,7 +311,7 @@ struct ExportPreviewView: View {
                     } catch {
                         guard !Task.isCancelled else { return }
                         showsSound = false
-                        mixerError = error.localizedDescription
+                        mixerError = UserFacingError.soundMixerUnavailable.message
                     }
                 }
             } else { clipsSheet }
@@ -647,6 +648,7 @@ struct ExportPreviewView: View {
         VStack(spacing: 0) {
             HStack {
                 Button {
+                    viewModel.cancelSaveToPhotos()
                     page = .preview
                 } label: {
                     Image(systemName: "xmark")
@@ -753,7 +755,7 @@ struct ExportPreviewView: View {
         } else if !viewModel.hasVolumeEdits {
             withAnimation(.easeOut(duration: saveRunUpDuration)) { exportProgress = saveRunUp }
         }
-        Task { await viewModel.saveToPhotos() }
+        viewModel.startSaveToPhotos()
     }
 
     /// Leaving to keep the cover: its file must exist (the background export may still run) and
@@ -770,7 +772,7 @@ struct ExportPreviewView: View {
                 leave()
             } catch {
                 savingCover = false
-                soundSaveError = String(describing: error)
+                soundSaveError = UserFacingError.soundSaveFailed.message
             }
         }
     }
@@ -793,7 +795,7 @@ struct ExportPreviewView: View {
 
     private var saveErrorMessage: String {
         switch viewModel.saveState {
-        case .denied: "Allow access to Photos to save your cover."
+        case .denied: UserFacingError.photosAccessDenied.message
         case .failed(let message): message
         default: ""
         }

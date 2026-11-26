@@ -20,6 +20,10 @@ nonisolated enum UserFacingError: Equatable, Sendable {
     case speakerOutput
     case lowStorage(requiredGB: Double)
     case exportFailed(details: String)
+    case photosAccessDenied
+    case saveToPhotosFailed
+    case soundMixerUnavailable
+    case soundSaveFailed
     case recordingFailed(details: String)
     case recordingInterrupted
     case nothingToExport
@@ -45,6 +49,10 @@ nonisolated enum UserFacingError: Equatable, Sendable {
         case .speakerOutput: "Plug in earphones"
         case .lowStorage: "Not enough storage"
         case .exportFailed: "Export failed"
+        case .photosAccessDenied: "Couldn't Export"
+        case .saveToPhotosFailed: "Couldn't Export"
+        case .soundMixerUnavailable: "Sound unavailable"
+        case .soundSaveFailed: "Couldn't Save Your Cover"
         case .recordingFailed: "Recording stopped"
         case .recordingInterrupted: "Recording was interrupted"
         case .nothingToExport: "Nothing to export yet"
@@ -83,6 +91,14 @@ nonisolated enum UserFacingError: Equatable, Sendable {
             "Free up at least \(requiredGB.formatted(.number.precision(.fractionLength(0...1)))) GB to record."
         case .exportFailed(let details):
             details
+        case .photosAccessDenied:
+            "Allow access to Photos to save your cover."
+        case .saveToPhotosFailed:
+            "We couldn't save this video to your camera roll. Check available storage and try again."
+        case .soundMixerUnavailable:
+            "Sound adjustments aren't available for this preview right now."
+        case .soundSaveFailed:
+            "We couldn't save your sound changes. Check available storage and try again."
         case .recordingFailed(let details):
             details
         case .recordingInterrupted:
@@ -118,7 +134,8 @@ nonisolated enum UserFacingError: Equatable, Sendable {
         case .noVocalDetected: "waveform.slash"
         case .speakerOutput: "headphones"
         case .lowStorage: "externaldrive.badge.exclamationmark"
-        case .exportFailed: "exclamationmark.triangle"
+        case .exportFailed, .photosAccessDenied, .saveToPhotosFailed, .soundSaveFailed: "exclamationmark.triangle"
+        case .soundMixerUnavailable: "speaker.slash"
         case .recordingFailed: "video.slash"
         case .recordingInterrupted: "pause.circle"
         case .nothingToExport: "film.stack"

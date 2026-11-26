@@ -118,6 +118,8 @@ final class CompingViewModel {
     private(set) var isLivePreviewReady = false
     /// The background export of the cover file, while it runs.
     @ObservationIgnored private var exportTask: Task<Void, Never>?
+    /// Active save-to-Photos task so closing the exporting screen cancels cleanly.
+    @ObservationIgnored private var saveTask: Task<Void, Never>?
     /// A frame of each clip, by segment index; filled once the cover can be shown.
     private(set) var thumbnails: [Int: CGImage] = [:]
     private(set) var selectedClipID: Int?
@@ -322,7 +324,7 @@ final class CompingViewModel {
             exportState = .idle
         } catch {
             if case CompingError.exportInterrupted = error { wasInterrupted = true }
-            exportState = .failed(String(describing: error))
+            exportState = .failed(Self.userFacingExportMessage(for: error))
         }
     }
 
@@ -357,25 +359,35 @@ final class CompingViewModel {
     /// earlier file. Does nothing without edits.
     func applyVolumeEdits() async throws {
         guard hasVolumeEdits, soundProgress == nil else { return }
-        guard let editable else { throw CompingError.exportUnavailable }
         let edited = CompingCompositionPlan(rawVideoURLs: plan.rawVideoURLs, instrumentalURL: plan.instrumentalURL,
             segments: plan.segments, validTakes: plan.validTakes, endTime: plan.endTime,
             crossfadeDuration: plan.crossfadeDuration, instrumentalFadeOut: plan.instrumentalFadeOut,
             vocalGain: vocals, instrumentalGain: music)
         soundProgress = 0
         defer { soundProgress = nil }
-        let output = try editable.applyingVolumes(vocals: edited.vocalGain, music: edited.instrumentalGain)
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Cover-\(UUID().uuidString).mp4")
-        do {
-            try await VideoCompositionRepositoryImpl().export(output, plan: edited, to: url) { progress in
+        let url: URL
+        if let real = useCase.videoComposition as? VideoCompositionRepositoryImpl, let editable {
+            let output = try editable.applyingVolumes(vocals: edited.vocalGain, music: edited.instrumentalGain)
+            let destination = FileManager.default.temporaryDirectory.appendingPathComponent("Cover-\(UUID().uuidString).mp4")
+            do {
+                try await real.export(output, plan: edited, to: destination) { progress in
+                    Task { @MainActor in
+                        if let current = self.soundProgress { self.soundProgress = max(current, progress) }
+                    }
+                }
+            } catch {
+                try? FileManager.default.removeItem(at: destination)
+                throw error
+            }
+            url = destination
+        } else {
+            url = try await useCase.export(edited) { progress in
                 Task { @MainActor in
                     if let current = self.soundProgress { self.soundProgress = max(current, progress) }
                 }
             }
-        } catch {
-            try? FileManager.default.removeItem(at: url)
-            throw error
         }
+        try Task.checkCancellation()
         if let remixedURL { try? FileManager.default.removeItem(at: remixedURL) }
         remixedURL = url
         appliedVocals = edited.vocalGain
@@ -383,20 +395,52 @@ final class CompingViewModel {
         onExported(url, edited)
     }
 
+    func startSaveToPhotos() {
+        guard canPreview, saveState != .saving else { return }
+        saveTask?.cancel()
+        saveTask = Task {
+            await saveToPhotos()
+            saveTask = nil
+        }
+    }
+
+    func cancelSaveToPhotos() {
+        saveTask?.cancel()
+        saveTask = nil
+        if saveState == .saving { saveState = .idle }
+    }
+
     func saveToPhotos() async {
         guard canPreview, saveState != .saving else { return }
         saveState = .saving
         do {
             _ = try await waitForExport()
+            try Task.checkCancellation()
             try await applyVolumeEdits()
+            try Task.checkCancellation()
             guard let url = exportedURL else { throw CompingError.exportUnavailable }
             try await videoLibrary.saveVideo(at: url)
+            guard !Task.isCancelled else {
+                saveState = .idle
+                return
+            }
             saveState = .saved
             onSavedToPhotos()
+        } catch is CancellationError {
+            saveState = .idle
         } catch VideoLibraryError.accessDenied {
             saveState = .denied
         } catch {
-            saveState = .failed(error.localizedDescription)
+            saveState = .failed(UserFacingError.saveToPhotosFailed.message)
+        }
+    }
+
+    private static func userFacingExportMessage(for error: any Error) -> String {
+        switch error {
+        case CompingError.exportInterrupted:
+            return "Export was paused when the app left the screen. Keep the app open to finish."
+        default:
+            return "We couldn't finish merging your recording. Check available storage and try again."
         }
     }
 
