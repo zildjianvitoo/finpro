@@ -22,6 +22,7 @@ struct VocalRangeTestView: View {
     let onWarmupAudioReady: () -> Void
     @State private var notifiedWarmupAudioReady = false
     @State private var isAuthorizingMicrophone = false
+    @State private var micAuthTask: Task<Void, Never>?
     let onDismiss: (() -> Void)?
     let onDismissRevealProgress: ((CGFloat) -> Void)?
     /// Where audio goes now; nil until known. Earphones plugged in or out update it.
@@ -73,7 +74,12 @@ struct VocalRangeTestView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.screenBackground.ignoresSafeArea())
         .animation(stageTransitionAnimation, value: stage)
-        .onDisappear { viewModel.stopListening() }
+        .onDisappear {
+            micAuthTask?.cancel()
+            micAuthTask = nil
+            isAuthorizingMicrophone = false
+            viewModel.stopListening()
+        }
         .alert(failure?.title ?? "", isPresented: $showsFailure, presenting: failure) { _ in
             Button("Try Again") {
                 viewModel.resetCapture()
@@ -298,7 +304,7 @@ struct VocalRangeTestView: View {
         .buttonStyle(.plain).contentShape(Circle())
         .disabled(isAuthorizingMicrophone)
         .accessibilityLabel(listening ? "Stop microphone" : "Start microphone")
-        .accessibilityHint(listening ? "Hold a comfortable note for 1 second" : "Start listening again")
+        .accessibilityHint(listening ? "Hold a comfortable note for \(Int(viewModel.holdDuration)) seconds" : "Start listening again")
         .accessibilityValue(Text(progress, format: .percent.precision(.fractionLength(0))))
     }
 
@@ -312,11 +318,14 @@ struct VocalRangeTestView: View {
     }
 
     private func startMicrophone(for stepStage: Stage) {
-        guard !isAuthorizingMicrophone else { return }
+        micAuthTask?.cancel()
         isAuthorizingMicrophone = true
-        Task {
-            defer { isAuthorizingMicrophone = false }
-            guard await authorizeMicrophone(), stage == stepStage, scenePhase != .background else { return }
+        micAuthTask = Task {
+            defer {
+                if !Task.isCancelled { isAuthorizingMicrophone = false }
+            }
+            let granted = await authorizeMicrophone()
+            guard !Task.isCancelled, granted, stage == stepStage, scenePhase != .background else { return }
             viewModel.listen()
         }
     }

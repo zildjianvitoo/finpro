@@ -157,7 +157,7 @@ nonisolated struct PrepareSongUseCase: Sendable {
                                                 duration: duration,
                                                 vocalRange: vocalRange, recommendationLimit: recommendationLimit,
                                                 leadIn: leadIn, progress: progress)
-            choices.leadInGuideNotes = leadInGuideNotes
+            choices.leadInGuideNotes = LyricGuideNotesUseCase.foldingOctaveErrors(leadInGuideNotes)
             choices.clipStartShift = clipStartShift
             return choices
         }
@@ -166,7 +166,7 @@ nonisolated struct PrepareSongUseCase: Sendable {
                                             recommendationLimit: recommendationLimit, leadIn: leadIn, progress: progress)
         choices.guideWords = lyricGuide.words
         choices.lyricLineShift = lyricGuide.lineShift
-        choices.leadInGuideNotes = leadInGuideNotes
+        choices.leadInGuideNotes = LyricGuideNotesUseCase.foldingOctaveErrors(leadInGuideNotes)
         choices.clipStartShift = clipStartShift
         return choices
     }

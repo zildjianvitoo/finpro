@@ -255,6 +255,7 @@ struct PianoRollView: View {
         var upCount = 0
 
         for note in notes {
+            if let dimmedBefore, note.end <= dimmedBefore + 1e-6 { continue }
             let inWindow = note.end > windowStart && note.start < windowEnd
             let inNear = note.end > nearStart && note.start < nearEnd
             let inUpcoming = note.start >= windowEnd && upCount < Self.upcomingNoteCount

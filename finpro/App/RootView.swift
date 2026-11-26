@@ -156,6 +156,9 @@ struct RootView: View {
         case .granted: return true
         case .needsRequest:
             await gate.requestMissing()
+            if case .denied = gate.state {
+                showsMicrophoneSettings = true
+            }
             return gate.state == .granted
         case .denied:
             showsMicrophoneSettings = true

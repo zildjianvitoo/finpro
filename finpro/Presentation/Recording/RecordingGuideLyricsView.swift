@@ -60,7 +60,9 @@ struct RecordingGuideLyricsView: View {
             .foregroundStyle(dimmed ? Color.gray : Color.secondaryButton)
             .lineLimit(1)
             .minimumScaleFactor(0.55)
-            .padding(.horizontal, 12 * min(max(scale, 0.7), 1.2))
+            // Keep symmetric horizontal clearance so long bottom lines never collide with
+            // MovablePanel's bottom-trailing resize arc.
+            .padding(.horizontal, 26 * min(max(scale, 0.7), 1.2))
             .frame(maxWidth: .infinity)
             .frame(height: rowHeight)
             .offset(y: (CGFloat(distance) - 0.5) * rowHeight)
