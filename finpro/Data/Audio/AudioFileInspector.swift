@@ -25,9 +25,14 @@ nonisolated struct AudioFileInspector: AudioFileInspecting {
         let copy = try copyIntoApp(pickedURL)
         do {
             return try await inspect(copy, pickedURL: pickedURL)
-        } catch {
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch let error as AudioImportError {
             Self.log.error("import failed for \(pickedURL.lastPathComponent, privacy: .public) (content \(Self.detectedExtension(of: copy) ?? "unknown", privacy: .public)): \(String(describing: error), privacy: .public)")
             throw error
+        } catch {
+            Self.log.error("import failed for \(pickedURL.lastPathComponent, privacy: .public) (content \(Self.detectedExtension(of: copy) ?? "unknown", privacy: .public)): \(String(describing: error), privacy: .public)")
+            throw AudioImportError.unreadable
         }
     }
 

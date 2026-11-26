@@ -56,6 +56,7 @@ final class ImportSongViewModel {
         let length: TimeInterval
         let lyrics: SongLyrics?
         let savedSongID: UUID?
+        let recognized: RecognizedSong??
     }
     /// Waveform zoom: at least this much song is in view (less for shorter songs, see below).
     private static let waveformMinimumVisible: TimeInterval = 90
@@ -170,6 +171,8 @@ final class ImportSongViewModel {
     }
 
     var selectionAudio: ImportedAudio? { audio ?? preparingAudio }
+    /// True when preparation failed on a chosen section and the user can return to adjust the trim.
+    var canReturnToTrim: Bool { preparingAudio != nil }
     /// Seconds of song across the waveform's width. It zooms out to fit a longer selection, but
     /// only once a drag ends: while the user drags, the scale stays fixed so nothing jumps.
     var waveformVisibleSeconds: TimeInterval {
@@ -218,6 +221,7 @@ final class ImportSongViewModel {
         stopSelectionPreview()
         lyricsLookup?.cancel()
         recognition?.cancel()
+        preparingAudio = nil
         generation = UUID()
         let token = generation
         status = .loading
@@ -251,12 +255,13 @@ final class ImportSongViewModel {
         status = .trimming(audio)
         clampSelection()
         // A song Shazam already named searches lyrics by that name.
-        let named = saved?.isRecognitionDone == true || saved?.isRenamedByUser == true
-        lyricsTitle = named ? saved?.title ?? audio.title : audio.title
-        lyricsArtist = (named ? saved?.displayArtist : nil) ?? audio.artist ?? ""
+        let named = saved?.isRecognitionDone == true || saved?.isRenamedByUser == true || selection?.recognized != nil
+        let restoredSong = selection?.recognized ?? nil
+        lyricsTitle = restoredSong?.title ?? (named ? saved?.title ?? audio.title : audio.title)
+        lyricsArtist = restoredSong?.artist ?? (named ? saved?.displayArtist : nil) ?? audio.artist ?? ""
         userMovedSelection = saved != nil || selection != nil
         actionError = nil
-        recognized = nil
+        recognized = selection?.recognized
         recognition?.cancel()
         isIdentifyingSong = false
         lyricsAwaitRecognition = false
@@ -342,10 +347,15 @@ final class ImportSongViewModel {
                 // The part may start earlier than chosen (at the start of the phrase it cut into).
                 let preparedStart = trim.lowerBound - choices.clipStartShift
                 let leadDuration = choices.leadIn?.duration ?? 0
-                let leadLyrics = leadDuration > 0
+                let rawLeadLyrics = leadDuration > 0
                     ? Self.delayed(lyricsOnPreparedTimeline(max(0, preparedStart - leadDuration)...preparedStart),
                                    by: -leadDuration)
                     : []
+                // Assign distinct negative IDs so a line straddling `preparedStart` never duplicates
+                // the ID of the main clip's line in SwiftUI lists.
+                let leadLyrics = rawLeadLyrics.enumerated().map { index, line in
+                    LyricLine(id: -(index + 1), text: line.text, start: line.start, end: line.end, words: line.words)
+                }
                 preparedLyrics = leadLyrics + Self.lyrics(Self.delayed(lyrics, by: choices.clipStartShift),
                                                           sungAt: choices.guideWords, shift: choices.lyricLineShift)
                 Self.logPreparationTiming(duration: trim.upperBound - trim.lowerBound, started: started, finished: finished,
@@ -400,7 +410,7 @@ final class ImportSongViewModel {
         let cachedLyrics: SongLyrics?
         if case .found(let song) = lyrics { cachedLyrics = song } else { cachedLyrics = nil }
         onClipPrepared(ClipSelection(audio: preparingAudio, start: selectionStart, length: selectionLength,
-                                     lyrics: cachedLyrics, savedSongID: savedSongID))
+                                     lyrics: cachedLyrics, savedSongID: savedSongID, recognized: recognized))
         onPrepared(preparedChoices, preparedLyrics, preparingDisplayName ?? Self.displayName(of: preparingAudio))
     }
 
@@ -409,11 +419,14 @@ final class ImportSongViewModel {
         [audio.artist, audio.title].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " - ")
     }
 
-    /// Back from the preparing or ready screen to the trimmer of the same song.
+    /// Back from the preparing, ready, or section-failed screen to the trimmer of the same song.
     func backToTrimming() {
         cancelPreparation()
         preparedChoices = nil
-        if let preparingAudio { status = .trimming(preparingAudio) }
+        if let preparingAudio {
+            status = .trimming(preparingAudio)
+            startSelectionPreview()
+        }
     }
 
     /// Progress of the preparation, mapped from the steps PrepareSongUseCase reports. Separation
@@ -474,6 +487,7 @@ final class ImportSongViewModel {
         stopSelectionPreview()
         lyricsLookup?.cancel()
         lyrics = .idle
+        preparingAudio = nil
         savedSongID = nil
         actionError = nil
         status = .idle

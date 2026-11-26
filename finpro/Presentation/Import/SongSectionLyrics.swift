@@ -107,6 +107,8 @@ struct SongSectionLyrics: View {
         Button { viewModel.selectLyric(line) } label: {
             Text(text(line, isHighlighted: isHighlighted))
                 .font(.appTitle2.weight(.bold))
+                .lineLimit(2)
+                .minimumScaleFactor(0.8)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.horizontal, AppSpacing.large)

@@ -49,10 +49,20 @@ nonisolated struct ShazamSongRecognizer: SongRecognizing {
             try Task.checkCancellation()
             guard let first = try await matchExcerpt(url, duration: duration, position: position) else { continue }
             var verifiedOffset: TimeInterval?
-            if abs(first.offset) > minimumTimelineOffset && abs(first.offset) <= maximumTimelineOffset,
-               index + 1 < excerptPositions.count,
-               let second = try? await matchExcerpt(url, duration: duration, position: excerptPositions[index + 1]),
-               abs(first.offset - second.offset) <= offsetAgreementTolerance {
+            if abs(first.offset) > maximumTimelineOffset {
+                // Large single-excerpt offsets are often Shazam false positives (e.g. matching a short
+                // instrumental motif to an unrelated track). Require a second excerpt to confirm the
+                // same song before accepting it.
+                guard index + 1 < excerptPositions.count,
+                      let second = try? await matchExcerpt(url, duration: duration, position: excerptPositions[index + 1]),
+                      sameTitle(first.title, second.title) else {
+                    log.notice("discarded unconfirmed match for \(url.lastPathComponent, privacy: .public): \(first.artist ?? "?", privacy: .public) - \(first.title, privacy: .public) (raw offset \(first.offset, format: .fixed(precision: 2)) s)")
+                    continue
+                }
+            } else if abs(first.offset) > minimumTimelineOffset,
+                      index + 1 < excerptPositions.count,
+                      let second = try? await matchExcerpt(url, duration: duration, position: excerptPositions[index + 1]),
+                      abs(first.offset - second.offset) <= offsetAgreementTolerance {
                 verifiedOffset = (first.offset + second.offset) / 2
             }
             let offsetNote = verifiedOffset.map { String(format: ", verified offset %+.2f s", $0) } ?? ""
@@ -61,6 +71,11 @@ nonisolated struct ShazamSongRecognizer: SongRecognizing {
         }
         log.notice("no match for \(url.lastPathComponent, privacy: .public)")
         return nil
+    }
+
+    private static func sameTitle(_ a: String, _ b: String) -> Bool {
+        a.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            == b.folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
     }
 
     private static func matchExcerpt(_ url: URL, duration: TimeInterval,

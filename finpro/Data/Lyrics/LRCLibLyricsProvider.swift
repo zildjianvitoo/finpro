@@ -23,6 +23,10 @@ nonisolated final class LRCLibLyricsProvider: LyricsProviding, @unchecked Sendab
     /// Versions further than this from the file's duration are another edit (intro, radio cut),
     /// so their line times wouldn't match.
     static let durationTolerance: TimeInterval = 5
+    /// Minimum share of the song's duration that the last synced line should reach for a record
+    /// to be considered plausible (skips broken LRCLIB uploads where an entire song is crammed
+    /// into the opening minute while healthy siblings exist within `durationTolerance`).
+    static let minimumTimelineCoverage: Double = 0.5
     private static let endpoint = URL(string: "https://lrclib.net/api/search")!
     /// LRCLIB asks clients to identify themselves. Add the repo URL once it exists.
     private static let userAgent = "finpro/1.0 (Apple Developer Academy)"
@@ -69,10 +73,23 @@ nonisolated final class LRCLibLyricsProvider: LyricsProviding, @unchecked Sendab
     }
 
     /// The synced, non-instrumental record closest in duration, if within `durationTolerance`.
+    /// Deprioritizes corrupted community LRC records whose timestamps collapse into the opening
+    /// fraction of the track when a healthy sibling exists within tolerance.
     static func bestMatch(_ records: [Record], duration: TimeInterval) -> Record? {
-        records
-            .filter { !$0.instrumental && !($0.syncedLyrics ?? "").isEmpty && abs($0.duration - duration) <= durationTolerance }
-            .min { abs($0.duration - duration) < abs($1.duration - duration) }
+        let candidates = records.filter {
+            !$0.instrumental && !($0.syncedLyrics ?? "").isEmpty && abs($0.duration - duration) <= durationTolerance
+        }
+        guard !candidates.isEmpty else { return nil }
+        let healthy = candidates.filter { hasPlausibleTimeline($0.syncedLyrics ?? "", duration: duration) }
+        let pool = healthy.isEmpty ? candidates : healthy
+        return pool.min { abs($0.duration - duration) < abs($1.duration - duration) }
+    }
+
+    static func hasPlausibleTimeline(_ syncedLyrics: String, duration: TimeInterval) -> Bool {
+        guard duration > 0 else { return true }
+        let lines = LRCLyricsParser.lines(from: syncedLyrics, duration: duration)
+        guard let last = lines.last else { return false }
+        return last.start >= duration * minimumTimelineCoverage
     }
 
     private func search(_ query: [URLQueryItem]) async throws -> [Record] {

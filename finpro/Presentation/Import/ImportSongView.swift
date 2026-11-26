@@ -93,8 +93,20 @@ struct ImportSongView: View {
             case .preparing, .prepared:
                 if let audio = viewModel.selectionAudio { sectionPicker(audio).disabled(true) }
             case .failed(let error):
-                ErrorStateView(error: error, actionTitle: "Choose another song") {
-                    viewModel.reset(); picking = true
+                Group {
+                    if viewModel.canReturnToTrim {
+                        ErrorStateView(
+                            error: error,
+                            actionTitle: "Try another section",
+                            action: viewModel.backToTrimming,
+                            secondaryActionTitle: "Choose another song",
+                            secondaryAction: { viewModel.reset(); picking = true }
+                        )
+                    } else {
+                        ErrorStateView(error: error, actionTitle: "Choose another song") {
+                            viewModel.reset(); picking = true
+                        }
+                    }
                 }
                 .padding(AppSpacing.large)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -105,7 +117,7 @@ struct ImportSongView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .edgeSwipeBack(isEnabled: !picking && !viewModel.isPreparing, action: onBack)
+        .edgeSwipeBack(isEnabled: canEdgeSwipeBack, action: onBack)
         .presentationBackground(.clear)
         .accessibilityAction(.escape) {
             if !viewModel.isPreparing { onBack() }
@@ -138,6 +150,14 @@ struct ImportSongView: View {
             }
         }
         .onDisappear { viewModel.suspend() }
+    }
+
+    private var canEdgeSwipeBack: Bool {
+        guard !picking, !viewModel.isPreparing, !isDismissingPrompt else { return false }
+        switch viewModel.status {
+        case .idle, .loading: return false
+        case .trimming, .preparing, .prepared, .failed: return true
+        }
     }
 
     private var promptDismissDrag: some Gesture {

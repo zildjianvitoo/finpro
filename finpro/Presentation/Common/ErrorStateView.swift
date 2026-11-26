@@ -12,6 +12,28 @@ struct ErrorStateView: View {
     let error: UserFacingError
     var actionTitle: String?
     var action: (() -> Void)?
+    var secondaryActionTitle: String?
+    var secondaryAction: (() -> Void)?
+
+    init(error: UserFacingError, actionTitle: String? = nil, action: (() -> Void)? = nil) {
+        self.error = error
+        self.actionTitle = actionTitle
+        self.action = action
+        self.secondaryActionTitle = nil
+        self.secondaryAction = nil
+    }
+
+    init(error: UserFacingError,
+         actionTitle: String,
+         action: @escaping () -> Void,
+         secondaryActionTitle: String,
+         secondaryAction: @escaping () -> Void) {
+        self.error = error
+        self.actionTitle = actionTitle
+        self.action = action
+        self.secondaryActionTitle = secondaryActionTitle
+        self.secondaryAction = secondaryAction
+    }
 
     var body: some View {
         ContentUnavailableView {
@@ -20,8 +42,14 @@ struct ErrorStateView: View {
             Text(error.message)
         } actions: {
             if let actionTitle, let action {
-                Button(actionTitle, action: action)
-                    .buttonStyle(.borderedProminent)
+                VStack(spacing: AppSpacing.small) {
+                    Button(actionTitle, action: action)
+                        .buttonStyle(.borderedProminent)
+                    if let secondaryActionTitle, let secondaryAction {
+                        Button(secondaryActionTitle, action: secondaryAction)
+                            .buttonStyle(.borderless)
+                    }
+                }
             }
         }
     }
