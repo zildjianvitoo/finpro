@@ -14,7 +14,7 @@ struct VocalWarmupView: View {
     let isActive: Bool
     let onBack: () -> Void
     let authorizeMicrophone: () async -> Bool
-    let monitorVoice: () -> Void
+    let monitorVoice: (TimeInterval, (TimeInterval) -> Void) async throws -> Void
     let stopVoice: () -> Void
     let voiceLevels: () -> [Float]
     let onContinue: () -> Void
@@ -23,7 +23,8 @@ struct VocalWarmupView: View {
     @State private var round = 1
     @State private var seconds = phaseSeconds
     @State private var phaseStartedAt: ContinuousClock.Instant?
-    @State private var roundStartedAt: ContinuousClock.Instant?
+    @State private var humSeconds: TimeInterval = 0
+    @State private var inputError: UserFacingError?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var session: Task<Void, Never>?
     @Environment(\.scenePhase) private var scenePhase
@@ -47,6 +48,13 @@ struct VocalWarmupView: View {
         .onChange(of: isActive) { _, active in if !active { interrupt() } }
         .onChange(of: scenePhase) { _, phase in if phase == .background { interrupt() } }
         .onDisappear { interrupt() }
+        .alert(inputError?.title ?? "", isPresented: Binding(
+            get: { inputError != nil }, set: { if !$0 { inputError = nil } }
+        ), presenting: inputError) { _ in
+            Button("OK", role: .cancel) {}
+        } message: { error in
+            Text(error.message)
+        }
     }
 
     private var instructions: some View {
@@ -133,10 +141,12 @@ struct VocalWarmupView: View {
             Circle().fill(Color.ringHalo)
             Circle().fill(phase == .complete ? Color.secBrand : Color.primaryButton).padding(13)
             Circle().strokeBorder(Color.ringStroke, lineWidth: 5).padding(13)
-            if phase == .hum || phase == .rest {
-                progressArc(start: phaseStartedAt, duration: Self.phaseSeconds,
-                            color: .secBrand, lineWidth: 5)
-                    .padding(16)
+            if phase == .hum {
+                progressArc(humProgress).padding(16)
+            } else if phase == .rest {
+                TimelineView(.animation(minimumInterval: 1 / 24, paused: reduceMotion)) { _ in
+                    progressArc(restProgress).padding(16)
+                }
             }
             if phase == .hum {
                 ListeningWaveform(isActive: true, hearsVoice: true,
@@ -154,12 +164,10 @@ struct VocalWarmupView: View {
     private func roundIndicator(_ number: Int, size: CGFloat) -> some View {
         let complete = number < round || phase == .complete
         let active = number == round && (phase == .hum || phase == .rest)
-        return TimelineView(.animation(minimumInterval: 1 / 24, paused: !active || reduceMotion)) { _ in
-            let duration = number == Self.rounds ? Self.phaseSeconds : Self.phaseSeconds * 2
-            let progress = roundStartedAt.map {
-                min(1, max(0, $0.duration(to: .now) / .seconds(duration)))
-            } ?? 0
-            let scale = complete ? 1 : active ? 0.6 + 0.4 * (reduceMotion ? 0.5 : progress) : 0
+        return TimelineView(.animation(minimumInterval: 1 / 24, paused: phase != .rest || !active || reduceMotion)) { _ in
+            let phasesInRound = number == Self.rounds ? 1.0 : 2.0
+            let progress = phase == .rest ? (1 + restProgress) / phasesInRound : humProgress / phasesInRound
+            let scale = complete ? 1 : active ? 0.6 + 0.4 * progress : 0
             let innerSize = size * CGFloat(scale)
             ZStack {
                 Circle().fill(Color.ringHalo.opacity(0.4))
@@ -172,19 +180,21 @@ struct VocalWarmupView: View {
         }
     }
 
-    private func progressArc(start: ContinuousClock.Instant?, duration: Int,
-                             color: Color, lineWidth: CGFloat) -> some View {
-        TimelineView(.animation(minimumInterval: 1 / 24, paused: start == nil || reduceMotion)) { _ in
-            let progress = start.map {
-                min(1, max(0, ($0.duration(to: .now) / .seconds(duration))))
-            } ?? 0
-            Circle()
-                .trim(from: 0, to: progress)
-                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-        }
-        .accessibilityHidden(true)
-        .allowsHitTesting(false)
+    private var humProgress: Double { min(1, humSeconds / Double(Self.phaseSeconds)) }
+
+    private var restProgress: Double {
+        guard let phaseStartedAt else { return 0 }
+        let elapsed = reduceMotion ? Double(Self.phaseSeconds - seconds) : phaseStartedAt.duration(to: .now) / .seconds(1)
+        return min(1, max(0, elapsed / Double(Self.phaseSeconds)))
+    }
+
+    private func progressArc(_ progress: Double) -> some View {
+        Circle()
+            .trim(from: 0, to: progress)
+            .stroke(Color.secBrand, style: StrokeStyle(lineWidth: 5, lineCap: .round))
+            .rotationEffect(.degrees(-90))
+            .accessibilityHidden(true)
+            .allowsHitTesting(false)
     }
 
     private var totalSecondsRemaining: Int {
@@ -193,7 +203,8 @@ struct VocalWarmupView: View {
         case .complete: return 0
         case .hum, .rest:
             let completedPhases = (round - 1) * 2 + (phase == .rest ? 1 : 0)
-            return Self.totalSeconds - (completedPhases + 1) * Self.phaseSeconds + seconds
+            let phaseRemaining = phase == .hum ? Self.phaseSeconds - Int(humSeconds) : seconds
+            return Self.totalSeconds - (completedPhases + 1) * Self.phaseSeconds + phaseRemaining
         }
     }
 
@@ -209,7 +220,7 @@ struct VocalWarmupView: View {
     private var phaseInstruction: String {
         switch phase {
         case .idle: "Get ready to make a gentle 'mmm' sound."
-        case .hum: "Hold a steady, comfortable 'mmm'."
+        case .hum: "Hum a comfortable 'mmm' until the ring fills."
         case .rest: "Relax your voice before the next round."
         case .complete: "Great job! Your voice is ready for the next step."
         }
@@ -222,26 +233,29 @@ struct VocalWarmupView: View {
             guard await authorizeMicrophone(), !Task.isCancelled else { return }
             do {
                 let clock = ContinuousClock()
-                var nextTick = clock.now
                 for number in 1...Self.rounds {
                     round = number
-                    roundStartedAt = nextTick
-                    for nextPhase in number == Self.rounds ? [Phase.hum] : [.hum, .rest] {
-                        phaseStartedAt = nextTick
-                        phase = nextPhase
-                        if nextPhase == .hum { monitorVoice() } else { stopVoice() }
-                        for remaining in stride(from: Self.phaseSeconds, through: 1, by: -1) {
-                            seconds = remaining
-                            nextTick += .seconds(1)
-                            try await clock.sleep(until: nextTick)
-                            try Task.checkCancellation()
+                    humSeconds = 0
+                    phase = .hum
+                    try await monitorVoice(Double(Self.phaseSeconds)) { humSeconds = $0 }
+                    try Task.checkCancellation()
+                    if number < Self.rounds {
+                        seconds = Self.phaseSeconds
+                        let restStart = clock.now
+                        phaseStartedAt = restStart
+                        phase = .rest
+                        for elapsed in 1...Self.phaseSeconds {
+                            try await clock.sleep(until: restStart + .seconds(elapsed))
+                            seconds = Self.phaseSeconds - elapsed
                         }
                     }
                 }
-                stopVoice()
                 phase = .complete
+            } catch is CancellationError {
+                // Navigation or backgrounding ended this exercise.
             } catch {
-                // Leaving or backgrounding the screen cancels this timed exercise.
+                interrupt()
+                inputError = (error as? any UserFacingConvertible)?.userFacingError ?? .vocalRangeCaptureFailed
             }
         }
     }
@@ -250,7 +264,7 @@ struct VocalWarmupView: View {
         session?.cancel()
         if phase == .hum { stopVoice() }
         guard phase != .complete else { return }
-        roundStartedAt = nil
+        humSeconds = 0
         phaseStartedAt = nil
         phase = .idle
         round = 1

@@ -133,12 +133,12 @@ struct VocalRangeTestView: View {
         case .warmup:
             VocalWarmupView(isActive: isTop, onBack: back,
                             authorizeMicrophone: authorizeMicrophone,
-                            monitorVoice: {
-                                viewModel.monitorWarmup {
+                            monitorVoice: { duration, update in
+                                try await viewModel.monitorWarmup(duration: duration, onFirstSample: {
                                     guard !notifiedWarmupAudioReady, stage == .warmup, scenePhase == .active else { return }
                                     notifiedWarmupAudioReady = true
                                     onWarmupAudioReady()
-                                }
+                                }, onProgress: update)
                             },
                             stopVoice: viewModel.stopListening,
                             voiceLevels: { viewModel.waveformLevels }) {

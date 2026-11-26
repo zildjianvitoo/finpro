@@ -49,8 +49,43 @@ final class VocalRangeViewModel {
 
     func listen() { startListening() }
 
-    func monitorWarmup(onFirstSample: @escaping () -> Void) {
-        startListening(waveformOnly: true, onFirstSample: onFirstSample)
+    func monitorWarmup(duration: TimeInterval, onFirstSample: () -> Void,
+                       onProgress: (TimeInterval) -> Void) async throws {
+        stopListening()
+        waveformLevels = []
+        let token = generation
+        defer { if generation == token { source.stop() } }
+        let samples = try await source.startLevelMonitoring()
+        var hold = WarmupHumHold(threshold: configuration.noiseGateDBFS,
+                                 maximumGap: DetectVocalRangeUseCase.maxGap)
+        var isFirstSample = true
+        for await sample in samples {
+            try Task.checkCancellation()
+            guard generation == token else { throw CancellationError() }
+            if isFirstSample {
+                onFirstSample()
+                isFirstSample = false
+            }
+            updateWaveform(with: sample)
+            let elapsed = hold.ingest(sample)
+            onProgress(min(duration, elapsed))
+            if elapsed >= duration { return }
+        }
+        try Task.checkCancellation()
+        guard generation == token else { throw CancellationError() }
+        throw WarmupInputError.streamEnded
+    }
+
+    private enum WarmupInputError: Error {
+        case streamEnded
+    }
+
+    private func updateWaveform(with sample: PitchSample) {
+        let amplitude = sample.rmsDecibels.isFinite
+            ? min(1, max(0, (sample.rmsDecibels - configuration.noiseGateDBFS)
+                / max(1, configuration.vocalWaveformCeilingDBFS - configuration.noiseGateDBFS))) : 0
+        waveformLevels.append(amplitude)
+        if waveformLevels.count > configuration.vocalWaveformFrameCount { waveformLevels.removeFirst() }
     }
 
     /// Clears only the current input, keeping the measured range.
@@ -63,12 +98,12 @@ final class VocalRangeViewModel {
         waveformLevels = []
     }
 
-    private func startListening(waveformOnly: Bool = false, onFirstSample: (() -> Void)? = nil) {
+    private func startListening() {
         stopListening()
-        if !waveformOnly { hasStartedListening = true }
+        hasStartedListening = true
         waveformLevels = []
         let token = generation
-        if !waveformOnly { status = .listening }
+        status = .listening
         microphoneName = nil
         holdProgress = 0
         liveMIDI = nil
@@ -79,21 +114,13 @@ final class VocalRangeViewModel {
                 // Keep simulator samples tied to the prompt across retries and Redo Test.
                 (source as? FakeLivePitchSource)?.selectNote(at: prompt.rawValue)
                 #endif
-                let samples = try await (waveformOnly ? source.startLevelMonitoring() : source.start())
+                let samples = try await source.start()
                 microphoneName = (source as? any MicrophoneInputProviding)?.microphoneName
                 var display = StabilizePitchDisplayUseCase(configuration: configuration)
                 var detector = DetectVocalRangeUseCase(configuration: configuration, duration: holdDuration)
-                var firstSample = onFirstSample
                 for await sample in samples {
                     guard !Task.isCancelled, generation == token else { return }
-                    let amplitude = sample.rmsDecibels.isFinite
-                        ? min(1, max(0, (sample.rmsDecibels - configuration.noiseGateDBFS)
-                            / max(1, configuration.vocalWaveformCeilingDBFS - configuration.noiseGateDBFS))) : 0
-                    firstSample?()
-                    firstSample = nil
-                    waveformLevels.append(amplitude)
-                    if waveformLevels.count > configuration.vocalWaveformFrameCount { waveformLevels.removeFirst() }
-                    guard !waveformOnly else { continue }
+                    updateWaveform(with: sample)
                     let note = detector.ingest(sample)
                     liveMIDI = display.execute(midi: detector.latestMIDI, time: sample.captureTime.seconds)
                     holdProgress = min(1, detector.stableDuration / holdDuration)
@@ -109,9 +136,7 @@ final class VocalRangeViewModel {
                 }
             } catch {
                 guard generation == token, !Task.isCancelled else { return }
-                if !waveformOnly {
-                    status = .failed((error as? any UserFacingConvertible)?.userFacingError ?? .vocalRangeCaptureFailed)
-                }
+                status = .failed((error as? any UserFacingConvertible)?.userFacingError ?? .vocalRangeCaptureFailed)
             }
             if generation == token { source.stop() }
         }
