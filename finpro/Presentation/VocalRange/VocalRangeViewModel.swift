@@ -25,6 +25,7 @@ final class VocalRangeViewModel {
     private(set) var status: Status = .idle
     private(set) var liveMIDI: Float?
     private(set) var holdProgress: Double = 0
+    var holdDuration: TimeInterval { configuration.vocalRangeHoldDuration }
     private(set) var lowestMIDI: Float?
     private(set) var highestMIDI: Float?
     private(set) var waveformLevels: [Float] = []
@@ -81,7 +82,7 @@ final class VocalRangeViewModel {
                 let samples = try await (waveformOnly ? source.startLevelMonitoring() : source.start())
                 microphoneName = (source as? any MicrophoneInputProviding)?.microphoneName
                 var display = StabilizePitchDisplayUseCase(configuration: configuration)
-                var detector = DetectVocalRangeUseCase(configuration: configuration, duration: configuration.vocalRangeHoldDuration)
+                var detector = DetectVocalRangeUseCase(configuration: configuration, duration: holdDuration)
                 var firstSample = onFirstSample
                 for await sample in samples {
                     guard !Task.isCancelled, generation == token else { return }
@@ -95,7 +96,7 @@ final class VocalRangeViewModel {
                     guard !waveformOnly else { continue }
                     let note = detector.ingest(sample)
                     liveMIDI = display.execute(midi: detector.latestMIDI, time: sample.captureTime.seconds)
-                    holdProgress = min(1, detector.stableDuration / configuration.vocalRangeHoldDuration)
+                    holdProgress = min(1, detector.stableDuration / holdDuration)
                     if let note {
                         captured(note)
                         break

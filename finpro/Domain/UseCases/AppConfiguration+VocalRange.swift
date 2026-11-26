@@ -10,7 +10,7 @@ extension AppConfiguration {
     nonisolated var readingWordsPerSecond: Double { 2.5 }
     nonisolated var vocalWaveformFrameCount: Int { 25 }
     nonisolated var vocalWaveformCeilingDBFS: Float { -12 }
-    nonisolated var vocalRangeHoldDuration: TimeInterval { 1 }
+    nonisolated var vocalRangeHoldDuration: TimeInterval { 5 }
     nonisolated var keyRecommendationCount: Int { 3 }
     nonisolated var rangePenaltyExtremesWeight: Double { 0.5 }
     nonisolated var rangePenaltyBand: Double { 3 }

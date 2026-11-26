@@ -217,6 +217,7 @@ struct VocalRangeTestView: View {
 
     private func testStep(for stepStage: Stage, isActive: Bool) -> some View {
         let isLowest = stepStage == .lowest
+        let holdSeconds = Int(viewModel.holdDuration)
         let progress = isActive ? viewModel.holdProgress : 1.0
         return GeometryReader { proxy in
             let diameter = min(140, max(100, proxy.size.height * 0.19))
@@ -233,8 +234,8 @@ struct VocalRangeTestView: View {
                             .foregroundStyle(.primary)
                             .accessibilityAddTraits(.isHeader)
                         Text(isLowest
-                             ? "Sing \"Do\" as low as comfortably possible and hold it."
-                             : "Sing \"Do\" as high as feels comfortable and hold it.")
+                             ? "Sing \"Do\" as low as comfortably possible and hold it for \(holdSeconds) seconds."
+                             : "Sing \"Do\" as high as feels comfortable and hold it for \(holdSeconds) seconds.")
                             .font(.appBody)
                             .foregroundStyle(Color.plumNight)
                     }
