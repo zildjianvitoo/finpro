@@ -4,9 +4,11 @@
 //
 
 import SwiftUI
+import UIKit
 
 struct KeySelectionView: View {
     @State var viewModel: KeySelectionViewModel
+    @State private var keyFeedback = UIImpactFeedbackGenerator(style: .light)
     let routeMonitor: any AudioRouteMonitor
     let onChooseAnother: () -> Void
     let onRetest: () -> Void
@@ -46,7 +48,10 @@ struct KeySelectionView: View {
         .background(Color.screenBackground.ignoresSafeArea())
         .edgeSwipeBack(action: goBack)
         .accessibilityAction(.escape, goBack)
-        .onAppear { viewModel.autoplaySelected() }
+        .onAppear {
+            keyFeedback.prepare()
+            viewModel.autoplaySelected()
+        }
         .onDisappear { viewModel.stop() }
         .onChange(of: scenePhase) { _, phase in if phase != .active { viewModel.stop() } }
         .task { for await _ in routeMonitor.interruptions() { viewModel.stop() } }
@@ -88,7 +93,7 @@ struct KeySelectionView: View {
         let isRecommended = shift == viewModel.recommendedShift
         return Picker("Selected key", selection: Binding(
             get: { viewModel.selectedShift ?? 0 },
-            set: { if $0 != viewModel.selectedShift { viewModel.chooseShift($0) } }
+            set: selectKeyFromWheel
         )) {
             ForEach(Array(TranspositionPlan.semitoneRange.reversed()), id: \.self) { value in
                 Text(label(value))
@@ -98,9 +103,6 @@ struct KeySelectionView: View {
             }
         }
         .pickerStyle(.wheel)
-        .sensoryFeedback(.selection, trigger: viewModel.selectedShift) { old, new in
-            old != nil && new != nil
-        }
         .frame(maxWidth: wheelWidth + 18)
         .frame(height: wheelHeight)
         .clipped()
@@ -126,6 +128,13 @@ struct KeySelectionView: View {
         }
         .accessibilityValue("\(label(shift)) semitones" + (isRecommended ? ", recommended" : ""))
         .accessibilityAction(named: Text("Preview key")) { viewModel.previewSelected() }
+    }
+
+    private func selectKeyFromWheel(_ shift: Int) {
+        guard shift != viewModel.selectedShift else { return }
+        keyFeedback.impactOccurred()
+        keyFeedback.prepare()
+        viewModel.chooseShift(shift)
     }
 
     private func goBack() {
