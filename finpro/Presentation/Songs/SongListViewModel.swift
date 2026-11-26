@@ -27,7 +27,12 @@ final class SongListViewModel {
     }
     var songs: [SavedSong] {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return library.songs.filter { term.isEmpty || $0.title.localizedCaseInsensitiveContains(term) }
+        return library.songs.filter {
+            term.isEmpty
+                || $0.title.localizedCaseInsensitiveContains(term)
+                || ($0.displayArtist?.localizedCaseInsensitiveContains(term) ?? false)
+                || ($0.artist?.localizedCaseInsensitiveContains(term) ?? false)
+        }
     }
     func isPlaying(_ song: SavedSong) -> Bool {
         playingID == song.id || (isScrubbing && wasPlayingBeforeScrub && expandedID == song.id)

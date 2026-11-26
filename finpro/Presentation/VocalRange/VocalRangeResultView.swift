@@ -13,6 +13,7 @@ struct VocalRangeResultView: View {
     let onRetake: () -> Void
     /// Back to the highest-note step, to sing that note again.
     let onBack: () -> Void
+    var backAccessibilityLabel: String = "Back to highest note"
     var isSwipeBackEnabled: Bool = true
     var onSwipeProgress: ((CGFloat) -> Void)? = nil
     /// Entrance: the card appears, the mascot peeks up from behind it, then the notes float.
@@ -107,7 +108,7 @@ struct VocalRangeResultView: View {
                 .accessibilityHidden(true)
             HStack {
                 Button(action: onBack) { Image(systemName: "chevron.left") }
-                    .buttonStyle(.appIcon(.glass)).accessibilityLabel("Back to highest note")
+                    .buttonStyle(.appIcon(.glass)).accessibilityLabel(backAccessibilityLabel)
                 Spacer()
             }
             .padding(.horizontal, 16)

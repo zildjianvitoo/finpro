@@ -328,8 +328,10 @@ final class AppFlow {
     /// Also keeps its working files (raw videos, song audio, takes), so it can be opened as a
     /// draft later, even after the app was closed without choosing Save to Draft.
     func coverExported(_ url: URL, plan: CompingCompositionPlan) {
+        // Stay a draft until the user explicitly exports to Photos (keeps an already-exported
+        // cover finished if only its volume levels were edited).
         savedCoverID = container.coverLibrary.save(url, title: songName, duration: plan.endTime,
-                                                   isDraft: plan.isPartial, replacing: savedCoverID) ?? savedCoverID
+                                                   isDraft: plan.isPartial || !isCoverExported, replacing: savedCoverID) ?? savedCoverID
         compingPlanExportURL = savedCoverURL
         guard let id = savedCoverID, let preparedSong else { return }
         let keptIDs = Set(plan.validTakes.map(\.id))

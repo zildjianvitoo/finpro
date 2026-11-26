@@ -28,8 +28,14 @@ final class CoverLibrary {
         let old = covers.first { $0.id == oldID }
         let others = covers.filter { $0.id != oldID }
         let id = old?.id ?? UUID()
+        let usedTitles = Set(others.map(\.title))
+        let fallbackTitle: String = {
+            var number = 1
+            while usedTitles.contains("Cover \(number)") { number += 1 }
+            return "Cover \(number)"
+        }()
         // A draft stays a draft after a retake or continue, until it is saved to Photos.
-        let cover = SavedCover(id: id, title: old?.title ?? title ?? "Cover \(others.count + 1)", date: Date(),
+        let cover = SavedCover(id: id, title: old?.title ?? title ?? fallbackTitle, date: Date(),
                                duration: duration, isDraft: isDraft || old?.isDraft == true,
                                filename: UUID().uuidString + ".mp4")
         let records = [cover] + others

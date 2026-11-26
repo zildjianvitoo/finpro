@@ -741,6 +741,11 @@ struct ExportPreviewView: View {
     }
 
     private func requestLeave() {
+        // Already saved on Home (reopened or exported to Photos) with no sound edits: exit directly.
+        if keepsCoverOnLeave, !viewModel.hasVolumeEdits {
+            onStartOver()
+            return
+        }
         confirmsLeave = true
     }
 

@@ -105,6 +105,7 @@ struct HomeView: View {
                 }
             }
             .padding(.top, 10)
+            .accessibilityHidden(showsCovers || showsVocalRange)
         }
         .background(Color.screenBackground.ignoresSafeArea())
         .hierarchicalUnderlay(
@@ -130,7 +131,7 @@ struct HomeView: View {
                 }, onRetake: viewModel.vocalRangeTapped, onBack: {
                     vocalRangeRevealProgress = 0
                     showsVocalRange = false
-                }, isSwipeBackEnabled: isActive, onSwipeProgress: { vocalRangeRevealProgress = $0 })
+                }, backAccessibilityLabel: "Back to Covers", isSwipeBackEnabled: isActive, onSwipeProgress: { vocalRangeRevealProgress = $0 })
                 .transition(.move(edge: .trailing))
             }
         }

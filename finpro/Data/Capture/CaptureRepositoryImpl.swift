@@ -134,6 +134,7 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
                 if self.session.isRunning { return }
                 if !self.prepared {
                     self.session.beginConfiguration()
+                    self.session.usesApplicationAudioSession = true
                     self.session.automaticallyConfiguresApplicationAudioSession = false
                     self.session.sessionPreset = .hd1920x1080
                     let hasVideo = self.session.inputs.contains { ($0 as? AVCaptureDeviceInput)?.device.hasMediaType(.video) == true }
@@ -167,6 +168,8 @@ nonisolated final class CaptureRepositoryImpl: NSObject, CaptureRepository, Came
                 do {
                     Self.log.notice("prepare: on capture queue after \(elapsed(), privacy: .public)")
                     if !self.prepared {
+                        // Stop a preview-only session before tearing down and re-adding inputs/outputs.
+                        if self.session.isRunning { self.session.stopRunning() }
                         try self.configure()
                         self.prepared = true
                         Self.log.notice("prepare: configured after \(elapsed(), privacy: .public)")
