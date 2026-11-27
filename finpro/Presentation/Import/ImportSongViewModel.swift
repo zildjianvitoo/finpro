@@ -366,6 +366,7 @@ final class ImportSongViewModel {
             } catch is CancellationError {
                 guard generation == token else { return }
                 status = .trimming(audio)
+                resumeLyricsIfNeeded()
             } catch {
                 guard generation == token else { return }
                 Self.log.error("preparation failed: \(String(describing: error), privacy: .public)")
@@ -425,7 +426,19 @@ final class ImportSongViewModel {
         preparedChoices = nil
         if let preparingAudio {
             status = .trimming(preparingAudio)
+            resumeLyricsIfNeeded()
             startSelectionPreview()
+        }
+    }
+
+    /// Restarts an interrupted lyrics lookup when returning to the trimmer (e.g. after tapping
+    /// Continue while lyrics were still loading and then hitting "Try another section").
+    private func resumeLyricsIfNeeded() {
+        guard lyrics == .loading, lyricsLookup == nil else { return }
+        if isIdentifyingSong {
+            lyricsAwaitRecognition = true
+        } else {
+            searchLyrics()
         }
     }
 
@@ -569,6 +582,9 @@ final class ImportSongViewModel {
                 if let savedSongID, let named = library?.applyRecognition(savedSongID, song: outcome, lyrics: shiftedLyrics) {
                     // The cover is named after the song when it is being prepared already.
                     if preparingDisplayName != nil { preparingDisplayName = named.title }
+                } else if let song = outcome, preparingDisplayName != nil {
+                    // Unsaved songs are persisted after singing; keep the cover's display name in sync too.
+                    preparingDisplayName = song.title
                 }
             }
         }
@@ -588,7 +604,7 @@ final class ImportSongViewModel {
         lyricsLookup = Task { [lyricsProvider] in
             do {
                 let found = try await lyricsProvider.lyrics(title: title, artist: artist.isEmpty ? nil : artist,
-                                                            duration: audio.duration)
+                                                            duration: audio.duration, audioURL: audio.url)
                 try Task.checkCancellation()
                 // Shazam named the song while this search ran: try that name before giving up.
                 let current = (lyricsTitle.trimmingCharacters(in: .whitespaces), lyricsArtist.trimmingCharacters(in: .whitespaces))

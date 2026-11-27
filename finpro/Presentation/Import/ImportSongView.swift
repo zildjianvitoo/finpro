@@ -266,7 +266,7 @@ struct ImportSongView: View {
                     Label(error.title, systemImage: error.systemImage)
                         .font(.appCaption).foregroundStyle(Color.primaryBrand)
                 }
-                Button("Start Recording", action: viewModel.prepareSelection)
+                Button("Continue", action: viewModel.prepareSelection)
                     .buttonStyle(AppButtonStyle(kind: .primary, height: 52))
                 if !viewModel.openedSavedSong {
                     Button(action: viewModel.saveToSongList) {

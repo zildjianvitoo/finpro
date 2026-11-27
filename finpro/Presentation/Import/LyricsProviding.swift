@@ -76,4 +76,12 @@ nonisolated enum LyricsLookupError: Error, Equatable {
 nonisolated protocol LyricsProviding: Sendable {
     /// Synced lyrics for a song of `duration` seconds, or nil if none match.
     func lyrics(title: String, artist: String?, duration: TimeInterval) async throws -> SongLyrics?
+    /// Synced lyrics using `audioURL` (when available) to disambiguate competing LRC timelines.
+    func lyrics(title: String, artist: String?, duration: TimeInterval, audioURL: URL?) async throws -> SongLyrics?
+}
+
+extension LyricsProviding {
+    nonisolated func lyrics(title: String, artist: String?, duration: TimeInterval, audioURL: URL?) async throws -> SongLyrics? {
+        try await lyrics(title: title, artist: artist, duration: duration)
+    }
 }

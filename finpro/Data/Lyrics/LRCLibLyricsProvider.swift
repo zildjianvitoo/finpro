@@ -41,7 +41,12 @@ nonisolated final class LRCLibLyricsProvider: LyricsProviding, @unchecked Sendab
     }
 
     func lyrics(title: String, artist: String?, duration: TimeInterval) async throws -> SongLyrics? {
-        let key = "\(title.lowercased())|\(artist?.lowercased() ?? "")|\(Int(duration.rounded()))"
+        try await lyrics(title: title, artist: artist, duration: duration, audioURL: nil)
+    }
+
+    func lyrics(title: String, artist: String?, duration: TimeInterval, audioURL: URL?) async throws -> SongLyrics? {
+        let audioKey = audioURL.map { $0.standardizedFileURL.path } ?? ""
+        let key = "\(title.lowercased())|\(artist?.lowercased() ?? "")|\(Int(duration.rounded()))|\(audioKey)"
         if let cached = lock.withLock({ cache[key] }) { return cached }
         var queries: [[URLQueryItem]] = []
         if let artist, !artist.isEmpty {
@@ -55,7 +60,14 @@ nonisolated final class LRCLibLyricsProvider: LyricsProviding, @unchecked Sendab
                 Self.log.error("search \(title, privacy: .public) / \(artist ?? "-", privacy: .public) failed: \(String(describing: error), privacy: .public)")
                 throw error
             }
-            if let match = Self.bestMatch(records, duration: duration) {
+            let match: Record?
+            if let audioURL {
+                let pool = Self.eligibleRecords(records, duration: duration)
+                match = await LyricsAudioMatcher.bestRecord(among: pool, duration: duration, audioURL: audioURL)
+            } else {
+                match = Self.bestMatch(records, duration: duration)
+            }
+            if let match {
                 let lines = LRCLyricsParser.lines(from: match.syncedLyrics ?? "", duration: duration)
                 result = SongLyrics(lines: lines, chorus: ChorusFinder.chorus(in: lines),
                                     matchedTitle: match.trackName, matchedArtist: match.artistName)
@@ -64,7 +76,7 @@ nonisolated final class LRCLibLyricsProvider: LyricsProviding, @unchecked Sendab
         }
         if result?.lines.isEmpty == true { result = nil }
         if let result {
-            Self.log.notice("found \(result.matchedArtist ?? "-", privacy: .public) - \(result.matchedTitle ?? "-", privacy: .public) for \(title, privacy: .public) / \(artist ?? "-", privacy: .public)")
+            Self.log.notice("found \(result.matchedArtist, privacy: .public) - \(result.matchedTitle, privacy: .public) for \(title, privacy: .public) / \(artist ?? "-", privacy: .public)")
         } else {
             Self.log.notice("no synced lyrics within \(Int(Self.durationTolerance), privacy: .public) s of \(Int(duration), privacy: .public) s for \(title, privacy: .public) / \(artist ?? "-", privacy: .public)")
         }
@@ -72,17 +84,23 @@ nonisolated final class LRCLibLyricsProvider: LyricsProviding, @unchecked Sendab
         return result
     }
 
+    /// Synced, non-instrumental records within `durationTolerance`, deprioritizing corrupted
+    /// community uploads whose timestamps collapse into the opening fraction of the track.
+    static func eligibleRecords(_ records: [Record], duration: TimeInterval) -> [Record] {
+        let candidates = records.filter {
+            !$0.instrumental && !($0.syncedLyrics ?? "").isEmpty && abs($0.duration - duration) <= durationTolerance
+        }
+        guard !candidates.isEmpty else { return [] }
+        let healthy = candidates.filter { hasPlausibleTimeline($0.syncedLyrics ?? "", duration: duration) }
+        return healthy.isEmpty ? candidates : healthy
+    }
+
     /// The synced, non-instrumental record closest in duration, if within `durationTolerance`.
     /// Deprioritizes corrupted community LRC records whose timestamps collapse into the opening
     /// fraction of the track when a healthy sibling exists within tolerance.
     static func bestMatch(_ records: [Record], duration: TimeInterval) -> Record? {
-        let candidates = records.filter {
-            !$0.instrumental && !($0.syncedLyrics ?? "").isEmpty && abs($0.duration - duration) <= durationTolerance
-        }
-        guard !candidates.isEmpty else { return nil }
-        let healthy = candidates.filter { hasPlausibleTimeline($0.syncedLyrics ?? "", duration: duration) }
-        let pool = healthy.isEmpty ? candidates : healthy
-        return pool.min { abs($0.duration - duration) < abs($1.duration - duration) }
+        eligibleRecords(records, duration: duration)
+            .min { abs($0.duration - duration) < abs($1.duration - duration) }
     }
 
     static func hasPlausibleTimeline(_ syncedLyrics: String, duration: TimeInterval) -> Bool {

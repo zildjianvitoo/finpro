@@ -40,7 +40,7 @@ struct KeySelectionView: View {
                     ErrorStateView(error: error)
                         .padding(.horizontal, AppSpacing.regular).padding(.bottom, AppSpacing.small)
                 }
-                Button("Use Selected Key", action: viewModel.confirm).buttonStyle(.appPrimary)
+                Button("Start Recording", action: viewModel.confirm).buttonStyle(.appPrimary)
                     .disabled(viewModel.isRendering || viewModel.selectedSong == nil)
                     .padding(.horizontal, 25).padding(.bottom, 16)
             }

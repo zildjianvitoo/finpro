@@ -182,8 +182,9 @@ final class KeySelectionViewModel {
         error = nil
         playback = Task { [self] in
             let onFinish: @Sendable () -> Void = { [weak self] in
+                guard let self else { return }
                 Task { @MainActor in
-                    guard let self, self.generation == token else { return }
+                    guard self.generation == token else { return }
                     self.isManualPreviewPlaying = false
                     self.playback = nil
                 }
@@ -218,8 +219,9 @@ final class KeySelectionViewModel {
         playback = Task { [self] in
             do {
                 try await previewer.play(choices.options[index].song.earphoneMixURL, excerpt: excerpt) { [weak self] in
+                    guard let self else { return }
                     Task { @MainActor in
-                        guard let self, self.generation == token else { return }
+                        guard self.generation == token else { return }
                         self.playingIndex = nil
                         self.loadingIndex = nil
                     }

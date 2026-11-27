@@ -322,7 +322,14 @@ struct ExportPreviewView: View {
         }
         .saveChangesAlert(
             isPresented: $confirmsLeave,
-            onCancel: { keepsCoverOnLeave ? onStartOver() : onDiscard() },
+            onCancel: {
+                if keepsCoverOnLeave {
+                    onStartOver()
+                } else {
+                    viewModel.cancelExport()
+                    onDiscard()
+                }
+            },
             onSave: { saveCoverThen(keepsCoverOnLeave ? onStartOver : onSaveDraft) }
         )
         .alert("Couldn't Save Your Cover", isPresented: Binding(get: { soundSaveError != nil }, set: { if !$0 { soundSaveError = nil } })) {

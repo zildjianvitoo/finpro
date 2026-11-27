@@ -174,7 +174,12 @@ final class AppFlow {
     }
 
     func openSongList() { step = .songList }
-    func openHome() { container.audioPreview.stop(); step = .home }
+    func openHome() {
+        container.audioPreview.stop()
+        importSelection = nil
+        selectedLibrarySongID = nil
+        step = .home
+    }
     func openSong(_ song: SavedSong) {
         container.audioPreview.stop()
         importOrigin = step == .songList ? .songList : .home
@@ -328,6 +333,8 @@ final class AppFlow {
     /// Also keeps its working files (raw videos, song audio, takes), so it can be opened as a
     /// draft later, even after the app was closed without choosing Save to Draft.
     func coverExported(_ url: URL, plan: CompingCompositionPlan) {
+        // Ignore a late background export callback after the user already discarded or left Export.
+        guard step == .export, compingPlan != nil else { return }
         // Stay a draft until the user explicitly exports to Photos (keeps an already-exported
         // cover finished if only its volume levels were edited).
         savedCoverID = container.coverLibrary.save(url, title: songName, duration: plan.endTime,
@@ -360,6 +367,8 @@ final class AppFlow {
         container.audioPreview.stop()
         container.takeLog.clear()
         draft.attempts.forEach(container.takeLog.logAttempt)
+        importSelection = nil
+        selectedLibrarySongID = nil
         keyChoices = nil
         preparationError = nil
         preparedSong = draft.song
@@ -464,6 +473,7 @@ final class AppFlow {
         pendingRecordingStart?.cancel()
         pendingRecordingStart = nil
         importSelection = nil
+        selectedLibrarySongID = nil
         songName = nil
         keyChoices = nil
         recordingLyrics = []
@@ -480,6 +490,8 @@ final class AppFlow {
 
     func retestVocalRange() {
         container.audioPreview.stop()
+        importSelection = nil
+        selectedLibrarySongID = nil
         keyChoices = nil
         preparedSong = nil
         vocalRangeOrigin = .home
